@@ -1,16 +1,22 @@
 from __future__ import print_function, division
 
 import os
+import sys
 import IPython
 
 import matplotlib.pyplot as plt, matplotlib.cm as cm
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np, numpy.random as nr, numpy.linalg as nlg
-import pandas as pd
 
-import utils
+import pandas as pd
+from sklearn.cluster import KMeans 
+
 import mutual_info as mi
 
+import utils
+
+VERBOSE = True
+FREQUENCY = 250
 DATA_DIR = '/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/slow'
 
 # ==============================================================================
@@ -60,13 +66,18 @@ def compute_tau(y, M=200, show=True):
   minfo = np.zeros(M)
   for m in xrange(M):
     minfo[m] = mi.mutual_information_2d(ysmooth[:N-m], ysmooth[m:])
+    if VERBOSE:
+      print('\t\tSearched over %i out of %i values.'%(m+1, M), end='\r')
+      sys.stdout.flush()
+  if VERBOSE:
+    print('\t\tSearched over %i out of %i values.'%(m+1, M))
 
   tau = np.argmin(minfo)
 
-  print('Show: ', show)
   if show:
     plt.plot(minfo)
-    print(tau)
+    if VERBOSE:
+      print(tau)
     plt.show()
 
   return tau
@@ -127,29 +138,50 @@ def featurize_single_timeseries(
     d_lag=3, tau=None, d_reduced=6, d_features=1000, bandwidth=0.5):
 
   if tau is None:
+    if VERBOSE:
+      print('\tComputing time lag tau.')
     tau = compute_tau(ts, M=tau_range, show=False)
-  mm_rff = mm_rbf_fourierfeatures(d_lag, d_features, bandwidth)
-  random_inds = nr.randint(1, ts.shape[0] - window_length, size=(num_windows,))
+    if VERBOSE:
+      print('\tValue of tau: %i'%tau)
 
+  mm_rff = mm_rbf_fourierfeatures(d_lag, d_features, bandwidth)
+
+  if VERBOSE:
+    print('\tCreating random windows for finding bases.')
+  random_inds = nr.randint(1, ts.shape[0] - window_length, size=(num_samples,))
   Z = np.zeros((num_samples, d_features))
   for i in range(num_samples):
-    xhat = ts[random_inds[i]:random_inds[i]+window_length+(d_lag-1)*tau]
-    Z[i, :] = compute_window_mean_embdedding(ts, tau, mm_rff, d=d_lag)
+    if VERBOSE:
+      print('\t\tRandom window %i out of %i.'%(i+1, num_samples), end='\r')
+      sys.stdout.flush()
+    window = ts[random_inds[i]:random_inds[i]+window_length+(d_lag-1)*tau]
+    Z[i, :] = compute_window_mean_embdedding(window, tau, mm_rff, d=d_lag)
+  if VERBOSE:
+    print('\t\tRandom window %i out of %i.'%(i+1, num_samples))
 
   valid_inds = ~np.isnan(Z).any(axis=1)
   valid_locs = np.nonzero(valid_inds)[0]
   Z = Z[valid_inds]  # remove NaN rows.
   num_samples = Z.shape[0]
   
+  if VERBOSE:
+    print('\tComputing basis.')
   Zhat = compute_window_PCA(Z, d_reduced)
 
+  if VERBOSE:
+    print('\tComputing window features.')
   ts_features = np.zeros((num_windows, d_reduced))
   tvals = np.floor(np.linspace(0, ts.shape[0]-window_length, num_windows))
   tvals = tvals.astype(int)
-  for t in tvals:
+  for i, t in enumerate(tvals):
+    if VERBOSE:
+      print('\t\tWindow %i out of %i.'%(i+1, num_windows), end='\r')
+      sys.stdout.flush()
     window = ts[t:t+window_length+(d_lag-1)*tau]
-    window_mm = compute_window_mean_embdedding(ts, tau, mm_rff, d=d_lag)
-    ts_features[t,:] = window_mm.dot(Zhat.T)
+    window_mm = compute_window_mean_embdedding(window, tau, mm_rff, d=d_lag)
+    ts_features[i,:] = window_mm.dot(Zhat.T)
+  if VERBOSE:
+    print('\t\tWindow %i out of %i.'%(i+1, num_windows))
 
   return ts_features, tvals
 
@@ -157,7 +189,8 @@ def featurize_single_timeseries(
 def compute_average_tau(mc_ts, M=200):
   taus = []
   for channel in range(mc_ts.shape[1]):
-    print(channel)
+    if VERBOSE:
+      print(channel)
     taus.append(compute_tau(mc_ts[:,channel], M, show=True))
 
   return int(np.mean(taus))
@@ -171,20 +204,24 @@ def feature_multi_channel_timeseries(mc_ts, time_channel, ts_channels,
   mc_ts = mc_ts[::downsample, ts_channels]
 
   if num_windows is None:
-    num_windows = mc_ts.shape[0]/window_length
+    num_windows = int(mc_ts.shape[0]/window_length)
 
-  # print('Computing tau.')
+  # if VERBOSE:
+  #   print('Computing average tau.')
   # tau = compute_average_tau(mc_ts, M=tau_range)
   tau = None
 
   tvals = None
   mcts_features = []
   for channel in xrange(len(ts_channels)):
-    print(ts_channels[channel])
+    if VERBOSE:
+      print('Channel:', ts_channels[channel])
     channel_features, channel_tvals = featurize_single_timeseries(
         mc_ts[:, channel], tau_range=tau_range, window_length=window_length,
         num_samples=num_samples, num_windows=num_windows, d_lag=d_lag, tau=tau,
         d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
+    if VERBOSE:
+      print()
 
     mcts_features.append(channel_features)
     if tvals is None:
@@ -205,7 +242,7 @@ def create_label_timeline(critical_inds, labels):
 # # ==============================================================================
 def create_pigdata33_features_labels(data):
 
-  ann_file = os.path.join(os.getenv('HOME'), 'Research/TransferLearning/data/33_annotation.txt')  
+  ann_file = os.path.join(DATA_DIR, '33_annotation.txt')
   ann_idx, ann_text = utils.load_annotation_file(ann_file)
 
   time_channel = 0
@@ -214,10 +251,13 @@ def create_pigdata33_features_labels(data):
   # Parameters for features
   # One minute long windows
   downsample = 1
-  tau_range = 40
-  window_length = 3000
-  num_samples = 100
+  window_length_s = 30  # Size of window in seconds.
+  tau_range = int(200/downsample)
+  window_length = int(FREQUENCY*window_length_s/downsample)
+  
+  num_samples = 500
   num_windows = None
+  
   d_lag = 3
   d_reduced = 6
   d_features = 1000
@@ -229,6 +269,11 @@ def create_pigdata33_features_labels(data):
     num_windows=num_windows, d_lag=d_lag, d_reduced=d_reduced,
     d_features=d_features, bandwidth=bandwidth)
 
+
+  # HACK:
+  # Loading a downsampled version, so all the indices need to be adjusted.
+  # downsample = 5
+  # IPython.embed()
   # Labels are:
   # 0: Stabilization
   # 1: Bleeding
@@ -239,7 +284,7 @@ def create_pigdata33_features_labels(data):
   # -1: None
   critical_anns = [2, 7, 8, 13, 18, 19, 26, 27, 30, 35, 38, 39, 43, 46, 47, 48, 51, 52, 60]
   ann_labels = [-1, 0, -1, 1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 3, 4, 3, 4, 3, 5]
-  critical_inds = [ann_idx[anni] for anni in critical_anns]
+  critical_inds = [ann_idx[anni]/downsample for anni in critical_anns]
   label_dict = create_label_timeline(critical_inds, ann_labels)
 
   mean_inds = [t + window_length/2.0 for t in tvals]
@@ -253,14 +298,18 @@ def create_pigdata33_features_labels(data):
   return mcts_f, labels
 
 
-# data_file = os.path.join(DATA_DIR, '33.csv')
-# col_names, data = utils.load_csv(data_file)
-data = np.load('tmp.npy')
-# IPython.embed()
-mcts_f, labels = create_pigdata33_features_labels(data)
+if __name__ == '__main__':
+  # data_file = os.path.join(DATA_DIR, '33.csv')
+  # col_names, data = utils.load_csv(data_file)
+  data = np.load('tmp2.npy')
+  mcts_f, labels = create_pigdata33_features_labels(data)
+  save_file = os.path.join(DATA_DIR, '33_features')
+  # IPython.embed()
+  np.save(save_file, {'features': mcts_f, 'labels': labels})
+  # IPython.embed()
 
 
-# ann_file = os.path.join(os.getenv('HOME'), 'Research/TransferLearning/data/33_annotation.txt')
+# ann_file = os.path.join(os.getenv('HOME'), 'Research/TransferLearning/data/33/33_annotation.txt')
 # with open(ann_file, 'r') as fh:
 #   ann = fh.readlines()
 
