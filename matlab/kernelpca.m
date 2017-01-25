@@ -14,17 +14,20 @@ addpath('mi');
 % 9 - SVO2
 % 10 -SPO2
 % 11 - Airway pressure
-% ann = strsplit(fileread('33_annotation.txt'),'\n');
-% ann_idx=[]; ann_text={};k=1;
-% for i=1:length(ann)
-%   s = ann{i};
-%   idx = find(isspace(s));
-%   if length(idx)==0, continue; end;
-%   ann_idx(k) = str2num(s(1:idx(1)));
-%   ann_text{k} = s(idx(1)+1:end);
-%   k=k+1;
-% end
-% ann_use = [3,8; 9,14; 19,20; 27,28; 31,36; 41,41; 44,47; 48,49; 52,53; 59,59; 60,60; 61,61];
+
+ann_file = '/usr0/home/sibiv/Research/TransferLearning/data/33_annotation.txt';
+ann = strsplit(fileread(ann_file),'\n');
+ann_idx=[]; ann_text={};k=1;
+for i=1:length(ann)
+  s = ann{i};
+  idx = find(isspace(s));
+  if length(idx)==0, continue; end;
+  ann_idx(k) = str2num(s(1:idx(1)));
+  ann_text{k} = s(idx(1)+1:end);
+  k=k+1;
+end
+ann_use = [3,8; 9,14; 19,20; 27,28; 31,36; 41,41; 44,47; 48,49; 52,53; 59,59; 60,60; 61,61];
+
 data_file = '/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/slow/33.csv';
 header = 1;
 start = 1;
@@ -43,11 +46,11 @@ ami = zeros(K-1,1);
 tau=0; fmv=inf;
 for k=1:K-1
  ami(k) = mutualinfo(y0(1:end-k)',y0(1+k:end)');
- if ami(k)<=fmv
-   tau = k; fmv=ami(k);
- else
-   fmv=-inf;
- end
+ % if ami(k)<=fmv
+ %   tau = k; fmv=ami(k);
+ % else
+ %   fmv=-inf;
+ % end
 end
 plot(ami)
 tau
@@ -98,32 +101,34 @@ end
 plot3(phi{1}(:,1),phi{1}(:,2),phi{1}(:,3),'r'); hold on;
 plot3(phi{2}(:,1),phi{2}(:,2),phi{2}(:,3),'g');
 plot3(phi{3}(:,1),phi{3}(:,2),phi{3}(:,3),'b'); hold off;
-% xhat = x(s(1):d:s(1)+L-1,:);
-% xhat=xhat-repmat(mean(xhat),size(xhat,1),1); xhat=xhat/max(max(abs(xhat)));
-% hold on; plot3(xhat(:,1),xhat(:,2),xhat(:,3)); hold off;
 
-% Steps = 1000;
-% comp = zeros(Steps,D);
-% shat = floor(linspace(1,length(x)-L+1,Steps));
-% Zhat = Z'*e*diag(1./v);
+xhat = x(s(1):d:s(1)+L-1,:);
+xhat=xhat-repmat(mean(xhat),size(xhat,1),1); xhat=xhat/max(max(abs(xhat)));
+hold on; plot3(xhat(:,1),xhat(:,2),xhat(:,3)); hold off;
+
+Steps = 1000;
+comp = zeros(Steps,D);
+shat = floor(linspace(1,length(x)-L+1,Steps));
+Zhat = Z'*e*diag(1./v);
 % parfor_progress(Steps);
-% parfor i=1:Steps
-%   xhat = x(shat(i):d:shat(i)+L-1,:);
-%   xhat=xhat-repmat(mean(xhat),size(xhat,1),1); xhat=xhat/max(max(abs(xhat)));
-%   comp(i,:) = mm_rbf(xhat,a)*Zhat;
+for i=1:Steps
+  i
+  xhat = x(shat(i):d:shat(i)+L-1,:);
+  xhat=xhat-repmat(mean(xhat),size(xhat,1),1); xhat=xhat/max(max(abs(xhat)));
+  comp(i,:) = mm_rbf(xhat,a)*Zhat;
 % parfor_progress;
-% end
+end
 % parfor_progress(0);
-% %===========================================
+%===========================================
 
-% plot3(comp(:,1),comp(:,2),comp(:,3))
+plot3(comp(:,1),comp(:,2),comp(:,3))
 
-% py = comp(:,5);
-% plot(shat,tsmovavg(py,'t',10,1)); hold on; y1=min(py);y2=max(py);
-% for i=1:length(ann_use)  
-%    plot([ann_idx(ann_use(i,1));ann_idx(ann_use(i,1));ann_idx(ann_use(i,2));ann_idx(ann_use(i,2))],[y1;y2;y1;y2]);
-% end
-% hold off;
+py = comp(:,5);
+plot(shat,tsmovavg(py,'t',10,1)); hold on; y1=min(py);y2=max(py);
+for i=1:length(ann_use)  
+   plot([ann_idx(ann_use(i,1));ann_idx(ann_use(i,1));ann_idx(ann_use(i,2));ann_idx(ann_use(i,2))],[y1;y2;y1;y2]);
+end
+hold off;
 
 % comp2 = tsmovavg(comp,'t',10,1);
 % j1=2;j2=5;
