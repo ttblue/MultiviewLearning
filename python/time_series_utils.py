@@ -13,6 +13,7 @@ from sklearn.cluster import KMeans
 
 import mutual_info as mi
 
+import plot_utils
 import utils
 
 VERBOSE = True
@@ -294,206 +295,55 @@ def create_pigdata33_features_labels(data):
   valid_inds = (labels != -1)
   mcts_f = [c_f[valid_inds, :] for c_f in mcts_f]
   labels = labels[valid_inds]
-
+  
   return mcts_f, labels
 
 
+def cluster_windows(feature_file):
+  data_dict = np.load(feature_file).tolist()
+  mcts_f = data_dict['features']
+  labels = data_dict['labels']
+  
+  num_clusters = np.unique(labels).shape[0]
+  num_channels = len(mcts_f)
+
+  nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
+  invalid_inds = np.unique([i for inds in nan_inds for i in inds])
+  valid_locs = np.ones(labels.shape[0]).astype(bool)
+  valid_locs[invalid_inds] = False
+  
+  mcts_f = [c_f[valid_locs] for c_f in mcts_f]
+  labels = labels[valid_locs]
+
+  kmeans = [KMeans(num_clusters) for _ in xrange(num_channels)]
+  for km, c_f in zip(kmeans, mcts_f):
+    km.fit(c_f)
+  all_labels = [labels] + [km.labels_ for km in kmeans]
+
+  mi_matrix = np.zeros((num_channels+1, num_channels+1))
+  for i in range(num_channels + 1):
+    for j in range(i, num_channels + 1):
+      lbl_mi = mi.mutual_information_2d(all_labels[i], all_labels[j])
+      mi_matrix[i, j] = mi_matrix[j, i] = lbl_mi
+
+  # max_mi = mi_matrix.max()
+  plot_utils.plot_matrix(mi_matrix, class_names)
+  plt.show()
+
+  IPython.embed()
+
+
 if __name__ == '__main__':
+  # pass
   # data_file = os.path.join(DATA_DIR, '33.csv')
   # col_names, data = utils.load_csv(data_file)
-  data = np.load('tmp2.npy')
-  mcts_f, labels = create_pigdata33_features_labels(data)
-  save_file = os.path.join(DATA_DIR, '33_features')
-  # IPython.embed()
-  np.save(save_file, {'features': mcts_f, 'labels': labels})
-  # IPython.embed()
-
-
-# ann_file = os.path.join(os.getenv('HOME'), 'Research/TransferLearning/data/33/33_annotation.txt')
-# with open(ann_file, 'r') as fh:
-#   ann = fh.readlines()
-
-# k = 1
-# ann_idx = {}
-# ann_text = {}
-# for s in ann:
-#   s = s.strip()
-#   s_split = s.split('\t')
-#   if len(s_split) == 1: continue
-#   ann_idx[k] = float(s_split[0])
-#   ann_text[k] = ' '.join(s_split[1:])
-#   k += 1
-
-# ann_use = [[3, 8], [9, 14], [19, 20], [27, 28], [31, 36], [41, 41], [44, 47],
-#            [48, 49], [52, 53], [59, 59], [60, 60], [61, 61]]
-
-# labels, data = utils.load_csv(os.path.join(DATA_DIR, '33.csv'))
-# y = data[:,4]
-
-# ysmooth = pd.rolling_window(y, 5, "triang")*5./3  # Scaling factor for normalization.
-# ysmooth = ysmooth[~np.isnan(ysmooth)]
-# Ny = ysmooth.shape[0]
-# plt.plot(ysmooth)
-
-# # # ==============================================================================
-# # Average Mutual Information & embedding
-# M = 100
-# N = 5000
-
-# y0 = ysmooth[:N]
-# ami = np.zeros(M)
-# alpha = 1.0
-# tau = 0  # Point where the shifted function is most dissimilar.
-# fmv = np.inf
-# for m in xrange(M):
-#   print m
-#   ami[m] = mi.mutual_information_2d(y0[:N-m], y0[m:])
-#   if ami[m] <= alpha*fmv:
-#     tau = m
-#     fmv = ami[m]
-#   else:
-#     fmv = -np.inf
-
-# plt.plot(ami)
-# print tau
-# plt.show()
-
-# D = 3
-# x = np.zeros((Ny-(D-1)*tau, 0))
-# for d in xrange(D):
-#   x = np.c_[x, ysmooth[d*tau:Ny-(D-d-1)*tau]]
-
-# L = 5000
-# stepsize = 1
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.scatter(x[:L:stepsize, 0], x[:L:stepsize, 1], x[:L:stepsize, 2])
-
-# # ==============================================================================
-# # Compute the features: Basis coefficients
-
-# Dred = 6  # number of dimensions to reduce to
-# Ns = 100  # number of samples
-# a = 0.5  # kernel bandwidth
-# df = 1000  # random features
-# mm_rbf = mm_rbf_fourierfeatures(D, df, a)
-
-# s = nr.randint(1, x.shape[0]-L, size=(Ns,))
-# Z = np.zeros((Ns, df))
-# # parfor_progress(Ns)
-# for i in range(Ns):
-#   print i
-#   xhat = x[s[i]:s[i]+L:stepsize, :]
-#   xhat -=  xhat.mean(axis=0)
-#   xhat /= np.abs(xhat).max()
-#   Z[i] = mm_rbf(xhat)
-# parfor_progress;
-
-# parfor_progress(0);
-# valid_inds = ~np.isnan(Z).any(axis=1)
-# valid_locs = np.nonzero(valid_inds)[0]
-# Z = Z[valid_inds]  # remove NaN rows.
-# Ns = Z.shape[0]
-
-# E, V, _ = nlg.svd(Z, full_matrices=0)
-# v = V[:Dred]**2
-# e = E[:, :Dred]
-# nl = int(L/stepsize)
-
-# # ==============================================================================
-# # Computing the basis windows -- not required in the end.
-# phis = []
-# for i in xrange(Dred):
-#   print i
-#   phi = np.zeros((nl, D))
-#   for j in xrange(Ns):
-#     xhat = x[s[valid_locs[j]]:s[valid_locs[j]]+L:stepsize, :]
-#     xhat -= xhat.mean(axis=0)
-#     xhat /= np.abs(xhat).max()
-#     phi += e[j, i]*xhat
-  
-#   phis.append(phi)
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.scatter(phis[0][:, 0], phis[0][:, 1], phis[0][:, 2], color='r')
-# ax.scatter(phis[1][:, 0], phis[1][:, 1], phis[1][:, 2], color='g')
-# ax.scatter(phis[2][:, 0], phis[2][:, 1], phis[2][:, 2], color='b')
-# plt.show()
-
-# xhat = x[s[0]:s[0]+L:stepsize, :]
-# xhat -= xhat.mean(axis=0)
-# xhat /= np.abs(xhat).max()
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.scatter(xhat[:, 0], xhat[:, 1], xhat[:, 2])
-# plt.show()
-# # ==============================================================================
-
-# nsteps = 1000
-# comp = np.zeros((nsteps, Dred))
-# shat = np.floor(np.linspace(0, x.shape[0]-L, nsteps)).astype(int)
-# Zhat = Z.T.dot(e).dot(np.diag(1./v))
-
-# for i in range(nsteps):
-#   print i
-#   xhat = x[shat[i]:shat[i]+L:stepsize, :]
-#   xhat -= xhat.mean(axis=0)
-#   xhat /= np.abs(xhat).max()
-#   comp[i, :] = mm_rbf(xhat).dot(Zhat)
-
-# valid_windows = ~np.isnan(comp).any(axis=1)
-# comp = comp[valid_windows]
-# shat = shat[valid_windows]
-# # ==============================================================================
-
-# comp2 = pd.rolling_window(comp, 10, 'triang')
-# shat2 = shat[~np.isnan(comp2).any(axis=1)]
-# shat2 -= shat2.min()
-# shat2 /= np.abs(shat2).max()
-# comp2 = comp2[~np.isnan(comp2).any(axis=1)]
-# j1, j2 = 1, 4
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# ax.scatter(shat2, comp2[:, j1], comp2[:, j2])#, color=[0.9, 0.9, 0.9])
-# plt.show()
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-# for j in range(comp2.shape[0]):
-#   print j
-#   fig.clf()
-#   # ax.cla()
-#   # ax = fig.add_subplot(111, projection='3d')
-#   ax.scatter(comp2[:j+1, 0], comp2[:j+1, 1], comp2[:j+1, 2], color=colors[:j+1])
-#   plt.show(block=False)
-#   time.sleep(0.1)
-
-# py = comp[:, 4]
-# py10 = pd.rolling_window(py, 10, 'triang')
-# py10[np.isnan(py10)] = py[np.isnan(py10)]
-# plt.plot(shat, py10)
-# ymin = py.min()
-# ymax = py.max()
-# yvals = [ymin, ymax, ymin, ymax]
-# for i in xrange(len(ann_use)):
-#   xvals = [ann_idx[ann_use[i][0]], ann_idx[ann_use[i][0]], ann_idx[ann_use[i][1]], ann_idx[ann_use[i][1]]]
-#   print xvals
-#   plt.plot(xvals, yvals)
-
-# plt.show()
-
-# for i=1:length(ann_use);
-# idx = shat>=ann_idx(ann_use(i,1)) & shat<=ann_idx(ann_use(i,2));
-# plot3(shat(idx),comp2(idx,j1),comp2(idx,j2))
-
-
-# d=20;
-# i=randi(length(s));
-# j=randi(length(s));
-# xhat = x(s(i):d:s(i)+L-1,:);
-# xhat=xhat-repmat(mean(xhat),size(xhat,1),1); xhat=xhat/max(max(abs(xhat)));
-# xhat2 = x(s(j):d:s(j)+L-1,:);
-# xhat2=xhat2-repmat(mean(xhat2),size(xhat2,1),1); xhat2=xhat2/max(max(abs(xhat2)));
-# rbf(xhat,xhat2,a)
-# sum(mm_rbf(xhat,a).*mm_rbf(xhat2,a))
+  # data = np.load('tmp2.npy')
+  # mcts_f, labels = create_pigdata33_features_labels(data)
+  # # IPython.embed()
+  # np.save(save_file, {'features': mcts_f, 'labels': labels})
+  class_names = [
+      'Ground_Truth', 'EKG', 'Art_pressure_MILLAR', 'Art_pressure_Fluid_Filled',
+      'Pulmonary_pressure', 'CVP', 'Plethysmograph', 'CCO', 'SVO2', 'SPO2',
+      'Airway_pressure', 'Vigeleo_SVV']
+  feature_file = os.path.join(DATA_DIR, '33_features.npy')
+  cluster_windows(feature_file)
