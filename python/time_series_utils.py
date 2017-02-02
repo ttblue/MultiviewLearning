@@ -6,8 +6,14 @@ import IPython
 
 import multiprocessing
 
-import matplotlib.pyplot as plt, matplotlib.cm as cm
-from mpl_toolkits.mplot3d import Axes3D
+try:
+  import matplotlib.pyplot as plt, matplotlib.cm as cm
+  from mpl_toolkits.mplot3d import Axes3D
+  import plot_utils
+  PLOTTING = True
+except ImportError:
+  PLOTTING = False
+
 import numpy as np, numpy.random as nr, numpy.linalg as nlg
 
 import pandas as pd
@@ -15,7 +21,6 @@ from sklearn.cluster import KMeans
 
 import mutual_info as mi
 
-import plot_utils
 import utils
 
 VERBOSE = True
@@ -77,7 +82,7 @@ def compute_tau(y, M=200, show=True):
 
   tau = np.argmin(minfo)
 
-  if show:
+  if show and PLOTTING:
     plt.plot(minfo)
     if VERBOSE:
       print(tau)
@@ -442,10 +447,12 @@ def cluster_windows(feature_file):
       mi_matrix[i, j] = mi_matrix[j, i] = lbl_mi
 
   # max_mi = mi_matrix.max()
-  plot_utils.plot_matrix(mi_matrix, class_names)
-  plt.show()
+  if PLOTTING:
+    plot_utils.plot_matrix(mi_matrix, class_names)
+    plt.show()
 
   IPython.embed()
+  return mi_matrix, class_names
 
 
 if __name__ == '__main__':
