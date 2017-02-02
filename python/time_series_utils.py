@@ -21,7 +21,7 @@ import utils
 VERBOSE = True
 FREQUENCY = 250
 DATA_DIR = os.getenv('PIG_DATA_DIR')#'/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/slow'
-
+SAVE_DIR = os.getenv('PIG_FEATURES_DIR')
 # ==============================================================================
 # 1 - time
 # 2 - X Value
@@ -323,7 +323,7 @@ def save_pigdata_features(args):
   # return mcts_f, labels
 
 
-def save_features_slow_pigs(parallel=False, num_workers=5):
+def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   time_channel = 0
   ts_channels = range(2, 13)
   downsample = 1
@@ -338,8 +338,17 @@ def save_features_slow_pigs(parallel=False, num_workers=5):
 
   channel_taus = None
 
+  data_dir = os.path.join(DATA_DIR, 'waveform/slow')
+  save_dir = os.path.join(SAVE_DIR, 'waveform/slow')
+  for dr in (data_dir, save_dir):
+    if not os.path.exists(dr):
+      os.makedirs(dr)
   data_files, features_files = utils.create_data_feature_filenames(
-      os.path.join(DATA_DIR, 'waveform/slow'))
+      data_dir, save_dir)
+
+  if num_pigs > 0:
+    data_files = data_files[:num_pigs]
+    features_files = features_files[:num_pigs]
 
   if parallel:
     # First one is done separately to calculate taus
@@ -440,7 +449,7 @@ def cluster_windows(feature_file):
 
 
 if __name__ == '__main__':
-  save_features_slow_pigs()
+  save_features_slow_pigs(3)
   # pass
   # data_file = os.path.join(DATA_DIR, '33.csv')
   # col_names, data = utils.load_csv(data_file)
