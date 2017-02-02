@@ -1,9 +1,10 @@
 from __future__ import print_function, division
 
-import glob
 import os
 import sys
 import IPython
+
+import multiprocessing
 
 import matplotlib.pyplot as plt, matplotlib.cm as cm
 from mpl_toolkits.mplot3d import Axes3D
@@ -249,11 +250,22 @@ def create_label_timeline(critical_inds, labels):
 # # ==============================================================================
 # # Putting things together
 # # ==============================================================================
-def save_pigdata_features(
-    data_file, features_file, time_channel=0, ts_channels=range(2, 13),
-    channel_taus=None, downsample=1, window_length_s=30, tau_range=200,
-    num_samples=500, num_windows=None, d_lag=3, d_reduced=6, d_features=1000,
-    bandwidth=0.5):
+def save_pigdata_features(args):
+
+  data_file = args['data_file']
+  features_file = args['features_file']
+  time_channel = args['time_channel']
+  ts_channels = args['ts_channels']
+  channel_taus = args['channel_taus']
+  downsample = args['downsample']
+  window_length_s = args['window_length_s']
+  tau_range = args['tau_range']
+  num_samples = args['num_samples']
+  num_windows = args['num_windows']
+  d_lag = args['d_lag']
+  d_reduced = args['d_reduced']
+  d_features = args['d_features']
+  bandwidth = args['bandwidth']
 
   _, data = utils.load_csv(data_file)
   
@@ -311,7 +323,7 @@ def save_pigdata_features(
   # return mcts_f, labels
 
 
-def save_features_slow_pigs():
+def save_features_slow_pigs(parallel=False, num_workers=5):
   time_channel = 0
   ts_channels = range(2, 13)
   downsample = 1
@@ -329,14 +341,68 @@ def save_features_slow_pigs():
   data_files, features_files = utils.create_data_feature_filenames(
       os.path.join(DATA_DIR, 'waveform/slow'))
 
-  for data_file, features_file in zip(data_files, features_files):
-    channel_taus = save_pigdata_features(
-        data_file=data_file, features_file=features_file,
-        time_channel=time_channel, ts_channels=ts_channels,
-        channel_taus=channel_taus, downsample=downsample,
-        window_length_s=window_length_s, tau_range=tau_range,
-        num_samples=num_samples, num_windows=num_windows, d_lag=d_lag,
-        d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
+  if parallel:
+    # First one is done separately to calculate taus
+    data_file, features_file = data_files[0], features_files[0]
+    args = {
+        'data_file': data_file,
+        'features_file': features_file,
+        'time_channel': time_channel,
+        'ts_channels': ts_channels,
+        'channel_taus': channel_taus,
+        'downsample': downsample,
+        'window_length_s': window_length_s,
+        'tau_range': tau_range,
+        'num_samples': num_samples,
+        'num_windows': num_windows,
+        'd_lag': d_lag,
+        'd_reduced': d_reduced,
+        'd_features': d_features,
+        'bandwidth': bandwidth,
+    }
+    channel_taus = save_pigdata_features(args)
+
+    all_args = [{
+        'data_file': data_file,
+        'features_file': features_file,
+        'time_channel': time_channel,
+        'ts_channels': ts_channels,
+        'channel_taus': channel_taus,
+        'downsample': downsample,
+        'window_length_s': window_length_s,
+        'tau_range': tau_range,
+        'num_samples': num_samples,
+        'num_windows': num_windows,
+        'd_lag': d_lag,
+        'd_reduced': d_reduced,
+        'd_features': d_features,
+        'bandwidth': bandwidth,
+      } for data_file, features_file in zip(data_files[1:], features_files[1:])]
+
+    pl = multiprocessing.Pool(num_workers)
+    pl.map(save_pigdata_features, all_args)
+
+    print('DONE')
+
+  else:
+    for data_file, features_file in zip(data_files, features_files):
+      args = {
+          'data_file': data_file,
+          'features_file': features_file,
+          'time_channel': time_channel,
+          'ts_channels': ts_channels,
+          'channel_taus': channel_taus,
+          'downsample': downsample,
+          'window_length_s': window_length_s,
+          'tau_range': tau_range,
+          'num_samples': num_samples,
+          'num_windows': num_windows,
+          'd_lag': d_lag,
+          'd_reduced': d_reduced,
+          'd_features': d_features,
+          'bandwidth': bandwidth,
+      }
+      channel_taus = save_pigdata_features(args)
 
 
 def cluster_windows(feature_file):
