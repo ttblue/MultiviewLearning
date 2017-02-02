@@ -1,4 +1,6 @@
 # Utility functions for processing data and such.
+from __future__ import print_function
+
 import csv
 import glob
 import os
@@ -91,8 +93,8 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
 
 
 def create_data_feature_filenames(data_dir, save_dir):
-  if data_dir[-1] != '*':
-    data_dir = os.path.join(data_dir, '*')
+  if data_dir[-5] != '*.csv':
+    data_dir = os.path.join(data_dir, '*.csv')
   data_files = glob.glob(data_dir)
 
   features_files = []

@@ -449,7 +449,7 @@ def cluster_windows(feature_file):
 
 
 if __name__ == '__main__':
-  save_features_slow_pigs(3)
+  save_features_slow_pigs(1)
   # pass
   # data_file = os.path.join(DATA_DIR, '33.csv')
   # col_names, data = utils.load_csv(data_file)
