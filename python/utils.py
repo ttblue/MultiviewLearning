@@ -103,7 +103,7 @@ def create_data_feature_filenames(data_dir, save_dir):
     features_file = os.path.join(save_dir, features_file)
     features_files.append(features_file)
 
-    return data_files, features_files
+  return data_files, features_files
 
 
 # def create_annotation_labels(ann_text):
