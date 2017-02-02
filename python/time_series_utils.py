@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 
+import glob
 import os
 import sys
 import IPython
@@ -18,7 +19,7 @@ import utils
 
 VERBOSE = True
 FREQUENCY = 250
-DATA_DIR = '/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/slow'
+DATA_DIR = os.getenv('PIG_DATA_DIR')#'/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/slow'
 
 # ==============================================================================
 # 1 - time
@@ -184,7 +185,7 @@ def featurize_single_timeseries(
   if VERBOSE:
     print('\t\tWindow %i out of %i.'%(i+1, num_windows))
 
-  return ts_features, tvals
+  return ts_features, tvals, tau
 
 
 def compute_average_tau(mc_ts, M=200):
@@ -197,12 +198,12 @@ def compute_average_tau(mc_ts, M=200):
   return int(np.mean(taus))
 
 
-def feature_multi_channel_timeseries(mc_ts, time_channel, ts_channels,
-    tau_range=50, downsample=5, window_length=3000, num_samples=100,
-    num_windows=None, d_lag=3, d_reduced=6, d_features=1000, bandwidth=0.5):
+def feature_multi_channel_timeseries(mc_ts, tstamps, channel_taus=None,
+    tau_range=50, window_length=3000, num_samples=100, num_windows=None,
+    d_lag=3, d_reduced=6, d_features=1000, bandwidth=0.5):
   
-  tstamps = mc_ts[::downsample, time_channel]
-  mc_ts = mc_ts[::downsample, ts_channels]
+  # tstamps = mc_ts[:, time_channel]
+  # mc_ts = mc_ts[:, ts_channels]
 
   if num_windows is None:
     num_windows = int(mc_ts.shape[0]/window_length)
@@ -210,14 +211,17 @@ def feature_multi_channel_timeseries(mc_ts, time_channel, ts_channels,
   # if VERBOSE:
   #   print('Computing average tau.')
   # tau = compute_average_tau(mc_ts, M=tau_range)
-  tau = None
+  all_taus = [] if channel_taus is None else channel_taus
+  if channel_taus is None:
+    channel_taus = [None for _ in xrange(mc_ts.shape[1])]
 
   tvals = None
   mcts_features = []
-  for channel in xrange(len(ts_channels)):
+  for channel in xrange(mc_ts.shape[1]):
+    tau = channel_taus[channel]
     if VERBOSE:
-      print('Channel:', ts_channels[channel])
-    channel_features, channel_tvals = featurize_single_timeseries(
+      print('Channel:', channel + 1)
+    channel_features, channel_tvals, tau_channel = featurize_single_timeseries(
         mc_ts[:, channel], tau_range=tau_range, window_length=window_length,
         num_samples=num_samples, num_windows=num_windows, d_lag=d_lag, tau=tau,
         d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
@@ -225,10 +229,13 @@ def feature_multi_channel_timeseries(mc_ts, time_channel, ts_channels,
       print()
 
     mcts_features.append(channel_features)
+    if tau is not None:
+      all_taus.append(tau_channel)
     if tvals is None:
       tvals = channel_tvals
 
-  return mcts_features, tvals
+  window_tstamps = tstamps[tvals]
+  return mcts_features, window_tstamps, all_taus
 
 
 def create_label_timeline(critical_inds, labels):
@@ -238,39 +245,42 @@ def create_label_timeline(critical_inds, labels):
 
   return label_dict
 
+
 # # ==============================================================================
 # # Putting things together
 # # ==============================================================================
-def create_pigdata33_features_labels(data):
+def save_pigdata_features(
+    data_file, features_file, time_channel=0, ts_channels=range(2, 13),
+    channel_taus=None, downsample=1, window_length_s=30, tau_range=200,
+    num_samples=500, num_windows=None, d_lag=3, d_reduced=6, d_features=1000,
+    bandwidth=0.5):
 
-  ann_file = os.path.join(DATA_DIR, '33_annotation.txt')
-  ann_idx, ann_text = utils.load_annotation_file(ann_file)
-
-  time_channel = 0
-  ts_channels = range(2, 13)
+  _, data = utils.load_csv(data_file)
+  
+  mc_ts = data[::downsample, ts_channels]
+  tstamps = data[::downsample, time_channel]
 
   # Parameters for features
-  # One minute long windows
-  downsample = 1
-  window_length_s = 30  # Size of window in seconds.
-  tau_range = int(200/downsample)
+  tau_range = int(tau_range/downsample)
   window_length = int(FREQUENCY*window_length_s/downsample)
+
+  mcts_f, window_tstamps, channel_taus = feature_multi_channel_timeseries(mc_ts,
+    tstamps, tau_range=tau_range, window_length=window_length,
+    num_samples=num_samples, num_windows=num_windows, d_lag=d_lag,
+    d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
+
+  nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
+  invalid_inds = np.unique([i for inds in nan_inds for i in inds])
+  valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
+  valid_locs[invalid_inds] = False
   
-  num_samples = 500
-  num_windows = None
-  
-  d_lag = 3
-  d_reduced = 6
-  d_features = 1000
-  bandwidth = 0.5
+  mcts_f = [c_f[valid_locs] for c_f in mcts_f]
+  window_tstamps = window_tstamps[valid_locs]
 
-  mcts_f, tvals = feature_multi_channel_timeseries(data,
-    time_channel=time_channel, ts_channels=ts_channels, tau_range=tau_range,
-    downsample=downsample, window_length=window_length, num_samples=num_samples,
-    num_windows=num_windows, d_lag=d_lag, d_reduced=d_reduced,
-    d_features=d_features, bandwidth=bandwidth)
+  save_data = {'features': mcts_f, 'tstamps': window_tstamps, 'taus': channel_taus}
+  np.save(features_file, save_data)
 
-
+  return channel_taus
   # HACK:
   # Loading a downsampled version, so all the indices need to be adjusted.
   # downsample = 5
@@ -283,20 +293,50 @@ def create_pigdata33_features_labels(data):
   # 4: Between resuscitations
   # 5: Recovery
   # -1: None
-  critical_anns = [2, 7, 8, 13, 18, 19, 26, 27, 30, 35, 38, 39, 43, 46, 47, 48, 51, 52, 60]
-  ann_labels = [-1, 0, -1, 1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 3, 4, 3, 4, 3, 5]
-  critical_inds = [ann_idx[anni]/downsample for anni in critical_anns]
-  label_dict = create_label_timeline(critical_inds, ann_labels)
+  # ann_file = os.path.join(DATA_DIR, '33_annotation.txt')
+  # ann_idx, ann_text = utils.load_annotation_file(ann_file)
+  # critical_anns = [2, 7, 8, 13, 18, 19, 26, 27, 30, 35, 38, 39, 43, 46, 47, 48, 51, 52, 60]
+  # ann_labels = [-1, 0, -1, 1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 3, 4, 3, 4, 3, 5]
+  # critical_inds = [ann_idx[anni]/downsample for anni in critical_anns]
+  # label_dict = create_label_timeline(critical_inds, ann_labels)
 
-  mean_inds = [t + window_length/2.0 for t in tvals]
-  segment_inds = np.searchsorted(critical_inds, mean_inds)
-  labels = np.array([label_dict[idx] for idx in segment_inds])
+  # mean_inds = [t + window_length/2.0 for t in tvals]
+  # segment_inds = np.searchsorted(critical_inds, mean_inds)
+  # labels = np.array([label_dict[idx] for idx in segment_inds])
 
-  valid_inds = (labels != -1)
-  mcts_f = [c_f[valid_inds, :] for c_f in mcts_f]
-  labels = labels[valid_inds]
+  # valid_inds = (labels != -1)
+  # mcts_f = [c_f[valid_inds, :] for c_f in mcts_f]
+  # labels = labels[valid_inds]
   
-  return mcts_f, labels
+  # return mcts_f, labels
+
+
+def save_features_slow_pigs():
+  time_channel = 0
+  ts_channels = range(2, 13)
+  downsample = 1
+  window_length_s = 30
+  tau_range = 200
+  num_samples = 500
+  num_windows = None
+  d_lag = 3
+  d_reduced = 6
+  d_features = 1000
+  bandwidth = 0.5
+
+  channel_taus = None
+
+  data_files, features_files = utils.create_data_feature_filenames(
+      os.path.join(DATA_DIR, 'waveform/slow'))
+
+  for data_file, features_file in zip(data_files, features_files):
+    channel_taus = save_pigdata_features(
+        data_file=data_file, features_file=features_file,
+        time_channel=time_channel, ts_channels=ts_channels,
+        channel_taus=channel_taus, downsample=downsample,
+        window_length_s=window_length_s, tau_range=tau_range,
+        num_samples=num_samples, num_windows=num_windows, d_lag=d_lag,
+        d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
 
 
 def cluster_windows(feature_file):
@@ -334,6 +374,8 @@ def cluster_windows(feature_file):
 
 
 if __name__ == '__main__':
+
+  
   # pass
   # data_file = os.path.join(DATA_DIR, '33.csv')
   # col_names, data = utils.load_csv(data_file)
@@ -341,9 +383,9 @@ if __name__ == '__main__':
   # mcts_f, labels = create_pigdata33_features_labels(data)
   # # IPython.embed()
   # np.save(save_file, {'features': mcts_f, 'labels': labels})
-  class_names = [
-      'Ground_Truth', 'EKG', 'Art_pressure_MILLAR', 'Art_pressure_Fluid_Filled',
-      'Pulmonary_pressure', 'CVP', 'Plethysmograph', 'CCO', 'SVO2', 'SPO2',
-      'Airway_pressure', 'Vigeleo_SVV']
-  feature_file = os.path.join(DATA_DIR, '33_features.npy')
-  cluster_windows(feature_file)
+  # class_names = [
+  #     'Ground_Truth', 'EKG', 'Art_pressure_MILLAR', 'Art_pressure_Fluid_Filled',
+  #     'Pulmonary_pressure', 'CVP', 'Plethysmograph', 'CCO', 'SVO2', 'SPO2',
+  #     'Airway_pressure', 'Vigeleo_SVV']
+  # feature_file = os.path.join(DATA_DIR, '33_features.npy')
+  # cluster_windows(feature_file)
