@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 
 import os
+import time
 import sys
 import IPython
 
@@ -272,6 +273,9 @@ def save_pigdata_features(args):
   d_features = args['d_features']
   bandwidth = args['bandwidth']
 
+  if VERBOSE:
+    t_start = time.time()
+    print('Loading data.')
   _, data = utils.load_csv(data_file)
   
   mc_ts = data[::downsample, ts_channels]
@@ -294,8 +298,13 @@ def save_pigdata_features(args):
   mcts_f = [c_f[valid_locs] for c_f in mcts_f]
   window_tstamps = window_tstamps[valid_locs]
 
+  if VERBOSE:
+    print('Saving features.')
   save_data = {'features': mcts_f, 'tstamps': window_tstamps, 'taus': channel_taus}
   np.save(features_file, save_data)
+
+  if VERBOSE:
+    print('Time taken for pig: %.2f'%(time.time() - t_start))
 
   return channel_taus
   # HACK:
@@ -331,8 +340,8 @@ def save_pigdata_features(args):
 def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   time_channel = 0
   ts_channels = range(2, 13)
-  downsample = 1
-  window_length_s = 30
+  downsample = 10
+  window_length_s = 60
   tau_range = 200
   num_samples = 500
   num_windows = None
@@ -348,8 +357,13 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   for dr in (data_dir, save_dir):
     if not os.path.exists(dr):
       os.makedirs(dr)
+  suffix = '_features_ds_%i_ws_%i'%(downsample, window_length_s)
   data_files, features_files = utils.create_data_feature_filenames(
-      data_dir, save_dir)
+      data_dir, save_dir, suffix)
+  # Hack to put pig 33 up in front:
+  idx33 = map(os.path.basename, data_files).index('33.csv')
+  data_files[0], data_files[idx33] = data_files[idx33], data_files[0]
+  features_files[0], features_files[idx33] = features_files[idx33], features_files[0]
 
   if num_pigs > 0:
     data_files = data_files[:num_pigs]

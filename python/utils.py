@@ -92,7 +92,7 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
   return ann_time, ann_text
 
 
-def create_data_feature_filenames(data_dir, save_dir):
+def create_data_feature_filenames(data_dir, save_dir, suffix):
   if data_dir[-5] != '*.csv':
     data_dir = os.path.join(data_dir, '*.csv')
   data_files = glob.glob(data_dir)
@@ -101,7 +101,7 @@ def create_data_feature_filenames(data_dir, save_dir):
   for data_file in data_files:
     data_file = os.path.basename(data_file)
     dfile_split = data_file.split('.')
-    features_file = '.'.join(dfile_split[:-1]) + '_features'
+    features_file = '.'.join(dfile_split[:-1]) + suffix
     features_file = os.path.join(save_dir, features_file)
     features_files.append(features_file)
 
