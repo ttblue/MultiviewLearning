@@ -236,7 +236,7 @@ def feature_multi_channel_timeseries(mc_ts, tstamps, channel_taus=None,
       print()
 
     mcts_features.append(channel_features)
-    if tau is not None:
+    if tau is None:
       all_taus.append(tau_channel)
     if tvals is None:
       tvals = channel_tvals
@@ -293,11 +293,11 @@ def save_pigdata_features(args):
 
   nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
   invalid_inds = np.unique([i for inds in nan_inds for i in inds])
-  valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
-  valid_locs[invalid_inds] = False
-  
-  mcts_f = [c_f[valid_locs] for c_f in mcts_f]
-  window_tstamps = window_tstamps[valid_locs]
+  if len(invalid_inds) > 0:
+    valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
+    valid_locs[invalid_inds] = False
+    mcts_f = [c_f[valid_locs] for c_f in mcts_f]
+    window_tstamps = window_tstamps[valid_locs]
 
   if VERBOSE:
     print('Saving features.')
@@ -379,8 +379,8 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   else:
     channel_taus = None
 
-  import IPython
-  IPython.embed()
+  # import IPython
+  # IPython.embed()
 
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
