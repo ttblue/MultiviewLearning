@@ -369,16 +369,18 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   restart = any(already_finished)
   if restart:
     first_finished_idx = already_finished.index(True)
-    ffile = features_files[already_finished]
+    ffile = features_files[first_finished_idx]+'.npy'
     channel_taus = np.load(ffile).tolist()['taus']
 
     not_finished = [not finished for finished in already_finished]
-    data_files = np.array(data_files)[not_finished].tolist()
-    features_files = np.array(features_files)[not_finished].tolist()
+    data_files = [data_files[i] for i in xrange(len(data_files)) if not_finished[i]]
+    features_files = [features_files[i] for i in xrange(len(features_files)) if not_finished[i]]
 
   else:
     channel_taus = None
 
+  import IPython
+  IPython.embed()
 
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
