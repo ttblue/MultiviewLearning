@@ -105,6 +105,10 @@ def create_data_feature_filenames(data_dir, save_dir, suffix):
     features_file = os.path.join(save_dir, features_file)
     features_files.append(features_file)
 
+  sorted_inds = np.argsort([int(os.path.basename(dfile).split('.')[0]) for dfile in data_files])
+  data_files = [data_files[i] for i in sorted_inds]
+  features_files = [features_files[i] for i in sorted_inds]
+
   return data_files, features_files
 
 
