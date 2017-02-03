@@ -28,11 +28,16 @@ def load_csv(filename, delim='\t', downsample=1):
     # First line is the name of the columns
     row = reader.next()[0]
     col_names = row.strip(delim).split(delim)
+    col_len = len(col_names)
 
     idx = 0
     for row in reader:
       if idx % downsample == 0:
-        data.append([float(v) for v in row[0].strip(delim).split(delim)])
+        data_row = [float(v) for v in row[0].strip(delim).split(delim)]
+        # Assuming these are few and far between:
+        if len(data_row) != col_len:
+          continue
+        data.append(data_row)
       idx += 1
 
   return col_names, np.array(data)
@@ -51,7 +56,7 @@ def load_annotation_file(ann_file):
     s_split = s.split('\t')
     if len(s_split) == 1: continue
     ann_idx[k] = float(s_split[0])
-    ann_text[k] = ' '.join(s_split[1:])
+    ann_text[k] = ' '.join(s_split[1:]).lower().strip()
     k += 1
 
   return ann_idx, ann_text
@@ -112,35 +117,61 @@ def create_data_feature_filenames(data_dir, save_dir, suffix):
   return data_files, features_files
 
 
-# def create_annotation_labels(ann_text):
-#   # Labels are:
-#   # 0: Stabilization
-#   # 1: Bleeding
-#   # 2: Between bleeds
-#   # 3: Resuscitation
-#   # 4: Between resuscitations
-#   # 5: Recovery
-#   # -1: None
+def create_annotation_labels(ann_text):
+  # Labels are:
+  # 0: Stabilization
+  # 1: Bleeding
+  # 2: Between bleeds
+  # 3: Resuscitation
+  # 4: Between resuscitation events
+  # 5: Post resuscitation
+  # -1: None
 
-#   stabilization_start_re = "30 min stabilization period$"
-#   stabilization_end_re = "30 min stabilization period (completed|ended)$"
-#   resuscitation_start_re = "(begin resuscitation with hextend$|CPR$)"
+  stabilization_start_re = re.compile("30 min stabilization period$")
+  stabilization_end_re = re.compile("30 min stabilization period (completed|ended)$")
+  bleed_start_re = re.compile("^bleed \# [1-9](?! stopped| temporarily stopped)")
+  bleed_end_re = re.compile("^bleed \# [1-9] (stopped|temporarily stopped)$")
+  resuscitation_start_re = re.compile("^((begin |_begin )*resuscitation with hextend( \(bag \#[1-9]\))*|cpr|co started|dobutamine started|lr started|(na|sodium) nitrite( started)*)$")
+  resuscitation_end_re = re.compile("^(co stopped|cpr (completed|stopped)|dobutamine stopped|lr (complete|stopped)|resuscitation (\(hextend\) )*complete[d]*|(na|sodium) nitrite stopped)$")
 
-#   lbl = -1
-#   critical_anns = []
-#   ann_labels = []
+  lbl = -1
+  critical_anns = []
+  ann_labels = []
 
-#   for idx, text in ann_text.iteritems():
-#     pass
+  for idx, text in ann_text.iteritems():
+    new_lbl = lbl
+    if stabilization_start_re.search(text) is not None:
+      # Everything starts with stabilization. If there are multiple, only
+      # the last one matters.
+      critical_anns = []
+      ann_labels = []
+      new_lbl = 0
+    # Ignore portion right after stabilization before first bleed.
+    elif stabilization_end_re.search(text) is not None:
+      new_lbl = -1
+    elif bleed_start_re.search(text) is not None:
+      new_lbl = 1 
+    elif bleed_end_re.search(text) is not None:
+      new_lbl = 2
+    elif resuscitation_start_re.search(text) is not None:
+      new_lbl = 3
+    elif resuscitation_end_re.search(text) is not None:
+      new_lbl = 4
 
-# Things to keep track of:
-# 1. Begin 30 min stabilization period
-# 2. Bleed #
-# 3. Bleed # resumed
-# 4. Bleed # temporarily stopped
-# 5. Bleed # stopped
-# 6. Begin resuscitation
-# 7. Resuscitation completed
-# 8. LR started
-# 9. LR stopped
-# 10. Norepinephrine/epinephrine?
+    if new_lbl != lbl:
+      critical_anns.append(idx)
+      ann_labels.append(lbl)
+      lbl = new_lbl
+
+  if critical_anns[-1] != idx:
+    critical_anns.append(idx)
+    ann_labels.append(5)
+
+  return critical_anns, ann_labels
+
+
+if __name__ == '__main__':
+  import IPython
+  ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
+  critical_anns, ann_labels = create_annotation_labels(ann_text)
+  IPython.embed()
