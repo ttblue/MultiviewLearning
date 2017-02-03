@@ -341,8 +341,8 @@ def save_pigdata_features(args):
 def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   time_channel = 0
   ts_channels = range(2, 13)
-  downsample = 10
-  window_length_s = 60
+  downsample = 5
+  window_length_s = 30
   tau_range = 200
   num_samples = 500
   num_windows = None
@@ -365,7 +365,7 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   features_files[0], features_files[idx33] = features_files[idx33], features_files[0]
 
   # Not re-computing the stuff already computed.
-  already_finished = [os.path.exists(ffile) for ffile in features_files]
+  already_finished = [os.path.exists(ffile+'.npy') for ffile in features_files]
   restart = any(already_finished)
   if restart:
     first_finished_idx = already_finished.index(True)
@@ -485,7 +485,7 @@ def cluster_windows(feature_file):
 
 
 if __name__ == '__main__':
-  save_features_slow_pigs(1)
+  save_features_slow_pigs(-1, True, 5)
   # pass
   # data_file = os.path.join(DATA_DIR, '33.csv')
   # col_names, data = utils.load_csv(data_file)
