@@ -275,6 +275,7 @@ def save_pigdata_features(args):
 
   if VERBOSE:
     t_start = time.time()
+    print('Pig %s.'%(os.path.basename(data_file).split('.')[0]))
     print('Loading data.')
   _, data = utils.load_csv(data_file)
   
@@ -350,8 +351,6 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   d_features = 1000
   bandwidth = 0.5
 
-  channel_taus = None
-
   data_dir = os.path.join(DATA_DIR, 'waveform/slow')
   save_dir = os.path.join(SAVE_DIR, 'waveform/slow')
   for dr in (data_dir, save_dir):
@@ -364,6 +363,22 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   idx33 = map(os.path.basename, data_files).index('33.csv')
   data_files[0], data_files[idx33] = data_files[idx33], data_files[0]
   features_files[0], features_files[idx33] = features_files[idx33], features_files[0]
+
+  # Not re-computing the stuff already computed.
+  already_finished = [os.path.exists(ffile) for ffile in features_files]
+  restart = any(already_finished)
+  if restart:
+    first_finished_idx = already_finished.index(True)
+    ffile = features_files[already_finished]
+    channel_taus = np.load(ffile).tolist()['taus']
+
+    not_finished = [not finished for finished in already_finished]
+    data_files = np.array(data_files)[not_finished].tolist()
+    features_files = np.array(features_files)[not_finished].tolist()
+
+  else:
+    channel_taus = None
+
 
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
