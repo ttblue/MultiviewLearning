@@ -257,55 +257,58 @@ def create_label_timeline(critical_inds, labels):
 # # Putting things together
 # # ==============================================================================
 def save_pigdata_features(args):
+  try:
+    data_file = args['data_file']
+    features_file = args['features_file']
+    time_channel = args['time_channel']
+    ts_channels = args['ts_channels']
+    channel_taus = args['channel_taus']
+    downsample = args['downsample']
+    window_length_s = args['window_length_s']
+    tau_range = args['tau_range']
+    num_samples = args['num_samples']
+    num_windows = args['num_windows']
+    d_lag = args['d_lag']
+    d_reduced = args['d_reduced']
+    d_features = args['d_features']
+    bandwidth = args['bandwidth']
 
-  data_file = args['data_file']
-  features_file = args['features_file']
-  time_channel = args['time_channel']
-  ts_channels = args['ts_channels']
-  channel_taus = args['channel_taus']
-  downsample = args['downsample']
-  window_length_s = args['window_length_s']
-  tau_range = args['tau_range']
-  num_samples = args['num_samples']
-  num_windows = args['num_windows']
-  d_lag = args['d_lag']
-  d_reduced = args['d_reduced']
-  d_features = args['d_features']
-  bandwidth = args['bandwidth']
+    if VERBOSE:
+      t_start = time.time()
+      print('Pig %s.'%(os.path.basename(data_file).split('.')[0]))
+      print('Loading data.')
+    _, data = utils.load_csv(data_file)
+    
+    mc_ts = data[::downsample, ts_channels]
+    tstamps = data[::downsample, time_channel]
 
-  if VERBOSE:
-    t_start = time.time()
-    print('Pig %s.'%(os.path.basename(data_file).split('.')[0]))
-    print('Loading data.')
-  _, data = utils.load_csv(data_file)
-  
-  mc_ts = data[::downsample, ts_channels]
-  tstamps = data[::downsample, time_channel]
+    # Parameters for features
+    tau_range = int(tau_range/downsample)
+    window_length = int(FREQUENCY*window_length_s/downsample)
 
-  # Parameters for features
-  tau_range = int(tau_range/downsample)
-  window_length = int(FREQUENCY*window_length_s/downsample)
+    mcts_f, window_tstamps, channel_taus = feature_multi_channel_timeseries(mc_ts,
+      tstamps, tau_range=tau_range, window_length=window_length,
+      num_samples=num_samples, num_windows=num_windows, d_lag=d_lag,
+      d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
 
-  mcts_f, window_tstamps, channel_taus = feature_multi_channel_timeseries(mc_ts,
-    tstamps, tau_range=tau_range, window_length=window_length,
-    num_samples=num_samples, num_windows=num_windows, d_lag=d_lag,
-    d_reduced=d_reduced, d_features=d_features, bandwidth=bandwidth)
+    nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
+    invalid_inds = np.unique([i for inds in nan_inds for i in inds])
+    if len(invalid_inds) > 0:
+      valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
+      valid_locs[invalid_inds] = False
+      mcts_f = [c_f[valid_locs] for c_f in mcts_f]
+      window_tstamps = window_tstamps[valid_locs]
 
-  nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
-  invalid_inds = np.unique([i for inds in nan_inds for i in inds])
-  if len(invalid_inds) > 0:
-    valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
-    valid_locs[invalid_inds] = False
-    mcts_f = [c_f[valid_locs] for c_f in mcts_f]
-    window_tstamps = window_tstamps[valid_locs]
+    if VERBOSE:
+      print('Saving features.')
+    save_data = {'features': mcts_f, 'tstamps': window_tstamps, 'taus': channel_taus}
+    np.save(features_file, save_data)
 
-  if VERBOSE:
-    print('Saving features.')
-  save_data = {'features': mcts_f, 'tstamps': window_tstamps, 'taus': channel_taus}
-  np.save(features_file, save_data)
+    if VERBOSE:
+      print('Time taken for pig: %.2f'%(time.time() - t_start))
 
-  if VERBOSE:
-    print('Time taken for pig: %.2f'%(time.time() - t_start))
+  except Exception as e:
+    print(e)
 
   return channel_taus
   # HACK:
@@ -388,24 +391,27 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
 
   if parallel:
     # First one is done separately to calculate taus
-    data_file, features_file = data_files[0], features_files[0]
-    args = {
-        'data_file': data_file,
-        'features_file': features_file,
-        'time_channel': time_channel,
-        'ts_channels': ts_channels,
-        'channel_taus': channel_taus,
-        'downsample': downsample,
-        'window_length_s': window_length_s,
-        'tau_range': tau_range,
-        'num_samples': num_samples,
-        'num_windows': num_windows,
-        'd_lag': d_lag,
-        'd_reduced': d_reduced,
-        'd_features': d_features,
-        'bandwidth': bandwidth,
-    }
-    channel_taus = save_pigdata_features(args)
+    if channel_taus is None:
+      data_file, features_file = data_files[0], features_files[0]
+      args = {
+          'data_file': data_file,
+          'features_file': features_file,
+          'time_channel': time_channel,
+          'ts_channels': ts_channels,
+          'channel_taus': channel_taus,
+          'downsample': downsample,
+          'window_length_s': window_length_s,
+          'tau_range': tau_range,
+          'num_samples': num_samples,
+          'num_windows': num_windows,
+          'd_lag': d_lag,
+          'd_reduced': d_reduced,
+          'd_features': d_features,
+          'bandwidth': bandwidth,
+      }
+      channel_taus = save_pigdata_features(args)
+      data_files = data_files[1:]
+      features_files = features_files[1:]
 
     all_args = [{
         'data_file': data_file,
@@ -422,7 +428,7 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
         'd_reduced': d_reduced,
         'd_features': d_features,
         'bandwidth': bandwidth,
-      } for data_file, features_file in zip(data_files[1:], features_files[1:])]
+      } for data_file, features_file in zip(data_file, features_files)]
 
     pl = multiprocessing.Pool(num_workers)
     pl.map(save_pigdata_features, all_args)
