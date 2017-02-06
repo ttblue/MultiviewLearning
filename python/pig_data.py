@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 
+import glob
 import os
 import time
 import IPython
@@ -52,7 +53,7 @@ def save_pigdata_features(args):
 
     # Parameters for features
     tau_range = int(tau_range/downsample)
-    window_length = int(FREQUENCY*window_length_s/downsample)
+    window_length = int(tsu.FREQUENCY*window_length_s/downsample)
 
     mcts_f, window_tstamps, channel_taus = tsu.feature_multi_channel_timeseries(
       mc_ts, tstamps, channel_taus=channel_taus, tau_range=tau_range,
@@ -137,13 +138,16 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   features_files[0], features_files[idx33] = features_files[idx33], features_files[0]
 
   # Not re-computing the stuff already computed.
+  channel_taus = None
+  taus_file = os.path.join(save_dir, 'taus_ds_%i_ws_%i.npy'%(downsample, window_length_s))
+  if os.path.exists(taus_file):
+    channel_taus = np.load(taus_file).tolist()['taus']
+
   already_finished = [os.path.exists(ffile + '.npy') for ffile in features_files]
   restart = any(already_finished)
+
   if restart:
-    taus_file = os.path.join(save_dir, 'taus_ds_%i_ws_%i'%(downsample, window_length_s))
-    if os.path.exists(taus_file):
-      channel_taus = np.load(taus_file).tolist()['taus']
-    else:
+    if channel_taus is None: 
       first_finished_idx = already_finished.index(True)
       ffile = features_files[first_finished_idx] + '.npy'
       channel_taus = np.load(ffile).tolist()['taus']
@@ -152,11 +156,8 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
     data_files = [data_files[i] for i in xrange(len(data_files)) if not_finished[i]]
     features_files = [features_files[i] for i in xrange(len(features_files)) if not_finished[i]]
 
-  else:
-    channel_taus = None
-
   # import IPython
-  # IPython.embed()
+  IPython.embed()
 
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
@@ -201,7 +202,7 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
         'd_reduced': d_reduced,
         'd_features': d_features,
         'bandwidth': bandwidth,
-      } for data_file, features_file in zip(data_file, features_files)]
+      } for data_file, features_file in zip(data_files, features_files)]
 
     pl = multiprocessing.Pool(num_workers)
     pl.map(save_pigdata_features, all_args)
@@ -245,7 +246,7 @@ def load_slow_pig_features_and_labels(num_pigs=-1):
 
 
 if __name__ == '__main__':
-  save_features_slow_pigs(-1, True, 5)
+  save_features_slow_pigs(-1, True, 8)
   # pass
   # data_file = os.path.join(DATA_DIR, '33.csv')
   # col_names, data = utils.load_csv(data_file)
@@ -260,3 +261,4 @@ if __name__ == '__main__':
   # feature_file = os.path.join(DATA_DIR, '33_features.npy')
   # cluster_windows(feature_file)
   save_dir = os.path.join(SAVE_DIR, 'waveform/slow')
+  compute_tau_means(save_dir)
