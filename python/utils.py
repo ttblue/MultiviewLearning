@@ -5,11 +5,16 @@ import csv
 import glob
 import os
 import re
+import sys
 import xlrd
 
 import numpy as np
 
 import subprocess
+
+class UtilsException(Exception):
+  pass
+
 
 def file_len(fname):
     p = subprocess.Popen(['wc', '-l', fname], stdout=subprocess.PIPE, 
@@ -98,8 +103,8 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
 
 
 def create_data_feature_filenames(data_dir, save_dir, suffix):
-  if data_dir[-5] != '*.csv':
-    data_dir = os.path.join(data_dir, '*.csv')
+  if data_dir[-5] != "*.csv":
+    data_dir = os.path.join(data_dir, "*.csv")
   data_files = glob.glob(data_dir)
 
   features_files = []
@@ -115,6 +120,40 @@ def create_data_feature_filenames(data_dir, save_dir, suffix):
   features_files = [features_files[i] for i in sorted_inds]
 
   return data_files, features_files
+
+
+def create_number_dict_from_files(data_dir, wild_card_str=None, extension=".npy"):
+  # Creates a dictionary from first number in filename to name of file.
+  if wild_card_str is None:
+    if extension[0] != '.': extension = '.' + extension
+    wild_card_str = '*' + extension
+
+  if data_dir[-len(wild_card_str):] != wild_card_str:
+    data_dir = os.path.join(data_dir, wild_card_str)
+  data_files = glob.glob(data_dir)
+
+  file_dict = {}
+  for fl in data_files:
+    fname = '.'.join(os.path.basename(fl).split('.')[:-1])
+    fnum = None
+    
+    try:
+      fnum = int(fname)
+    except ValueError:
+      pass
+    if fnum is None:
+      for separator in ['.', '_', '-']:
+        try:
+          fnum = int(fname.split(separator)[0])
+        except ValueError:
+          continue
+        break
+
+    if fnum is None:
+      continue
+    file_dict[fnum] = fl
+
+  return file_dict
 
 
 def create_annotation_labels(ann_text):
@@ -145,6 +184,7 @@ def create_annotation_labels(ann_text):
       # the last one matters.
       critical_anns = []
       ann_labels = []
+      lbl = -1
       new_lbl = 0
     # Ignore portion right after stabilization before first bleed.
     elif stabilization_end_re.search(text) is not None:
@@ -154,6 +194,10 @@ def create_annotation_labels(ann_text):
     elif bleed_end_re.search(text) is not None:
       new_lbl = 2
     elif resuscitation_start_re.search(text) is not None:
+      # TODO: Not sure about this. The last "between bleeds" is actually right
+      # before resuscitation. So perhaps it should be "between resuscitation
+      # events."
+      if lbl == 2: lbl = 4
       new_lbl = 3
     elif resuscitation_end_re.search(text) is not None:
       new_lbl = 4
@@ -163,6 +207,16 @@ def create_annotation_labels(ann_text):
       ann_labels.append(lbl)
       lbl = new_lbl
 
+  # This next check is unnecessary. If the last label is anything but 3, that's
+  # worrisome.
+  # The last label should be "post resuscitation".
+  while ann_labels[-1] == 4:
+    del ann_labels[-1], critical_anns[-1]
+  if ann_labels[-1] != 3:
+    import IPython
+    IPython.embed()
+    raise UtilsException("The last label should be 3, not %i"%ann_labels[-1])
+
   if critical_anns[-1] != idx:
     critical_anns.append(idx)
     ann_labels.append(5)
@@ -170,8 +224,29 @@ def create_annotation_labels(ann_text):
   return critical_anns, ann_labels
 
 
-if __name__ == '__main__':
-  import IPython
-  ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
-  critical_anns, ann_labels = create_annotation_labels(ann_text)
-  IPython.embed()
+def get_size(obj, seen=None):
+    """Recursively finds size of objects"""
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    # Important mark as seen *before* entering recursion to gracefully handle
+    # self-referential objects
+    seen.add(obj_id)
+    if isinstance(obj, dict):
+        size += sum([get_size(v, seen) for v in obj.values()])
+        size += sum([get_size(k, seen) for k in obj.keys()])
+    elif hasattr(obj, '__dict__'):
+        size += get_size(obj.__dict__, seen)
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+        size += sum([get_size(i, seen) for i in obj])
+    return size
+
+
+# if __name__ == '__main__':
+#   import IPython
+#   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
+#   critical_anns, ann_labels = create_annotation_labels(ann_text)
+#   IPython.embed()
