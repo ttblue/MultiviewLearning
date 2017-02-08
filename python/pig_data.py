@@ -115,24 +115,23 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
     features_files = features_files[:num_pigs]
-    if parallel:
-      all_args = [{
-          "data_file": data_file,
-          "features_file": features_file,
-          "time_channel": time_channel,
-          "ts_channels": ts_channels,
-          "channel_taus": channel_taus,
-          "downsample": downsample,
-          "window_length_s": window_length_s,
-          "num_windows": num_windows,
-          "d_lag": d_lag,
-          "d_features": d_features,
-        } for data_file, features_file in zip(data_files, features_files)]
+
+  if parallel:
+    all_args = [{
+        "data_file": data_file,
+        "features_file": features_file,
+        "time_channel": time_channel,
+        "ts_channels": ts_channels,
+        "channel_taus": channel_taus,
+        "downsample": downsample,
+        "window_length_s": window_length_s,
+        "num_windows": num_windows,
+        "d_lag": d_lag,
+        "d_features": d_features,
+      } for data_file, features_file in zip(data_files, features_files)]
 
     pl = multiprocessing.Pool(num_workers)
     pl.map(save_pigdata_window_rff, all_args)
-
-    print("DONE")
 
   else:
     for data_file, features_file in zip(data_files, features_files):
@@ -149,6 +148,8 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
           "d_features": d_features,
         } 
       channel_taus = save_pigdata_window_rff(args)
+
+  print("DONE")
 
 
 ################################################################################
@@ -494,7 +495,7 @@ def cluster_slow_pigs(num_pigs=4):
 
 
 if __name__ == "__main__":
-  save_features_slow_pigs(-1, False, 1)
+  save_window_rff_slow_pigs(1, False, 1)
   # class_names = [
   #     "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
   #     "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
