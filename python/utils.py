@@ -1,6 +1,4 @@
 # Utility functions for processing data and such.
-from __future__ import print_function
-
 import csv
 import glob
 import os

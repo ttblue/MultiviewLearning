@@ -285,7 +285,7 @@ def compute_multichannel_timeseries_window_only(
     d_lag=3, d_features=1000):
   
   if num_windows is None:
-    num_windows = int(ts.shape[0]/ window_length)
+    num_windows = int(mc_ts.shape[0] / window_length)
 
   tvals = np.floor(np.linspace(0, mc_ts.shape[0]-window_length, num_windows))
   tvals = tvals.astype(int)
@@ -293,6 +293,8 @@ def compute_multichannel_timeseries_window_only(
   all_features = []
   all_valid_inds = []
   for channel in xrange(mc_ts.shape[1]):
+    if VERBOSE:
+      print("\tChannel: %i"%(channel+1))
     ts_features, valid_inds = compute_timeseries_windows_only(
         mc_ts[:, channel], tvals, channel_taus[channel], mm_rff, window_length,
         d_lag, d_features)
@@ -300,7 +302,7 @@ def compute_multichannel_timeseries_window_only(
     all_valid_inds.append(valid_inds)
 
   final_valid_inds = all_valid_inds[0]
-  for valid_inds in final_valid_inds[1:]:
+  for valid_inds in all_valid_inds[1:]:
     final_valid_inds = np.intersect1d(final_valid_inds, valid_inds)
 
   all_features = [f[final_valid_inds] for f in all_features]

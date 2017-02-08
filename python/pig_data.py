@@ -24,14 +24,6 @@ np.set_printoptions(suppress=True, precision=3)
 mm_rff = None
 
 def save_pigdata_window_rff(args):
-  time_channel = 0
-  ts_channels = range(2, 13)
-  downsample = 5
-  window_length_s = 30
-  num_windows = None
-  d_lag = 3
-  d_features = 1000
-
   data_file = args["data_file"]
   features_file = args["features_file"]
   time_channel = args["time_channel"]
@@ -149,7 +141,6 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
 
   print("DONE")
 
-
 ################################################################################
 
 def save_pigdata_features(args):
@@ -208,7 +199,6 @@ def save_pigdata_features(args):
     print(e)
 
   return channel_taus
-
 
 
 def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
@@ -328,6 +318,7 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
       }
       channel_taus = save_pigdata_features(args)
 
+################################################################################
 
 def compute_tau_means(features_dir, ds=5, ws=30):
   ffiles = glob.glob(os.path.join(features_dir, "*_ds_%i_ws_%i.npy"%(ds, ws)))
@@ -339,6 +330,7 @@ def compute_tau_means(features_dir, ds=5, ws=30):
   taus_file = os.path.join(features_dir, "taus_ds_%i_ws_%i.npy"%(ds, ws))
   np.save(taus_file, {"taus":mean_taus})
 
+################################################################################
 
 def create_label_timeline(labels):  
   label_dict = {i:lbl for i,lbl in enumerate(labels)}
@@ -416,6 +408,7 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30):
 
   return all_data, unused_pigs
 
+################################################################################
 
 def rbf_fourierfeatures(d_in, d_out, a):
   # Returns a function handle to compute random fourier features.
@@ -468,6 +461,7 @@ def mt_krc_pigs_slow():
 
   IPython.embed()
 
+################################################################################
 
 def cluster_slow_pigs(num_pigs=4):
   all_data, _ = load_slow_pig_features_and_labels(num_pigs=num_pigs, ds=5, ws=30)
@@ -491,6 +485,7 @@ def cluster_slow_pigs(num_pigs=4):
 
   mi_matrix = tsu.cluster_windows(all_features, labels, class_names)
 
+################################################################################
 
 if __name__ == "__main__":
   save_window_rff_slow_pigs(1, False, 1)
