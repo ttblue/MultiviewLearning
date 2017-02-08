@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 
 import glob
+import sys
 import os
 import time
 
@@ -173,6 +174,7 @@ def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
   for key in training_ids:
     if VERBOSE:
       print("\tAdding random windows from pig %i."%key, end='\r')
+      sys.stdout.flush()
 
     fdata = np.load(fdict[key]).tolist()
     features = fdata["features"]
@@ -188,15 +190,16 @@ def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
     for i in xrange(num_channels):
       channel_features[i] = np.r_[channel_features[i], features[i][rand_inds]]
 
-  IPython.embed()
   if VERBOSE:
     print("\tAdding random windows from pig %i."%key)
     print("Computing basis:")
 
+  IPython.embed()
   basis = {}
   for channel in channel_features:
     if VERBOSE:
       print("\tChannel %i."%channel, end='\r')
+      sys.stdout.flush()
     basis[channel] = tsu.compute_window_PCA(channel_features[i], d_reduced)
 
   if VERBOSE:
