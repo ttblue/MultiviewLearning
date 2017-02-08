@@ -99,7 +99,7 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
     data_files = [data_files[i] for i in xrange(len(data_files)) if not_finished[i]]
     features_files = [features_files[i] for i in xrange(len(features_files)) if not_finished[i]]
 
-# import IPython
+  # import IPython
   IPython.embed()
 
   if num_pigs > 0:
@@ -143,60 +143,197 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
 
 ################################################################################
 
+def save_window_basis_slow_pigs(ds=5, ws=30):
+  num_from_each_pig = 300
+  d_reduced = 10
+
+  features_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff/")
+  fdict = utils.create_number_dict_from_files(
+      features_dir, wild_card_str="*_window_rff_ds_%i_ws_%i.npy"%(ds, ws))
+
+  if VERBOSE:
+    print("Loading random fourier features from the pigs.")
+
+  num_channels = None
+  d_features = None
+  channel_features = None
+  for key in fdict:
+    if VERBOSE:
+      print("\tAdding random windows from pig %i."%key, end='\r')
+
+    fdata = np.load(fdict[key]).tolist()
+    features = fdata["features"]
+
+    if channel_features is None:
+      num_channels = len(features)
+      d_features = features[0].shape[0]
+      channel_features = {i:np.empty((0, d_features)) for i in xrange(num_channels)}
+
+    num_windows = features[0].shape[1]
+    rand_inds = np.random.permutation(num_windows)[:num_from_each_pig]
+
+    for i in xrange(num_channels):
+      channel_features[i] = np.r_[channel_features[i], features[i][rand_inds]]
+
+  if VERBOSE:
+    print("\tAdding random windows from pig %i."%key)
+    print("Computing basis:")
+
+  basis = {}
+  for channel in channel_features:
+    if VERBOSE:
+      print("\tChannel %i."%channel, end='\r')
+    basis[channel] = tsu.compute_window_PCA(channel_features[i], d_reduced)
+
+  if VERBOSE:
+    print("\tChannel %i."%channel)
+    print("Saving basis.")
+
+  basis_file = os.path.join(features_dir, "window_basis_ds_%i_ws_%i.npy"%(ds, ws))
+  np.save(basis_file, [basis[i] for i in xrange(num_channels)])
+
+
+# Global variable for simple access
+basis = None
+
+
+def save_pigdata_features_given_basis(args):
+  rff_file = args["rff_file"]
+  features_file = args["features_file"]
+  d_reduced = args["d_reduced"]
+
+  fdata = np.load(fdict[key]).tolist()
+  features = fdata["features"]
+  tstamps = fdata["tstamps"]
+
+  num_channels = len(features)
+  d_features = features[0].shape[0]
+
+  mcts_f = []
+  for channel in xrange(num_channels):
+    if VERBOSE:
+      print("Channel:", channel + 1)
+
+    c_f = features[channel]
+    c_b = basis[channel]
+    mcts_f.append(c_f.dot(c_b.T))
+
+  save_data = {"features": mcts_f, "tstamps": tstamps}
+  np.save(features_file, save_data)
+
+
+def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
+  global basis
+
+  window_length_s = 30
+  downsample = 5
+  d_reduced = 6
+
+  rffeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff/")
+  rffdict = utils.create_number_dict_from_files(
+      rffeatures_dir,
+      wild_card_str="*_window_rff_ds_%i_ws_%i.npy"%(downsample, window_length_s))
+
+  basis_file = os.path.join(
+      features_dir, "window_basis_ds_%i_ws_%i.npy"%(downsample, window_length_s))
+  if not os.path.exists(basis_file):
+    save_window_basis_slow_pigs(downsample, window_length_s)
+  basis = np.load(basis_file)
+
+  features_dir = os.path.join(SAVE_DIR, "waveform/slow/")
+  suffix = "_features_ds_%i_ws_%i"%(downsample, window_length_s)
+  fdict = {key: os.path.join(features_dir, '%i'%key + suffix)
+           for key in rffdict}
+  already_finished ={key:os.path.exists(fdict[key]ffile + ".npy")
+                     for key in fdict}
+  restart = any(already_finished.values())
+
+  if restart:
+    rffdict = {key:rffdict[key] for key in rffdict if not already_finished[key]}
+    fdict = {key:fdict[key] for key in fdict if not already_finished[key]}
+
+  # import IPython
+  IPython.embed()
+
+  if num_pigs > 0:
+    keys = rffdict.keys()
+    rffdict = {key:rffdict[key] for key in keys[:num_pigs]}
+    fdict = {key:fdict[key] for key in keys[:num_pigs]}
+
+  if parallel:
+
+    all_args = [{
+        "rff_file": rffdict[key],
+        "features_file": fdict[key],
+        "d_reduced": d_reduced,
+      } for key in rffdict]
+
+    pl = multiprocessing.Pool(num_workers)
+    pl.map(save_pigdata_features_given_basis, all_args)
+
+  else:
+    for key in rffdict:
+      args = {
+          "rff_file": rffdict[key],
+          "features_file": fdict[key],
+          "d_reduced": d_reduced,
+      }
+      save_pigdata_features_given_basis(args)
+
+  print("DONE")
+
+################################################################################
+
 def save_pigdata_features(args):
-  try:
-    data_file = args["data_file"]
-    features_file = args["features_file"]
-    time_channel = args["time_channel"]
-    ts_channels = args["ts_channels"]
-    channel_taus = args["channel_taus"]
-    downsample = args["downsample"]
-    window_length_s = args["window_length_s"]
-    tau_range = args["tau_range"]
-    num_samples = args["num_samples"]
-    num_windows = args["num_windows"]
-    d_lag = args["d_lag"]
-    d_reduced = args["d_reduced"]
-    d_features = args["d_features"]
-    bandwidth = args["bandwidth"]
+  data_file = args["data_file"]
+  features_file = args["features_file"]
+  time_channel = args["time_channel"]
+  ts_channels = args["ts_channels"]
+  channel_taus = args["channel_taus"]
+  downsample = args["downsample"]
+  window_length_s = args["window_length_s"]
+  tau_range = args["tau_range"]
+  num_samples = args["num_samples"]
+  num_windows = args["num_windows"]
+  d_lag = args["d_lag"]
+  d_reduced = args["d_reduced"]
+  d_features = args["d_features"]
+  bandwidth = args["bandwidth"]
 
-    if VERBOSE:
-      t_start = time.time()
-      print("Pig %s."%(os.path.basename(data_file).split('.')[0]))
-      print("Loading data.")
-    _, data = utils.load_csv(data_file)
-    
-    mc_ts = data[::downsample, ts_channels]
-    tstamps = data[::downsample, time_channel]
+  if VERBOSE:
+    t_start = time.time()
+    print("Pig %s."%(os.path.basename(data_file).split('.')[0]))
+    print("Loading data.")
+  _, data = utils.load_csv(data_file)
+  
+  mc_ts = data[::downsample, ts_channels]
+  tstamps = data[::downsample, time_channel]
 
-    # Parameters for features
-    tau_range = int(tau_range/downsample)
-    window_length = int(FREQUENCY*window_length_s/downsample)
+  # Parameters for features
+  tau_range = int(tau_range/downsample)
+  window_length = int(FREQUENCY*window_length_s/downsample)
 
-    mcts_f, window_tstamps, channel_taus = tsu.feature_multi_channel_timeseries(
-      mc_ts, tstamps, channel_taus=channel_taus, tau_range=tau_range,
-      window_length=window_length, num_samples=num_samples,
-      num_windows=num_windows, d_lag=d_lag, d_reduced=d_reduced,
-      d_features=d_features, bandwidth=bandwidth)
+  mcts_f, window_tstamps, channel_taus = tsu.feature_multi_channel_timeseries(
+    mc_ts, tstamps, channel_taus=channel_taus, tau_range=tau_range,
+    window_length=window_length, num_samples=num_samples,
+    num_windows=num_windows, d_lag=d_lag, d_reduced=d_reduced,
+    d_features=d_features, bandwidth=bandwidth)
 
-    nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
-    invalid_inds = np.unique([i for inds in nan_inds for i in inds])
-    if len(invalid_inds) > 0:
-      valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
-      valid_locs[invalid_inds] = False
-      mcts_f = [c_f[valid_locs] for c_f in mcts_f]
-      window_tstamps = window_tstamps[valid_locs]
+  nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in mcts_f]
+  invalid_inds = np.unique([i for inds in nan_inds for i in inds])
+  if len(invalid_inds) > 0:
+    valid_locs = np.ones(window_tstamps.shape[0]).astype(bool)
+    valid_locs[invalid_inds] = False
+    mcts_f = [c_f[valid_locs] for c_f in mcts_f]
+    window_tstamps = window_tstamps[valid_locs]
 
-    if VERBOSE:
-      print("Saving features.")
-    save_data = {"features": mcts_f, "tstamps": window_tstamps, "taus": channel_taus}
-    np.save(features_file, save_data)
+  if VERBOSE:
+    print("Saving features.")
+  save_data = {"features": mcts_f, "tstamps": window_tstamps, "taus": channel_taus}
+  np.save(features_file, save_data)
 
-    if VERBOSE:
-      print("Time taken for pig: %.2f"%(time.time() - t_start))
-
-  except Exception as e:
-    print(e)
+  if VERBOSE:
+    print("Time taken for pig: %.2f"%(time.time() - t_start))
 
   return channel_taus
 

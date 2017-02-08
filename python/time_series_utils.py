@@ -275,7 +275,7 @@ def compute_timeseries_windows_only(
     print("\t\tWindow %i out of %i."%(i+1, num_windows))
 
   # Remove NaN rows outside.
-  valid_inds = ~np.isnan(ts_features).any(axis=1)
+  valid_inds = (~np.isnan(ts_features).any(axis=1)).nonzero()[0]
 
   return ts_features, valid_inds
 
