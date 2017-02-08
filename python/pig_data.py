@@ -171,15 +171,16 @@ def save_window_basis_slow_pigs(ds=5, ws=30):
 
     if channel_features is None:
       num_channels = len(features)
-      d_features = features[0].shape[0]
+      d_features = features[0].shape[1]
       channel_features = {i:np.empty((0, d_features)) for i in xrange(num_channels)}
 
-    num_windows = features[0].shape[1]
+    num_windows = features[0].shape[0]
     rand_inds = np.random.permutation(num_windows)[:num_from_each_pig]
 
     for i in xrange(num_channels):
       channel_features[i] = np.r_[channel_features[i], features[i][rand_inds]]
 
+  IPython.embed()
   if VERBOSE:
     print("\tAdding random windows from pig %i."%key)
     print("Computing basis:")
@@ -207,7 +208,7 @@ def save_pigdata_features_given_basis(args):
   features_file = args["features_file"]
   d_reduced = args["d_reduced"]
 
-  fdata = np.load(fdict[key]).tolist()
+  fdata = np.load(rff_file).tolist()
   features = fdata["features"]
   tstamps = fdata["tstamps"]
 
@@ -220,7 +221,7 @@ def save_pigdata_features_given_basis(args):
       print("Channel:", channel + 1)
 
     c_f = features[channel]
-    c_b = basis[channel]
+    c_b = basis[channel][:d_reduced]
     mcts_f.append(c_f.dot(c_b.T))
 
   save_data = {"features": mcts_f, "tstamps": tstamps}
@@ -240,7 +241,7 @@ def save_features_slow_pigs_given_basis(num_pigs=-1, parallel=False, num_workers
       wild_card_str="*_window_rff_ds_%i_ws_%i.npy"%(downsample, window_length_s))
 
   basis_file = os.path.join(
-      features_dir, "window_basis_ds_%i_ws_%i.npy"%(downsample, window_length_s))
+      rffeatures_dir, "window_basis_ds_%i_ws_%i.npy"%(downsample, window_length_s))
   if not os.path.exists(basis_file):
     save_window_basis_slow_pigs(downsample, window_length_s)
   basis = np.load(basis_file)
@@ -634,7 +635,8 @@ def cluster_slow_pigs(num_pigs=4):
 ################################################################################
 
 if __name__ == "__main__":
-  save_window_rff_slow_pigs(-1, True, 7)
+  # save_window_rff_slow_pigs(-1, True, 7)
+  save_features_slow_pigs_given_basis()
   # class_names = [
   #     "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
   #     "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
