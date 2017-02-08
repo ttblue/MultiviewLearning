@@ -74,10 +74,10 @@ def save_pigdata_window_rff(args):
   except Exception as e:
     print(e)
 
-  return channel_taus
-
 
 def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
+  global mm_rff
+
   time_channel = 0
   ts_channels = range(2, 13)
   downsample = 5
@@ -85,12 +85,16 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   num_windows = None
   d_lag = 3
   d_features = 1000
+  bandwidth = 0.5
 
   data_dir = os.path.join(DATA_DIR, "extracted/waveform/slow")
   save_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff/")
-  taus_dir = os.path.join(SAVE_DIR, "waveform/slow/")
+  params_dir = os.path.join(SAVE_DIR, "waveform/slow/")
   if not os.path.exists(save_dir):
     os.makedirs(save_dir)
+
+  mmrff_file = os.path.join(params_dir, "mmrff_di_%i_do_%i_bw_%.3f"%(d_lag, d_features, bandwidth))
+  mm_rff = tsu.mm_rbf_fourierfeatures(d_lag, d_features, bandwidth, mmrff_file)
 
   suffix = "_window_rff_ds_%i_ws_%i"%(downsample, window_length_s)
   data_files, features_files = utils.create_data_feature_filenames(
@@ -98,7 +102,7 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
 
   # Not re-computing the stuff already computed.
   channel_taus = None
-  taus_file = os.path.join(taus_dir, "taus_ds_%i_ws_%i.npy"%(downsample, window_length_s))
+  taus_file = os.path.join(params_dir, "taus_ds_%i_ws_%i.npy"%(downsample, window_length_s))
   channel_taus = np.load(taus_file).tolist()["taus"]
 
   already_finished = [os.path.exists(ffile + ".npy") for ffile in features_files]
