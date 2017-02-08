@@ -16,8 +16,8 @@ def plot_matrix(mat, classes,
     plt.xticks(tick_marks, classes, rotation=45)
     plt.yticks(tick_marks, classes)
 
-    print('Matrix:')
-    print(mat)
+    # print('Matrix:')
+    # print(mt)
 
     thresh = mat.max() / 2.
     for i, j in itertools.product(range(mat.shape[0]), range(mat.shape[1])):

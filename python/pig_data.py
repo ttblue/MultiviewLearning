@@ -162,36 +162,47 @@ def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
 
   training_ids = fdict.keys()
   if num_training > 0:
-    rand_inds = np.random.permutation(len(training_ids))[:num_training]
-    training_ids = [training_ids[idx] for idx in rand_inds]
-
-  if VERBOSE:
-    print("Pigs used for basis computation: %s"%(training_ids))
+    np.random.shuffle(training_ids)
 
   num_channels = None
   d_features = None
   channel_features = None
+  num_selected = 0
+  basis_pigs = []
+
   for key in training_ids:
+    fdata = np.load(fdict[key]).tolist()
+    features = fdata["features"]
+    num_windows = features[0].shape[0]
+
+    if num_windows < num_from_each_pig:
+      if VERBOSE:
+      print("\tPig %i does not have enough data."%key)
+      continue
+
     if VERBOSE:
       print("\tAdding random windows from pig %i."%key, end='\r')
       sys.stdout.flush()
-
-    fdata = np.load(fdict[key]).tolist()
-    features = fdata["features"]
 
     if channel_features is None:
       num_channels = len(features)
       d_features = features[0].shape[1]
       channel_features = {i:np.empty((0, d_features)) for i in xrange(num_channels)}
 
-    num_windows = features[0].shape[0]
     rand_inds = np.random.permutation(num_windows)[:num_from_each_pig]
 
     for i in xrange(num_channels):
       channel_features[i] = np.r_[channel_features[i], features[i][rand_inds]]
 
+    basis_pigs.append(key)
+    if num_training > 0:
+      num_selected += 1
+      if num_selected >= num_training:
+        break
+
   if VERBOSE:
     print("\tAdding random windows from pig %i."%key)
+    print("Pigs used for basis computation: %s"%(basis_pigs))
     print("Computing basis:")
 
   IPython.embed()
@@ -205,6 +216,8 @@ def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
   if VERBOSE:
     print("\tChannel %i."%channel)
     print("Saving basis.")
+
+  IPython.embed()
 
   basis_file = os.path.join(features_dir, "window_basis_ds_%i_ws_%i.npy"%(ds, ws))
   np.save(basis_file, [basis[i] for i in xrange(num_channels)])
@@ -508,8 +521,9 @@ def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length
   return labels
 
 
-def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30):
+def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both"):
   features_dir = os.path.join(SAVE_DIR, "waveform/slow")
+  rfeatures_dir = os.path.join(features_dir, "window_rff")
   ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
   
   fdict = utils.create_number_dict_from_files(
@@ -521,13 +535,25 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30):
   unused_pigs = []
   unused_pigs.extend([p for p in fdict if p not in common_keys])
   unused_pigs.extend([p for p in adict if p not in common_keys])
-  print("Not using pigs %s. Either annotations or data missing."%(unused_pigs))
+  if VERBOSE:
+    print("Not using pigs %s. Either annotations or data missing."%(unused_pigs))
+
+  pig_ids = common_keys
+  if category in ["train", "test"]:
+    training_ids_file = os.path.join(rfeatures_dir, "training_ids_ds_%i_ws_%i.npy"%(ds, ws))
+    training_ids = np.load(training_ids_file)
+    if category == "train":
+      pig_ids = [idx for idx in pig_ids if idx in training_ids]
+    else:
+      pig_ids = [idx for idx in pig_ids if idx not in training_ids]
 
   if num_pigs > 0:
-    np.random.shuffle(common_keys)    
+    np.random.shuffle(pig_ids)
 
   all_data = {}
-  for key in common_keys[:num_pigs]:
+  curr_unused_pigs = len(unused_pigs)
+  num_selected = 0
+  for key in pig_ids:
     pig_data = np.load(fdict[key]).tolist()
     tstamps = pig_data["tstamps"]
     features = pig_data["features"]
@@ -557,15 +583,24 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30):
     # 1. Too label types are missing
     # 2. The stabilization period is too small
     if len(lvals) < 5:
-      print("Not using pig %i. Missing data from some phases."%key)
+      if VERBOSE:
+        print("Not using pig %i. Missing data from some phases."%key)
       unused_pigs.append(key)
       continue
     if counts[0] < 10:
-      print("Not using pig %i. Stabilization period is too small."%key)
+      if VERBOSE:
+        print("Not using pig %i. Stabilization period is too small."%key)
       unused_pigs.append(key)
       continue
 
     all_data[key] = {"features": features, "labels": labels, "ann_text":critical_text}
+    if num_pigs > 0:
+      num_selected += 1
+      if num_selected >= num_pigs:
+        break
+  new_unused_pigs = len(unused_pigs) - curr_unused_pigs
+  print("Not using pigs %s. Already have enough."%(pig_ids[num_selected+new_unused_pigs:]))
+  unused_pigs.extend(pig_ids[num_selected+new_unused_pigs:])
 
   return all_data, unused_pigs
 
@@ -625,7 +660,7 @@ def mt_krc_pigs_slow():
 ################################################################################
 
 def cluster_slow_pigs(num_pigs=4):
-  all_data, _ = load_slow_pig_features_and_labels(num_pigs=num_pigs, ds=5, ws=30)
+  all_data, _ = load_slow_pig_features_and_labels(num_pigs=num_pigs, ds=5, ws=30, category="test")
   class_names = [
       "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
       "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
@@ -650,7 +685,7 @@ def cluster_slow_pigs(num_pigs=4):
 
 if __name__ == "__main__":
   # save_window_rff_slow_pigs(-1, True, 7)
-  save_features_slow_pigs_given_basis()
+  # save_features_slow_pigs_given_basis()
   # class_names = [
   #     "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
   #     "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
@@ -659,5 +694,6 @@ if __name__ == "__main__":
   # all_data, unused_pigs = load_slow_pig_features_and_labels()
   # IPython.embed()
   # mt_krc_pigs_slow()
+  cluster_slow_pigs(10)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
