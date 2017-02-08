@@ -24,55 +24,49 @@ np.set_printoptions(suppress=True, precision=3)
 mm_rff = None
 
 def save_pigdata_window_rff(args):
-  try:
-    time_channel = 0
-    ts_channels = range(2, 13)
-    downsample = 5
-    window_length_s = 30
-    num_windows = None
-    d_lag = 3
-    d_features = 1000
+  time_channel = 0
+  ts_channels = range(2, 13)
+  downsample = 5
+  window_length_s = 30
+  num_windows = None
+  d_lag = 3
+  d_features = 1000
 
-    data_file = args["data_file"]
-    features_file = args["features_file"]
-    time_channel = args["time_channel"]
-    ts_channels = args["ts_channels"]
-    channel_taus = args["channel_taus"]
-    downsample = args["downsample"]
-    window_length_s = args["window_length_s"]
-    num_windows = args["num_windows"]
-    d_lag = args["d_lag"]
-    d_features = args["d_features"]
+  data_file = args["data_file"]
+  features_file = args["features_file"]
+  time_channel = args["time_channel"]
+  ts_channels = args["ts_channels"]
+  channel_taus = args["channel_taus"]
+  downsample = args["downsample"]
+  window_length_s = args["window_length_s"]
+  num_windows = args["num_windows"]
+  d_lag = args["d_lag"]
+  d_features = args["d_features"]
 
-    if VERBOSE:
-      t_start = time.time()
-      print("Pig %s."%(os.path.basename(data_file).split('.')[0]))
-      print("Loading data.")
-    _, data = utils.load_csv(data_file)
+  if VERBOSE:
+    t_start = time.time()
+    print("Pig %s."%(os.path.basename(data_file).split('.')[0]))
+    print("Loading data.")
+  _, data = utils.load_csv(data_file)
     
-    mc_ts = data[::downsample, ts_channels]
-    tstamps = data[::downsample, time_channel]
+  mc_ts = data[::downsample, ts_channels]
+  tstamps = data[::downsample, time_channel]
 
+  # Parameters for features
+  window_length = int(FREQUENCY*window_length_s/downsample)
 
-    # Parameters for features
-    tau_range = int(tau_range/downsample)
-    window_length = int(FREQUENCY*window_length_s/downsample)
-
-    mcts_rff, window_tstamps = tsu.compute_multichannel_timeseries_window_only(
+  mcts_rff, window_tstamps = tsu.compute_multichannel_timeseries_window_only(
       mc_ts, tstamps, channel_taus=channel_taus, mm_rff=mm_rff,
       window_length=window_length, num_windows=num_windows, d_lag=d_lag,
       d_features=d_features)
 
-    if VERBOSE:
-      print("Saving features.")
-    save_data = {"features": mcts_rff, "tstamps": window_tstamps}
-    np.save(features_file, save_data)
+  if VERBOSE:
+    print("Saving features.")
+  save_data = {"features": mcts_rff, "tstamps": window_tstamps}
+  np.save(features_file, save_data)
 
-    if VERBOSE:
-      print("Time taken for pig: %.2f"%(time.time() - t_start))
-
-  except Exception as e:
-    print(e)
+  if VERBOSE:
+    print("Time taken for pig: %.2f"%(time.time() - t_start))
 
 
 def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
