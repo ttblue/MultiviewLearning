@@ -99,12 +99,11 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
     data_files = [data_files[i] for i in xrange(len(data_files)) if not_finished[i]]
     features_files = [features_files[i] for i in xrange(len(features_files)) if not_finished[i]]
 
-  # import IPython
-  IPython.embed()
-
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
     features_files = features_files[:num_pigs]
+
+  IPython.embed()
 
   if parallel:
     all_args = [{
@@ -222,7 +221,7 @@ def save_pigdata_features_given_basis(args):
   np.save(features_file, save_data)
 
 
-def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
+def save_features_slow_pigs_given_basis(num_pigs=-1, parallel=False, num_workers=5):
   global basis
 
   window_length_s = 30
@@ -244,11 +243,15 @@ def save_features_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   suffix = "_features_ds_%i_ws_%i"%(downsample, window_length_s)
   fdict = {key: os.path.join(features_dir, '%i'%key + suffix)
            for key in rffdict}
-  already_finished ={key:os.path.exists(fdict[key]ffile + ".npy")
+  already_finished ={key:os.path.exists(fdict[key] + ".npy")
                      for key in fdict}
   restart = any(already_finished.values())
 
   if restart:
+    if VERBOSE:
+      print(
+          "Already finished pigs: %s"%(
+              [key for key in already_finished if already_finished[key]]))
     rffdict = {key:rffdict[key] for key in rffdict if not already_finished[key]}
     fdict = {key:fdict[key] for key in fdict if not already_finished[key]}
 
@@ -625,7 +628,7 @@ def cluster_slow_pigs(num_pigs=4):
 ################################################################################
 
 if __name__ == "__main__":
-  save_window_rff_slow_pigs(1, False, 1)
+  save_window_rff_slow_pigs(-1, True, 7)
   # class_names = [
   #     "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
   #     "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
