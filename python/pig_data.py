@@ -95,6 +95,12 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
   restart = any(already_finished)
 
   if restart:
+    if VERBOSE:
+      print("Already finished pigs: %s"%(
+                [int(os.path.basename(data_files[i]).split('.')[0])
+                 for i in range(len(already_finished))
+                 if already_finished[i]]))
+
     not_finished = [not finished for finished in already_finished]
     data_files = [data_files[i] for i in xrange(len(data_files)) if not_finished[i]]
     features_files = [features_files[i] for i in xrange(len(features_files)) if not_finished[i]]
