@@ -177,7 +177,7 @@ def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
 
     if num_windows < num_from_each_pig:
       if VERBOSE:
-      print("\tPig %i does not have enough data."%key)
+        print("\tPig %i does not have enough data."%key)
       continue
 
     if VERBOSE:
@@ -685,7 +685,8 @@ def cluster_slow_pigs(num_pigs=4):
 
 if __name__ == "__main__":
   # save_window_rff_slow_pigs(-1, True, 7)
-  # save_features_slow_pigs_given_basis()
+  # save_window_basis_slow_pigs()
+  save_features_slow_pigs_given_basis(-1, True, 7)
   # class_names = [
   #     "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
   #     "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
@@ -694,6 +695,6 @@ if __name__ == "__main__":
   # all_data, unused_pigs = load_slow_pig_features_and_labels()
   # IPython.embed()
   # mt_krc_pigs_slow()
-  cluster_slow_pigs(10)
+  # cluster_slow_pigs(10)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)

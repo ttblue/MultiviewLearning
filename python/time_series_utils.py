@@ -136,7 +136,7 @@ def compute_window_PCA(Xhat, wdim, evecs=False):
   Xhat = Xhat[valid_inds]  # remove NaN rows.
 
   E, V, _ = nlg.svd(Xhat, full_matrices=0)
-  v = V[:wdim]
+  v = V[:wdim] ** 2
   e = E[:, :wdim]
 
   if evecs:
