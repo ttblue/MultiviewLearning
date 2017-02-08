@@ -148,7 +148,7 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
 
 ################################################################################
 
-def save_window_basis_slow_pigs(ds=5, ws=30):
+def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
   num_from_each_pig = 300
   d_reduced = 10
 
@@ -159,10 +159,18 @@ def save_window_basis_slow_pigs(ds=5, ws=30):
   if VERBOSE:
     print("Loading random fourier features from the pigs.")
 
+  training_ids = fdict.keys()
+  if num_training > 0:
+    rand_inds = np.random.permutation(len(training_ids))[:num_training]
+    training_ids = [training_ids[idx] for idx in rand_inds]
+
+  if VERBOSE:
+    print("Pigs used for basis computation: %s"%(training_ids))
+
   num_channels = None
   d_features = None
   channel_features = None
-  for key in fdict:
+  for key in training_ids:
     if VERBOSE:
       print("\tAdding random windows from pig %i."%key, end='\r')
 
@@ -197,6 +205,8 @@ def save_window_basis_slow_pigs(ds=5, ws=30):
 
   basis_file = os.path.join(features_dir, "window_basis_ds_%i_ws_%i.npy"%(ds, ws))
   np.save(basis_file, [basis[i] for i in xrange(num_channels)])
+  training_ids_file = os.path.join(features_dir, "training_ids_ds_%i_ws_%i.npy"%(ds, ws))
+  np.save(training_ids_file, sorted(training_ids))
 
 
 # Global variable for simple access
@@ -234,6 +244,7 @@ def save_features_slow_pigs_given_basis(num_pigs=-1, parallel=False, num_workers
   window_length_s = 30
   downsample = 5
   d_reduced = 6
+  num_training = 30
 
   rffeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff/")
   rffdict = utils.create_number_dict_from_files(
@@ -243,7 +254,7 @@ def save_features_slow_pigs_given_basis(num_pigs=-1, parallel=False, num_workers
   basis_file = os.path.join(
       rffeatures_dir, "window_basis_ds_%i_ws_%i.npy"%(downsample, window_length_s))
   if not os.path.exists(basis_file):
-    save_window_basis_slow_pigs(downsample, window_length_s)
+    save_window_basis_slow_pigs(num_training, downsample, window_length_s)
   basis = np.load(basis_file)
 
   features_dir = os.path.join(SAVE_DIR, "waveform/slow/")
