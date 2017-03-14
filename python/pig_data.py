@@ -11,6 +11,7 @@ import numpy as np
 
 import multi_task_learning as mtl
 import time_series_utils as tsu
+import time_series_ml as tsml
 import utils
 
 import IPython
@@ -222,7 +223,7 @@ def save_window_basis_slow_pigs(num_training=30, ds=5, ws=30):
   basis_file = os.path.join(features_dir, "window_basis_ds_%i_ws_%i.npy"%(ds, ws))
   np.save(basis_file, [basis[i] for i in xrange(num_channels)])
   training_ids_file = os.path.join(features_dir, "training_ids_ds_%i_ws_%i.npy"%(ds, ws))
-  np.save(training_ids_file, sorted(training_ids))
+  np.save(training_ids_file, sorted(basis_pigs))
 
 
 # Global variable for simple access
@@ -523,7 +524,7 @@ def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length
 
 def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both"):
   features_dir = os.path.join(SAVE_DIR, "waveform/slow")
-  rfeatures_dir = os.path.join(features_dir, "window_rff")
+  rfeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff")
   ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
   
   fdict = utils.create_number_dict_from_files(
@@ -599,7 +600,8 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both")
       if num_selected >= num_pigs:
         break
   new_unused_pigs = len(unused_pigs) - curr_unused_pigs
-  print("Not using pigs %s. Already have enough."%(pig_ids[num_selected+new_unused_pigs:]))
+  if num_pigs > 0:
+    print("Not using pigs %s. Already have enough."%(pig_ids[num_selected+new_unused_pigs:]))
   unused_pigs.extend(pig_ids[num_selected+new_unused_pigs:])
 
   return all_data, unused_pigs
@@ -659,8 +661,8 @@ def mt_krc_pigs_slow():
 
 ################################################################################
 
-def cluster_slow_pigs(num_pigs=4):
-  all_data, _ = load_slow_pig_features_and_labels(num_pigs=num_pigs, ds=5, ws=30, category="test")
+def cluster_slow_pigs(num_pigs=4, ws=30):
+  all_data, _ = load_slow_pig_features_and_labels(num_pigs=num_pigs, ds=5, ws=ws, category="both")
   class_names = [
       "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
       "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
@@ -679,22 +681,144 @@ def cluster_slow_pigs(num_pigs=4):
     features = np.vstack([all_data[idx]["features"][channel] for idx in pig_ids])
     all_features.append(features)
 
-  mi_matrix = tsu.cluster_windows(all_features, labels, class_names)
+  mi_matrix = tsml.cluster_windows(all_features, labels, class_names)
 
 ################################################################################
+
+def select_random_windows(data, num_per_window=10, num_per_pig=10, channel=None, pos_label=None):
+  windows = {}
+  labels = {}
+
+  half_window_len = int(num_per_window/2)
+  for idx in data:
+    pig_features = data[idx]["features"]
+    pig_labels = data[idx]["labels"]
+
+    window_labels = [
+        pig_labels[i+half_window_len]
+        for i in range(0, pig_labels.shape[0]-num_per_window, num_per_window)
+    ]
+    if pos_label is None:
+      choice_inds = np.random.permutation(len(window_labels))[:num_per_pig]
+    else:
+      window_labels = (np.array(window_labels) == pos_label).astype(int)
+      # choice_inds = np.random.permutation(len(window_labels))[:num_per_pig]
+      half_num_per_pig = int(num_per_pig/2)
+      pos_inds = np.nonzero(window_labels)[0]
+      neg_inds = np.nonzero(window_labels == 0)[0]
+      np.random.shuffle(pos_inds)
+      np.random.shuffle(neg_inds)
+      choice_inds = pos_inds[:half_num_per_pig].tolist()
+      choice_inds.extend(neg_inds[:num_per_pig-len(choice_inds)].tolist())
+
+    if channel is None:
+      window_split = [
+          [f[i:i+num_per_window] for i in range(0, f.shape[0]-num_per_window, num_per_window)]
+          for f in pig_features
+      ]
+      pig_windows = [
+          [channel_windows[i] for i in choice_inds]
+          for channel_windows in window_split
+      ]
+    elif isinstance(channel, list):
+      window_split = [
+          [pig_features[c][i:i+num_per_window] 
+           for i in range(0, pig_features[c].shape[0]-num_per_window, num_per_window)]
+          for c in channel
+      ]
+      pig_windows = [
+          [channel_windows[i] for i in choice_inds]
+          for channel_windows in window_split
+      ]
+    else:
+      window_split = [
+          pig_features[channel][i:i+num_per_window] 
+          for i in range(0, pig_features[channel].shape[0]-num_per_window, num_per_window)
+      ]
+      pig_windows = [window_split[i] for i in choice_inds]
+
+    windows[idx] = pig_windows
+    labels[idx] = [window_labels[i] for i in choice_inds]
+
+  return windows, labels
+
+
+def pred_nn_slow_pigs(ws=30):
+  # Only using a single channel for now.
+  channel = 6
+  pos_label = None
+  num_per_window = 30
+  num_per_pig = 50
+
+  num_train_pigs = -1
+  num_test_pigs = -1
+
+  train_data, _ = load_slow_pig_features_and_labels(num_pigs=num_train_pigs, ds=5, ws=ws, category="train")
+  test_data, _ = load_slow_pig_features_and_labels(num_pigs=num_test_pigs, ds=5, ws=ws, category="test")
+
+  train_ids = train_data.keys()
+  train_ts = [train_data[idx]["features"][channel] for idx in train_ids]
+  train_labels = [np.array(train_data[idx]["labels"]) for idx in train_ids]
+  if pos_label is not None:
+    train_labels = [(lbls == pos_label).astype(int) for lbls in train_labels]
+
+  train_windows, train_window_labels = select_random_windows(
+      train_data, num_per_window=num_per_window, num_per_pig=num_per_pig,
+      channel=channel, pos_label=pos_label)
+  test_windows, test_window_labels = select_random_windows(
+      test_data, num_per_window=num_per_window, num_per_pig=num_per_pig,
+      channel=channel, pos_label=pos_label)
+
+  # train_pred_labels = {}
+  # train_pred_acc = {
+  # pig_idx = 1
+  # for idx in train_windows:
+  #   t1 = time.time()
+  #   train_pred_labels[idx] = tsml.predict_nn_dtw(train_ts, train_labels, train_windows[idx])
+  #   train_pred_acc[idx] = np.sum(np.array(train_pred_labels[idx]) == np.array(train_window_labels[idx]))/num_per_pig
+  #   ttaken = time.time() - t1
+  #   print ("Train pig number: %i, ID: %i. Accuracy: %.2f. Time taken: %.2fs"%
+  #           (pig_idx, idx, train_pred_acc[idx], ttaken))
+  #   pig_idx += 1
+  #   if pig_idx > 2:
+  #     break
+  # final_train_acc = np.mean(train_pred_acc.values())
+  # print("Final training accuracy over %i pigs: %.2f"%
+  #       (len(train_windows), final_train_acc))
+
+  # print()
+
+  test_pred_labels = {}
+  test_pred_acc = {}
+  pig_idx = 1
+  for idx in test_windows:
+    t1 = time.time()
+    test_pred_labels[idx] = tsml.predict_nn_dtw(train_ts, train_labels, test_windows[idx])
+    test_pred_acc[idx] = np.sum(np.array(test_pred_labels[idx]) == np.array(test_window_labels[idx]))/num_per_pig
+    ttaken = time.time() - t1
+    print ("Test pig number: %i, ID: %i. Accuracy: %.2f. Time taken: %.2fs"%
+           (pig_idx, idx, test_pred_acc[idx], ttaken))
+    pig_idx += 1
+  final_test_acc = np.mean(test_pred_acc.values())
+  print("Final test accuracy over %i pigs: %.2f"%
+        (len(test_windows), final_test_acc))
+  IPython.embed()
+################################################################################
+
 
 if __name__ == "__main__":
   # save_window_rff_slow_pigs(-1, True, 7)
   # save_window_basis_slow_pigs()
-  save_features_slow_pigs_given_basis(-1, True, 7)
+  # save_features_slow_pigs_given_basis(-1, True, 7)
   # class_names = [
   #     "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
   #     "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
   #     "Airway_pressure", "Vigeleo_SVV"]
-  # tsu.cluster_windows(feature_file)
+  # tsml.cluster_windows(feature_file)
   # all_data, unused_pigs = load_slow_pig_features_and_labels()
   # IPython.embed()
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
+  pred_nn_slow_pigs(ws=5)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)

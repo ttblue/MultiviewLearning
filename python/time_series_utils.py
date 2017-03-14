@@ -1,11 +1,14 @@
 from __future__ import print_function, division
 
-import os
-import time
-import sys
-import IPython
-
 import multiprocessing
+import os
+import sys
+import time
+
+import numpy as np, numpy.random as nr, numpy.linalg as nlg
+import pandas as pd
+from sklearn.cluster import KMeans
+import mutual_info as mi
 
 try:
   import matplotlib.pyplot as plt, matplotlib.cm as cm
@@ -15,12 +18,7 @@ try:
 except ImportError:
   PLOTTING = False
 
-import numpy as np, numpy.random as nr, numpy.linalg as nlg
-
-import pandas as pd
-from sklearn.cluster import KMeans 
-
-import mutual_info as mi
+import IPython
 
 import utils
 
@@ -309,36 +307,3 @@ def compute_multichannel_timeseries_window_only(
   tvals = tvals[final_valid_inds]
 
   return all_features, tstamps[tvals]
-
-
-def cluster_windows(features, labels, class_names):
-  num_clusters = np.unique(labels).shape[0]
-  num_channels = len(features)
-
-  nan_inds = [np.isnan(c_f).any(1).nonzero()[0].tolist() for c_f in features]
-  invalid_inds = np.unique([i for inds in nan_inds for i in inds])
-  if len(invalid_inds) > 0:
-    valid_locs = np.ones(labels.shape[0]).astype(bool)
-    valid_locs[invalid_inds] = False
-    
-    features = [c_f[valid_locs] for c_f in features]
-    labels = labels[valid_locs]
-
-  kmeans = [KMeans(num_clusters) for _ in xrange(num_channels)]
-  for km, c_f in zip(kmeans, features):
-    km.fit(c_f)
-  all_labels = [labels] + [km.labels_ for km in kmeans]
-
-  mi_matrix = np.zeros((num_channels + 1, num_channels + 1))
-  for i in range(num_channels + 1):
-    for j in range(i, num_channels + 1):
-      lbl_mi = mi.mutual_information_2d(all_labels[i], all_labels[j])
-      mi_matrix[i, j] = mi_matrix[j, i] = lbl_mi
-
-  # max_mi = mi_matrix.max()
-  if PLOTTING:
-    plot_utils.plot_matrix(mi_matrix, class_names)
-    plt.show()
-
-  # IPython.embed()
-  return mi_matrix
