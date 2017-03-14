@@ -9,9 +9,11 @@ import multiprocessing
 
 import numpy as np
 
+import dataset
+import lstm
 import multi_task_learning as mtl
-import time_series_utils as tsu
 import time_series_ml as tsml
+import time_series_utils as tsu
 import utils
 
 import IPython
@@ -805,6 +807,62 @@ def pred_nn_slow_pigs(ws=30):
   IPython.embed()
 ################################################################################
 
+def pred_lstm_slow_pigs(ws=5):
+  # Only using a single channel for now.
+  channel = 6
+  pos_label = None
+
+  num_train_pigs = -1
+  num_test_pigs = -1
+
+  train_data, _ = load_slow_pig_features_and_labels(num_pigs=num_train_pigs, ds=5, ws=ws, category="train")
+  test_data, _ = load_slow_pig_features_and_labels(num_pigs=num_test_pigs, ds=5, ws=ws, category="test")
+
+  train_ids = train_data.keys()
+  train_ts = [train_data[idx]["features"][channel] for idx in train_ids]
+  train_labels = [np.array(train_data[idx]["labels"]) for idx in train_ids]
+  if pos_label is not None:
+    train_labels = [(lbls == pos_label).astype(int) for lbls in train_labels]
+
+  test_ids = test_data.keys()
+  test_ts = [test_data[idx]["features"][channel] for idx in test_ids]
+  test_labels = [np.array(test_data[idx]["labels"]) for idx in test_ids]
+  if pos_label is not None:
+    test_labels = [(lbls == pos_label).astype(int) for lbls in test_labels]
+
+  dset_train = dataset.TimeseriesDataset(train_ts, train_labels)
+  dset_test = dataset.TimeseriesDataset(test_ts, test_labels)
+  dset_test, dset_validate = dset_test.split([0.8, 0.2])
+  # IPython.embed()
+  # LSTM Config:
+  num_classes = 6 if pos_label is None else 2
+  num_features = train_ts[0].shape[1]
+
+  hidden_size = 600
+  forget_bias = 0.5
+  keep_prob = 1.0
+  num_layers = 2
+  init_scale = 0.1
+  max_grad_norm = 5
+  max_epochs = 5 ##
+  max_max_epochs = 50 ##
+  init_lr = 1.0
+  lr_decay = 0.9
+  batch_size = 20
+  num_steps = 10
+  verbose = True
+
+  config = lstm.LSTMConfig(
+      num_classes=num_classes, num_features=num_features,
+      hidden_size=hidden_size, forget_bias=forget_bias, keep_prob=keep_prob,
+      num_layers=num_layers, init_scale=init_scale, max_grad_norm=max_grad_norm,
+      max_epochs=max_epochs, max_max_epochs=max_max_epochs, init_lr=init_lr,
+      lr_decay=lr_decay, batch_size=batch_size, num_steps=num_steps,
+      verbose=verbose)
+  lstm_classifier = lstm.LSTM(config)
+  lstm_classifier.fit(dset=dset_train, dset_v=dset_validate)
+  IPython.embed()
+
 
 if __name__ == "__main__":
   # save_window_rff_slow_pigs(-1, True, 7)
@@ -819,6 +877,7 @@ if __name__ == "__main__":
   # IPython.embed()
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
-  pred_nn_slow_pigs(ws=5)
+  # pred_nn_slow_pigs(ws=5)
+  pred_lstm_slow_pigs(ws=5)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)

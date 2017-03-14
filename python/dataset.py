@@ -5,6 +5,28 @@ class DatasetException(Exception):
   pass
 
 
+# Some utility functions
+def create_batches(x, y, batch_size, num_steps):
+  data_len = x.shape[0]
+  epoch_size = data_len // (batch_size * num_steps)
+  if epoch_size == 0:
+    raise DatasetException(
+        "epoch_size is 0. Decrease batch_size or num_steps")
+
+  x_batches = x[0:batch_size * num_steps * epoch_size].reshape(
+      [batch_size, num_steps * epoch_size, x.shape[1]])
+  x_batches = np.split(x_batches, epoch_size, axis=1)
+
+  if y is None:
+    y_batches = None
+  else:
+    y_batches = y[0:batch_size * num_steps * epoch_size].reshape(
+        [batch_size, num_steps * epoch_size])
+    y_batches = np.split(y_batches, epoch_size, axis=1)
+
+  return x_batches, y_batches
+
+
 class TimeseriesDataset:
 
   def __init__(self, xs, ys, shuffle=True):
@@ -12,7 +34,6 @@ class TimeseriesDataset:
     self.xs = [np.array(x) for x in xs]
     self.ys = [np.array(y) for y in ys]
     self.num_ts = len(xs)
-    self.num_features = self.xs[0].shape[1]
 
     if self.num_ts != len(ys):
       raise DatasetException("")
@@ -44,29 +65,16 @@ class TimeseriesDataset:
     x = self.xs[self.ts_idx]
     y = self.ys[self.ts_idx]
 
-    data_len = x.shape[0]
-    epoch_size = data_len // (batch_size * num_steps)
-    if epoch_size == 0:
-      raise DatasetException(
-          "epoch_size is 0. Decrease batch_size or num_steps")
-
-    x_batches = x[0:batch_size * num_steps * epoch_size].reshape(
-        [batch_size, num_steps * epoch_size, self.num_features])
-    y_batches = y[0:batch_size * num_steps * epoch_size].reshape(
-        [batch_size, num_steps * epoch_size])
-
-    self.t_idx += 1
-    if self.t_idx == self.num_ts:
+    self.ts_idx += 1
+    if self.ts_idx == self.num_ts:
       self.shuffle_data()
-      self.t_idx = 0
+      self.ts_idx = 0
       self.epoch += 1
 
-    x_batches = np.split(x_batches, epoch_size, axis=1)
-    y_batches = np.split(y_batches, epoch_size, axis=1)
-    return x_batches, y_batches, epoch_size
+    return create_batches(x, y, batch_size, num_steps)
 
   def reset(self):
-    self.t_idx = 0
+    self.ts_idx = 0
     self.epoch = 0
     self.shuffle_data()
 
@@ -81,13 +89,13 @@ class TimeseriesDataset:
 
     x_shuffled, y_shuffled = self.shuffle_data(rtn=True)
 
-    end_inds = np.cumsum(split_inds).tolist()
-    start_inds = [0] + end_inds[:-1].tolist()
+    end_inds = np.cumsum(split_num).tolist()
+    start_inds = [0] + end_inds[:-1]
 
     dsets = []
     for sind, eind in zip(start_inds, end_inds):
       x_split = x_shuffled[sind:eind]
       y_split = y_shuffled[sind:eind]
-      dsets.append(TimeseriesDataset(x_split, y_split, self.shuffle))
+      dsets.append(TimeseriesDataset(x_split, y_split, self._shuffle))
 
     return dsets
