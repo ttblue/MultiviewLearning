@@ -73,7 +73,7 @@ class LSTMConfig(classifier.Config):
 
 class LSTMModel(object):
 
-  def __init__(self, x, y, config, is_training):
+  def __init__(self, config, is_training):
     self.config = config
     self.is_training = is_training
 
@@ -204,16 +204,44 @@ class LSTM(classifier.Classifier):
         raise classifier.ClassifierException("Invalid validation data.")
       dset, dset_v = dset.split([0.8, 0.2])
 
-    self._session = tf.Session()
-      
+    with tf.Graph().as_default():
+      initializer = tf.random_uniform_initializer(-self.config.init_scale,
+                                                  self.config.init_scale)
+
+      with tf.name_scope("Train"):
+        with tf.variable_scope("Model", reuse=None, initializer=initializer):
+          self._train_model = LSTMModel(config=config, is_training=True)
+        tf.summary.scalar("Training Loss", self._train_model.cost)
+        tf.summary.scalar("Learning Rate", self._train_model.lr)
+
+      with tf.name_scope("Valid"):
+        with tf.variable_scope("Model", reuse=True, initializer=initializer):
+          self._validation_model = LSTMModel(config=config, is_training=False)
+        tf.summary.scalar("Validation Loss", self._validation_model.cost)
+
+      with tf.name_scope("Test"):
+        with tf.variable_scope("Model", reuse=True, initializer=initializer):
+          self._test_model = LSTMModel(config=config, is_training=False)
+
+      self._session = tf.Session()
+
+  def _load_model(self, mtype="train"):
+    if mtype == "train":
+      self._model = self._train_model
+    elif mtype == "validation":
+      self._model = self._validation_model
+    else:
+      self._model = self._test_model
 
   def _run_epoch(dset, dset_v, self):
 
+    self._load_model("train")
     for _ in xrange(dset.num_ts):
       x_batches, y_batches, epoch_size = dset.get_ts_batches(
           self.config.batch_size, self.config.num_steps)
+      self._run_single_ts(x_batches, y_batches)
 
-  def _run_single_ts(self, x, y, eval_op=None):
+  def _run_single_ts(self, x, y, training=True):
 
     start_time = time.time()
     costs = 0.0
@@ -224,11 +252,13 @@ class LSTM(classifier.Classifier):
         "cost": self._model.cost,
         "final_state": self._model.final_state,
     }
-    if eval_op is not None:
-      fetches["eval_op"] = eval_op
+    if training:
+      fetches["eval_op"] = self._model.train_op
 
     for step in range(self._epoch_size):
       feed_dict = {}
+      feed_dict[self._model._x] = x[step]
+      feed_dict[self._model._y] = y[step]
       for i, (c, h) in enumerate(self._model.initial_state):
         feed_dict[c] = state[i].c
         feed_dict[h] = state[i].h
