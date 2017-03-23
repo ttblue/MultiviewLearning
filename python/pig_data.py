@@ -510,6 +510,12 @@ def compute_tau_means(features_dir, ds=5, ws=30):
 
 ################################################################################
 
+def numpy_convert_func(args):
+  utils.convert_csv_to_np(
+      args["data_file"], args["out_file"], downsample=args["downsample"],
+      columns=args["columns"])
+
+
 def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
   data_dir = os.path.join(DATA_DIR, "extracted/waveform/slow")
   save_dir = os.path.join(SAVE_DIR, "waveform/slow/numpy_arrays/")
@@ -517,8 +523,9 @@ def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
   if not os.path.exists(save_dir):
     os.makedirs(save_dir)
 
-  # columns = [0, 3, 4, 5, 6, 7, 11]
-  columns = [0, 7]
+  columns = [0, 3, 4, 5, 6, 7, 11]
+  # columns = [0, 7]
+  columns = sorted(columns)
   suffix = "_numpy_ds_%i_cols_%s"%(ds, columns)
   data_files, out_files = utils.create_data_feature_filenames(
       data_dir, save_dir, suffix, extension=".csv")
@@ -545,15 +552,15 @@ def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
   IPython.embed()
 
   if parallel:
-    convert_func = lambda args: utils.convert_csv_to_np(
-        args["data_file"], args["out_file"], downsample=ds, columns=columns)
-
-    all_args = [
-        {"data_file": data_file, "out_file": out_file}
+    all_args = [{
+        "data_file": data_file,
+        "out_file": out_file,
+        "downsample": downsample,
+        "columns": columns}
         for data_file, out_file in zip(data_files, out_files)]
 
     pl = multiprocessing.Pool(num_workers)
-    pl.map(convert_func, all_args)
+    pl.map(numpy_convert_func, all_args)
 
   else:
     for data_file, out_file in zip(data_files, out_files):
