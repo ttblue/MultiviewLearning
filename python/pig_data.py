@@ -65,13 +65,13 @@ def save_pigdata_window_rff(args):
     print("Time taken for pig: %.2f"%(time.time() - t_start))
 
 
-def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
+def save_window_rff_slow_pigs(num_pigs=-1, ws=30, parallel=False, num_workers=5):
   global mm_rff
 
   time_channel = 0
   ts_channels = range(2, 13)
   downsample = 5
-  window_length_s = 30
+  window_length_s = ws
   num_windows = None
   d_lag = 3
   d_features = 1000
@@ -92,7 +92,8 @@ def save_window_rff_slow_pigs(num_pigs=-1, parallel=False, num_workers=5):
 
   # Not re-computing the stuff already computed.
   channel_taus = None
-  taus_file = os.path.join(params_dir, "taus_ds_%i_ws_%i.npy"%(downsample, window_length_s))
+  # taus_file = os.path.join(params_dir, "taus_ds_%i_ws_%i.npy"%(downsample, window_length_s))
+  taus_file = os.path.join(params_dir, "taus_ds_%i.npy"%(downsample))
   channel_taus = np.load(taus_file).tolist()["taus"]
 
   already_finished = [os.path.exists(ffile + ".npy") for ffile in features_files]
@@ -257,10 +258,10 @@ def save_pigdata_features_given_basis(args):
   np.save(features_file, save_data)
 
 
-def save_features_slow_pigs_given_basis(num_pigs=-1, parallel=False, num_workers=5):
+def save_features_slow_pigs_given_basis(num_pigs=-1, ws=30, parallel=False, num_workers=5):
   global basis
 
-  window_length_s = 30
+  window_length_s = ws
   downsample = 5
   d_reduced = 6
   num_training = 30
