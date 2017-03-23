@@ -523,6 +523,20 @@ def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
   data_files, out_files = utils.create_data_feature_filenames(
       data_dir, save_dir, suffix, extension=".csv")
 
+  already_finished = [os.path.exists(ofile + ".npy") for ofile in out_files]
+  restart = any(already_finished)
+
+  if restart:
+    if VERBOSE:
+      print("Already finished pigs: %s"%(
+                [int(os.path.basename(data_files[i]).split('.')[0])
+                 for i in range(len(already_finished))
+                 if already_finished[i]]))
+
+    not_finished = [not finished for finished in already_finished]
+    data_files = [data_files[i] for i in xrange(len(data_files)) if not_finished[i]]
+    out_files = [out_files[i] for i in xrange(len(out_files)) if not_finished[i]]
+
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
     out_files = out_files[:num_pigs]
@@ -918,8 +932,8 @@ def pred_lstm_slow_pigs(ws=5):
   IPython.embed()
 
 
-
 if __name__ == "__main__":
+  save_pigs_as_numpy_arrays(num_pigs=1, ds=1, parallel=False, num_workers=5)
   # save_window_rff_slow_pigs(-1, True, 7)
   # save_window_basis_slow_pigs()
   # save_features_slow_pigs_given_basis(-1, True, 7)
@@ -933,7 +947,7 @@ if __name__ == "__main__":
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
   # pred_nn_slow_pigs(ws=5)
-  pred_lstm_slow_pigs(ws=5)
+  # pred_lstm_slow_pigs(ws=5)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
 

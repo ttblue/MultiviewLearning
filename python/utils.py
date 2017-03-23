@@ -245,7 +245,7 @@ def convert_csv_to_np(csv_file, out_file, downsample=1, columns=None):
   if downsample is not None and downsample > 1:
     data = data[::downsample]
 
-  np.save(out_file, data=data)
+  np.save(out_file, data)
 
 
 def get_size(obj, seen=None):
