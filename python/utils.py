@@ -154,7 +154,7 @@ def create_number_dict_from_files(data_dir, wild_card_str=None, extension=".npy"
   return file_dict
 
 
-def create_annotation_labels(ann_text):
+def create_annotation_labels(ann_text, console=False):
   # Labels are:
   # 0: Stabilization
   # 1: Bleeding
@@ -175,7 +175,8 @@ def create_annotation_labels(ann_text):
   critical_anns = []
   ann_labels = []
 
-  for idx, text in ann_text.iteritems():
+  for idx in range(len(ann_text)):
+    text = ann_text[idx]
     new_lbl = lbl
     if stabilization_start_re.search(text) is not None:
       # Everything starts with stabilization. If there are multiple, only
@@ -188,7 +189,7 @@ def create_annotation_labels(ann_text):
     elif stabilization_end_re.search(text) is not None:
       new_lbl = -1
     elif bleed_start_re.search(text) is not None:
-      new_lbl = 1 
+      new_lbl = 1
     elif bleed_end_re.search(text) is not None:
       new_lbl = 2
     elif resuscitation_start_re.search(text) is not None:
@@ -205,6 +206,21 @@ def create_annotation_labels(ann_text):
       ann_labels.append(lbl)
       lbl = new_lbl
 
+  # TODO: Currently removing all resuscitation events before bleed.
+  # I don't know what the right thing to do here is.
+  # if console:
+  #   import IPython
+  #   IPython.embed()
+  last_bleed_idx = (np.array(ann_labels) == 1).nonzero()[0][-1]
+  between_bleed_inds = (np.array(ann_labels[:last_bleed_idx]) > 2).nonzero()[0]
+  # valid_inds = ((np.array(ann_labels[:last_bleed_idx]) <= 2).tolist()
+  #               + [True] * (len(ann_labels) - last_bleed_idx))
+  for bidx in between_bleed_inds:
+    ann_labels[bidx] = 2
+  # critical_anns = np.array(critical_anns)[valid_inds].tolist()
+  # if console:
+  #   import IPython
+  #   IPython.embed()
   # This next check is unnecessary. If the last label is anything but 3, that's
   # worrisome.
   # The last label should be "post resuscitation".
@@ -220,6 +236,16 @@ def create_annotation_labels(ann_text):
     ann_labels.append(5)
 
   return critical_anns, ann_labels
+
+
+def convert_csv_to_np(csv_file, out_file, downsample=1, columns=None):
+  _, data = load_csv(filename)
+  if columns is not None:
+    data = data[:, columns]
+  if downsample is not None and downsample > 1:
+    data = data[::downsample]
+
+  np.save(out_file, data=data)
 
 
 def get_size(obj, seen=None):

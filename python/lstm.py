@@ -9,8 +9,12 @@ import time
 import numpy as np
 import tensorflow as tf
 
+import recurrent.rnn_cell.sru as sru
+
 import classifier
 import dataset
+
+import IPython
 
 flags = tf.flags
 logging = tf.logging
@@ -37,6 +41,7 @@ class LSTMConfig(classifier.Config):
   def __init__(self,
                num_classes,
                num_features,
+               use_sru,
                hidden_size,
                forget_bias,
                keep_prob,
@@ -54,6 +59,7 @@ class LSTMConfig(classifier.Config):
     self.num_classes = num_classes
     self.num_features = num_features
 
+    self.use_sru = use_sru
     self.hidden_size = hidden_size
     self.forget_bias = forget_bias
     self.keep_prob = keep_prob
@@ -109,9 +115,14 @@ class LSTMModel(object):
 
   def _lstm_cell(self):
     # Can be replaced with a different cell
-    return tf.contrib.rnn.BasicLSTMCell(
+    if self.config.use_sru:
+      cell = sru.SimpleSRUCell(
+          256, [0.0, 0.5, 0.9, 0.99, 0.999],self.config.hidden_size, 64)
+    else:
+      cell = tf.contrib.rnn.LSTMCell(
         self.config.hidden_size, forget_bias=self.config.forget_bias,
         state_is_tuple=True)
+    return cell
 
   def _attn_cell(self):
     if self.is_training and self.config.keep_prob < 1:
@@ -121,12 +132,14 @@ class LSTMModel(object):
       return self._lstm_cell()
 
   def _setup_cell(self):
-    self._cell = tf.contrib.rnn.MultiRNNCell(
-        [self._attn_cell() for _ in xrange(self.config.num_layers)],
-        state_is_tuple=True)
+    # self._cell = tf.contrib.rnn.MultiRNNCell(
+    #     [self._attn_cell() for _ in xrange(self.config.num_layers)],
+    #     state_is_tuple=True)
+    self._cell = self._attn_cell()
 
     self._initial_state = self._cell.zero_state(
         self.config.batch_size, data_type())
+    # IPython.embed()
 
     with tf.device("/cpu:0"):
       if self.is_training and self.config.keep_prob < 1:
@@ -138,15 +151,24 @@ class LSTMModel(object):
     # inputs = tf.unstack(inputs, num=num_steps, axis=1)
     # outputs, state = tf.nn.rnn(cell, inputs,
     #                            initial_state=self._initial_state)
+    IPython.embed()
     with tf.variable_scope("LSTM"):
-      inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
-      outputs, state = tf.contrib.rnn.static_rnn(
-          self._cell, inputs, self._initial_state)
+      # inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
+      outputs, state = tf.nn.dynamic_rnn(
+          self._cell, self._inputs, initial_state=self._initial_state)
+    # IPython.embed()
+    # outputs = []
+    # state = self._initial_state
+    # with tf.variable_scope("LSTM"):
+    #   for time_step in range(num_steps):
+    #     if time_step > 0: tf.get_variable_scope().reuse_variables()
+    #     (cell_output, state) = cell(inputs[:, time_step, :], state)
+    #     outputs.append(cell_output)
+    # IPython.embed()
 
     output = tf.reshape(tf.concat(outputs, 1), [-1, self.config.hidden_size])
     # output = tf.stack(outputs, 1)
     # import IPython
-    # IPython.embed()
     # print(output.get_shape())
     # print(len(outputs))
     self._softmax_w = tf.get_variable(
@@ -268,13 +290,13 @@ class LSTM(classifier.Classifier):
 
       if self.config.verbose:
         print("\tTrain TS %i\tAccuracy: %.3f\tTime: %.2fs."%
-              (ts_idx, ts_accuracy, (time.time() - start_time)), end='\r')
+              (ts_idx + 1, ts_accuracy, (time.time() - start_time)), end='\r')
         sys.stdout.flush()
 
     accuracy /= tot_steps
     if self.config.verbose:
       print("\tTrain TS %i\tAccuracy: %.3f\tTime: %.2fs."%
-            (ts_idx, ts_accuracy, (time.time() - epoch_start_time)))
+            (ts_idx + 1, ts_accuracy, (time.time() - start_time)))
       print("\n\tTrain Costs: %.3f\n\tTrain Accuracy: %.3f\n\t"
             "Time: %.2fs."%
             (costs / iters, accuracy, (time.time() - epoch_start_time)))
@@ -297,7 +319,7 @@ class LSTM(classifier.Classifier):
         v_tot_steps += epoch_size
         v_accuracy += ts_accuracy * epoch_size
 
-      v_accuracy /= tot_steps
+      v_accuracy /= v_tot_steps
       print("\n\tValidation Costs: %.3f\n\t"
             "Validation Accuracy: %.3f\n\tTime: %.2fs."%
             (v_costs / v_iters, v_accuracy, (time.time() - start_time)))
@@ -344,7 +366,7 @@ class LSTM(classifier.Classifier):
 
     x, _ = dataset.create_batches(
         x, None, self.config.batch_size, self.config.num_steps)
-    pred = np.empty((self.batch_size, 0))
+    pred = np.empty((self.config.batch_size, 0))
     epoch_size = len(x)
     for step in xrange(epoch_size):
       feed_dict = {}
@@ -356,7 +378,7 @@ class LSTM(classifier.Classifier):
       step_pred = self._session.run(self._model.pred, feed_dict)
       pred = np.c_[pred, step_pred]
 
-    return np.reshape(pred, (-1, 1))
+    return np.squeeze(np.reshape(pred, (-1, 1)))
 
   def fit(self, xs=None, ys=None, dset=None, xs_v=None, ys_v=None, dset_v=None):
     if xs is None and dset is None:
@@ -367,10 +389,15 @@ class LSTM(classifier.Classifier):
         raise classifier.ClassifierException("Labels not given, but data is.")
       dset = dataset.TimeseriesDataset(xs, ys)
 
-    if xs_v is None or ys_v is None:
-      if xs_v != ys_v:
-        raise classifier.ClassifierException("Invalid validation data.")
-      dset, dset_v = dset.split([0.8, 0.2])
+    if xs_v is not None:
+      if ys_v is None:
+        raise classifier.ClassifierException(
+            "Validation labels not given, but data is.")
+      dset_v = dataset.TimeseriesDataset(xs_v, ys_v)
+
+    if xs_v is None and ys_v is None:
+      if dset_v is None:
+        dset, dset_v = dset.split([0.8, 0.2])
 
     with tf.Graph().as_default():
       initializer = tf.random_uniform_initializer(-self.config.init_scale,
@@ -406,3 +433,70 @@ class LSTM(classifier.Classifier):
       preds.append(self._predict_single_ts(xs[ts_idx]))
 
     return preds
+
+
+def create_simple_dataset(num_ts, dim=2, ts_len=5000, nc=4):
+  xs = []
+  ys = []
+  for _ in xrange(num_ts):
+    y = np.random.randint(nc, size=(ts_len, 1))
+    x = np.tile(y, [1, dim])
+    y = y.squeeze()
+
+    xs.append(x)
+    ys.append(y)
+
+  return xs, ys
+
+def create_counter_dataset(num_ts, ts_len=5000):
+  xs = []
+  ys = []
+  for _ in xrange(num_ts):
+    x = np.random.randint(2, size=(ts_len, 2))
+    y = [x[0].sum()]
+    for i in xrange(1, ts_len):
+      y.append(x[i-1:i+1].sum())
+
+    xs.append(x)
+    ys.append(np.array(y))
+
+  return xs, ys  
+
+def main():
+  num_classes = 4
+  num_features = 2
+
+  hidden_size = 600
+  forget_bias = 0.5
+  keep_prob = 1.0
+  num_layers = 2
+  init_scale = 0.1
+  max_grad_norm = 5
+  max_epochs = 5 ##
+  max_max_epochs = 15 ##
+  init_lr = 1.0
+  lr_decay = 0.9
+  batch_size = 20
+  num_steps = 10
+  verbose = True
+
+  config = LSTMConfig(
+      num_classes=num_classes, num_features=num_features,
+      hidden_size=hidden_size, forget_bias=forget_bias, keep_prob=keep_prob,
+      num_layers=num_layers, init_scale=init_scale, max_grad_norm=max_grad_norm,
+      max_epochs=max_epochs, max_max_epochs=max_max_epochs, init_lr=init_lr,
+      lr_decay=lr_decay, batch_size=batch_size, num_steps=num_steps,
+      verbose=verbose)
+
+  xs, ys = create_simple_dataset(100, num_features, 1000, num_classes)
+  # xs, ys = create_counter_dataset(100, 1000)
+  dset = dataset.TimeseriesDataset(xs, ys)
+  dset_train, dset_valid, dset_test = dset.split([0.6, 0.2, 0.2])
+  IPython.embed()
+
+  lstm = LSTM(config)
+  lstm.fit(dset=dset_train, dset_v=dset_valid)
+  IPython.embed()
+
+if __name__ == "__main__":
+  main()

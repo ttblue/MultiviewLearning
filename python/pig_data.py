@@ -12,7 +12,7 @@ import numpy as np
 import dataset
 import lstm
 import multi_task_learning as mtl
-import time_series_ml as tsml
+# import time_series_ml as tsml
 import time_series_utils as tsu
 import utils
 
@@ -509,6 +509,44 @@ def compute_tau_means(features_dir, ds=5, ws=30):
 
 ################################################################################
 
+def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
+  data_dir = os.path.join(DATA_DIR, "extracted/waveform/slow")
+  save_dir = os.path.join(SAVE_DIR, "waveform/slow/numpy_arrays/")
+
+  if not os.path.exists(save_dir):
+    os.makedirs(save_dir)
+
+  # columns = [0, 3, 4, 5, 6, 7, 11]
+  columns = [0, 7]
+  suffix = "_numpy_ds_%i_%s"%(ds, columns)
+  data_files, out_files = create_data_feature_filenames(
+      data_dir, save_dir, suffix, extension=".csv")
+
+  import IPython
+  IPython.embed()
+
+  if num_pigs > 0:
+    data_files = data_files[:num_pigs]
+    out_files = out_files[:num_pigs]
+
+  if parallel:
+    convert_func = lambda args: utils.convert_csv_to_np(
+        args["data_file"], args["out_file"], downsample=ds, columns=columns)
+
+    all_args = [
+        {"data_file": data_file, "out_file": out_file}
+        for data_file, out_file in zip(data_files, out_files)]
+
+    pl = multiprocessing.Pool(num_workers)
+    pl.map(convert_func, all_args)
+
+  else:
+    for data_file, out_file in zip(data_files, out_files):
+      utils.convert_csv_to_np(
+          data_file, out_file, downsample=ds, columns=columns)
+
+################################################################################
+
 def create_label_timeline(labels):  
   label_dict = {i:lbl for i,lbl in enumerate(labels)}
   label_dict[len(labels)] = labels[-1]
@@ -562,7 +600,10 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both")
     features = pig_data["features"]
     
     ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
-    critical_anns, ann_labels = utils.create_annotation_labels(ann_text)
+    # if key == 37:
+    #   critical_anns, ann_labels = utils.create_annotation_labels(ann_text, True)
+    # else:
+    critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
     critical_times = [ann_time[idx] for idx in critical_anns]
     critical_text = {idx:ann_text[idx] for idx in critical_anns}
     label_dict = create_label_timeline(ann_labels)
@@ -810,7 +851,10 @@ def pred_nn_slow_pigs(ws=30):
 def pred_lstm_slow_pigs(ws=5):
   # Only using a single channel for now.
   channel = 6
+  allowed_labels = [0, 1, 2]
   pos_label = None
+  if pos_label not in allowed_labels:
+    pos_label is None
 
   num_train_pigs = -1
   num_test_pigs = -1
@@ -821,12 +865,20 @@ def pred_lstm_slow_pigs(ws=5):
   train_ids = train_data.keys()
   train_ts = [train_data[idx]["features"][channel] for idx in train_ids]
   train_labels = [np.array(train_data[idx]["labels"]) for idx in train_ids]
+  if allowed_labels is not None:
+    valid_inds = [[l in allowed_labels for l in lbls] for lbls in train_labels]
+    train_ts = [ts[vi] for ts, vi in zip(train_ts, valid_inds)]
+    train_labels = [lbls[vi] for lbls, vi in zip(train_labels, valid_inds)]
   if pos_label is not None:
     train_labels = [(lbls == pos_label).astype(int) for lbls in train_labels]
 
   test_ids = test_data.keys()
   test_ts = [test_data[idx]["features"][channel] for idx in test_ids]
   test_labels = [np.array(test_data[idx]["labels"]) for idx in test_ids]
+  if allowed_labels is not None:
+    valid_inds = [[l in allowed_labels for l in lbls] for lbls in test_labels]
+    test_ts = [ts[vi] for ts, vi in zip(test_ts, valid_inds)]
+    test_labels = [lbls[vi] for lbls, vi in zip(test_labels, valid_inds)]
   if pos_label is not None:
     test_labels = [(lbls == pos_label).astype(int) for lbls in test_labels]
 
@@ -840,6 +892,7 @@ def pred_lstm_slow_pigs(ws=5):
 
   hidden_size = 600
   forget_bias = 0.5
+  use_sru = False
   keep_prob = 1.0
   num_layers = 2
   init_scale = 0.1
@@ -853,7 +906,7 @@ def pred_lstm_slow_pigs(ws=5):
   verbose = True
 
   config = lstm.LSTMConfig(
-      num_classes=num_classes, num_features=num_features,
+      num_classes=num_classes, num_features=num_features, use_sru=use_sru,
       hidden_size=hidden_size, forget_bias=forget_bias, keep_prob=keep_prob,
       num_layers=num_layers, init_scale=init_scale, max_grad_norm=max_grad_norm,
       max_epochs=max_epochs, max_max_epochs=max_max_epochs, init_lr=init_lr,
@@ -862,6 +915,7 @@ def pred_lstm_slow_pigs(ws=5):
   lstm_classifier = lstm.LSTM(config)
   lstm_classifier.fit(dset=dset_train, dset_v=dset_validate)
   IPython.embed()
+
 
 
 if __name__ == "__main__":
@@ -881,3 +935,4 @@ if __name__ == "__main__":
   pred_lstm_slow_pigs(ws=5)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
+
