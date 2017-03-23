@@ -519,16 +519,16 @@ def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
 
   # columns = [0, 3, 4, 5, 6, 7, 11]
   columns = [0, 7]
-  suffix = "_numpy_ds_%i_%s"%(ds, columns)
-  data_files, out_files = create_data_feature_filenames(
+  suffix = "_numpy_ds_%i_cols_%s"%(ds, columns)
+  data_files, out_files = utils.create_data_feature_filenames(
       data_dir, save_dir, suffix, extension=".csv")
-
-  import IPython
-  IPython.embed()
 
   if num_pigs > 0:
     data_files = data_files[:num_pigs]
     out_files = out_files[:num_pigs]
+
+  import IPython
+  IPython.embed()
 
   if parallel:
     convert_func = lambda args: utils.convert_csv_to_np(

@@ -239,7 +239,7 @@ def create_annotation_labels(ann_text, console=False):
 
 
 def convert_csv_to_np(csv_file, out_file, downsample=1, columns=None):
-  _, data = load_csv(filename)
+  _, data = load_csv(csv_file)
   if columns is not None:
     data = data[:, columns]
   if downsample is not None and downsample > 1:
