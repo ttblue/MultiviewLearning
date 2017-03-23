@@ -555,7 +555,7 @@ def save_pigs_as_numpy_arrays(num_pigs=-1, ds=1, parallel=False, num_workers=5):
     all_args = [{
         "data_file": data_file,
         "out_file": out_file,
-        "downsample": downsample,
+        "downsample": ds,
         "columns": columns}
         for data_file, out_file in zip(data_files, out_files)]
 
@@ -585,6 +585,94 @@ def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length
 
 
 def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both"):
+  features_dir = os.path.join(SAVE_DIR, "waveform/slow")
+  rfeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff")
+  ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
+  
+  fdict = utils.create_number_dict_from_files(
+      features_dir, wild_card_str="*_ds_%i_ws_%i.npy"%(ds, ws))
+  adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
+
+  common_keys = np.intersect1d(fdict.keys(), adict.keys()).tolist()
+
+  unused_pigs = []
+  unused_pigs.extend([p for p in fdict if p not in common_keys])
+  unused_pigs.extend([p for p in adict if p not in common_keys])
+  if VERBOSE:
+    print("Not using pigs %s. Either annotations or data missing."%(unused_pigs))
+
+  pig_ids = common_keys
+  if category in ["train", "test"]:
+    training_ids_file = os.path.join(rfeatures_dir, "training_ids_ds_%i_ws_%i.npy"%(ds, ws))
+    training_ids = np.load(training_ids_file)
+    if category == "train":
+      pig_ids = [idx for idx in pig_ids if idx in training_ids]
+    else:
+      pig_ids = [idx for idx in pig_ids if idx not in training_ids]
+
+  if num_pigs > 0:
+    np.random.shuffle(pig_ids)
+
+  all_data = {}
+  curr_unused_pigs = len(unused_pigs)
+  num_selected = 0
+  for key in pig_ids:
+    pig_data = np.load(fdict[key]).tolist()
+    tstamps = pig_data["tstamps"]
+    features = pig_data["features"]
+    
+    ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
+    # if key == 37:
+    #   critical_anns, ann_labels = utils.create_annotation_labels(ann_text, True)
+    # else:
+    critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
+    critical_times = [ann_time[idx] for idx in critical_anns]
+    critical_text = {idx:ann_text[idx] for idx in critical_anns}
+    label_dict = create_label_timeline(ann_labels)
+    labels = convert_tstamps_to_labels(tstamps, critical_times, label_dict, ws)
+
+    valid_inds = (labels != -1)
+    features = [c_f[valid_inds, :] for c_f in features]
+    labels = labels[valid_inds]
+
+    lvals, counts = np.unique(labels, False, False, True)
+
+    # Debugging and data-quality checks:
+    # print(counts, counts.astype(float)/counts.sum())
+    # if (counts.astype(float)/counts.sum() < 0.05).any(): IPython.embed()
+    # if (labels == 0).sum() > 70: IPython.embed()
+    # if len(counts) < 6: IPython.embed()
+    # if (labels == 0).sum() < 50: IPython.embed()
+    # if key == 18: IPython.embed()
+
+    # Something weird happened with the data:
+    # 1. Too label types are missing
+    # 2. The stabilization period is too small
+    if len(lvals) < 5:
+      if VERBOSE:
+        print("Not using pig %i. Missing data from some phases."%key)
+      unused_pigs.append(key)
+      continue
+    if counts[0] < 10:
+      if VERBOSE:
+        print("Not using pig %i. Stabilization period is too small."%key)
+      unused_pigs.append(key)
+      continue
+
+    all_data[key] = {"features": features, "labels": labels, "ann_text":critical_text}
+    if num_pigs > 0:
+      num_selected += 1
+      if num_selected >= num_pigs:
+        break
+  new_unused_pigs = len(unused_pigs) - curr_unused_pigs
+  if num_pigs > 0:
+    print("Not using pigs %s. Already have enough."%(pig_ids[num_selected+new_unused_pigs:]))
+  unused_pigs.extend(pig_ids[num_selected+new_unused_pigs:])
+
+  return all_data, unused_pigs
+
+
+def load_slow_pig_numpy_data_and_labels(num_pigs=-1, ds=1):
   features_dir = os.path.join(SAVE_DIR, "waveform/slow")
   rfeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff")
   ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
