@@ -997,7 +997,10 @@ def pred_lstm_slow_pigs(ws=5):
   dset_test, dset_validate = dset_test.split([0.8, 0.2])
   # IPython.embed()
   # LSTM Config:
-  num_classes = 6 if pos_label is None else 2
+  if allowed_labels is not None:
+    num_classes = len(allowed_labels) if pos_label is None else 2
+  else:
+    num_classes = 6 if pos_label is None else 2
   num_features = train_ts[0].shape[1]
 
   hidden_size = 600
@@ -1028,7 +1031,7 @@ def pred_lstm_slow_pigs(ws=5):
 
 
 if __name__ == "__main__":
-  save_pigs_as_numpy_arrays(num_pigs=1, ds=1, parallel=False, num_workers=5)
+  # save_pigs_as_numpy_arrays(num_pigs=1, ds=1, parallel=False, num_workers=5)
   # save_window_rff_slow_pigs(-1, True, 7)
   # save_window_basis_slow_pigs()
   # save_features_slow_pigs_given_basis(-1, True, 7)
@@ -1042,7 +1045,7 @@ if __name__ == "__main__":
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
   # pred_nn_slow_pigs(ws=5)
-  # pred_lstm_slow_pigs(ws=5)
+  pred_lstm_slow_pigs(ws=5)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
 
