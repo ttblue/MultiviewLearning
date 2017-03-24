@@ -132,10 +132,10 @@ class LSTMModel(object):
       return self._lstm_cell()
 
   def _setup_cell(self):
-    # self._cell = tf.contrib.rnn.MultiRNNCell(
-    #     [self._attn_cell() for _ in xrange(self.config.num_layers)],
-    #     state_is_tuple=True)
-    self._cell = self._attn_cell()
+    self._cell = tf.contrib.rnn.MultiRNNCell(
+        [self._attn_cell() for _ in xrange(self.config.num_layers)],
+        state_is_tuple=True)
+    # self._cell = self._attn_cell()
 
     self._initial_state = self._cell.zero_state(
         self.config.batch_size, data_type())
@@ -151,11 +151,11 @@ class LSTMModel(object):
     # inputs = tf.unstack(inputs, num=num_steps, axis=1)
     # outputs, state = tf.nn.rnn(cell, inputs,
     #                            initial_state=self._initial_state)
-    IPython.embed()
+   #  IPython.embed()
     with tf.variable_scope("LSTM"):
-      # inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
-      outputs, state = tf.nn.dynamic_rnn(
-          self._cell, self._inputs, initial_state=self._initial_state)
+      inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
+      outputs, state = tf.contrib.rnn.static_rnn(
+          self._cell, inputs, initial_state=self._initial_state)
     # IPython.embed()
     # outputs = []
     # state = self._initial_state

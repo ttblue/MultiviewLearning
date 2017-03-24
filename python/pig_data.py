@@ -1089,7 +1089,7 @@ def pred_lstm_slow_pigs_raw():
 
 
 if __name__ == "__main__":
-  save_pigs_as_numpy_arrays(num_pigs=1, ds=1, parallel=False, num_workers=5)
+  # save_pigs_as_numpy_arrays(num_pigs=1, ds=1, parallel=False, num_workers=5)
   # save_window_rff_slow_pigs(-1, True, 7)
   # save_window_basis_slow_pigs()
   # save_features_slow_pigs_given_basis(-1, True, 7)
@@ -1103,7 +1103,7 @@ if __name__ == "__main__":
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
   # pred_nn_slow_pigs(ws=5)
-  # pred_lstm_slow_pigs(ws=5)
+  pred_lstm_slow_pigs(ws=5)
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
 
