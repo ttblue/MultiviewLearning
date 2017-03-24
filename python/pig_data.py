@@ -576,17 +576,17 @@ def create_label_timeline(labels):
   return label_dict
 
 
-def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length_s):
-  mean_tstamps = [t + window_length_s / 2.0 for t in tstamps]
-  segment_inds = np.searchsorted(critical_times, mean_tstamps)
+def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length_s=None):
+  if window_length_s is not None:
+    tstamps = [t + window_length_s / 2.0 for t in tstamps]
+  segment_inds = np.searchsorted(critical_times, tstamps)
   labels = np.array([label_dict[idx] for idx in segment_inds])
 
   return labels
 
 
 def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both"):
-  features_dir = os.path.join(SAVE_DIR, "waveform/slow")
-  rfeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff")
+  _dir = os.path.join(SAVE_DIR, "waveform/slow/numpy_arrays/")
   ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
   
   fdict = utils.create_number_dict_from_files(
@@ -672,13 +672,23 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both")
   return all_data, unused_pigs
 
 
-def load_slow_pig_numpy_data_and_labels(num_pigs=-1, ds=1):
-  features_dir = os.path.join(SAVE_DIR, "waveform/slow")
-  rfeatures_dir = os.path.join(SAVE_DIR, "waveform/slow/window_rff")
+def load_slow_pig_features_and_labels_numpy(
+      num_pigs=-1, ds=1, ds_factor=5, feature_columns=[0, 7], save_new=False):
+  features_dir = os.path.join(SAVE_DIR, "waveform/slow/numpy_arrays")
   ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
-  
+
+  feature_columns = sorted(feature_columns)
+  if 0 not in feature_columns:
+    feature_columns = sorted([0] + feature_columns)
+
   fdict = utils.create_number_dict_from_files(
-      features_dir, wild_card_str="*_ds_%i_ws_%i.npy"%(ds, ws))
+      features_dir, wild_card_str="*_numpy_ds_%i_columns_%s.npy"%(ds, feature_columns))
+  using_all = False
+  if not fdict:
+    all_columns = [0, 3, 4, 5, 6, 7, 11]
+    fdict = utils.create_number_dict_from_files(
+        features_dir, wild_card_str="*_numpy_ds_%i_columns_%s.npy"%(ds, all_columns))
+    using_all = True
   adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
 
   common_keys = np.intersect1d(fdict.keys(), adict.keys()).tolist()
@@ -690,13 +700,6 @@ def load_slow_pig_numpy_data_and_labels(num_pigs=-1, ds=1):
     print("Not using pigs %s. Either annotations or data missing."%(unused_pigs))
 
   pig_ids = common_keys
-  if category in ["train", "test"]:
-    training_ids_file = os.path.join(rfeatures_dir, "training_ids_ds_%i_ws_%i.npy"%(ds, ws))
-    training_ids = np.load(training_ids_file)
-    if category == "train":
-      pig_ids = [idx for idx in pig_ids if idx in training_ids]
-    else:
-      pig_ids = [idx for idx in pig_ids if idx not in training_ids]
 
   if num_pigs > 0:
     np.random.shuffle(pig_ids)
@@ -706,9 +709,25 @@ def load_slow_pig_numpy_data_and_labels(num_pigs=-1, ds=1):
   num_selected = 0
   for key in pig_ids:
     pig_data = np.load(fdict[key]).tolist()
-    tstamps = pig_data["tstamps"]
-    features = pig_data["features"]
-    
+    if using_all:
+      finds = [all_columns.index(idx) for idx in feature_columns[:]]
+      pig_data = pig_data[:, finds]
+
+    tstamps = pig_data[:, 0]
+    features = pig_data[:, 1:]
+
+    if save_new:
+      new_file = os.join(
+          features_dir, "%i_numpy_ds_%i_columns_%s.npy"%(key, ds, feature_columns)))
+      if not os.path.exists(new_file):
+        np.save(new_file, pig_data)
+
+    del pig_data
+
+    if ds_factor > 1:
+      tstamps = tstamps[::ds_factor]
+      features = features[::ds_factor]
+
     ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
     # if key == 37:
     #   critical_anns, ann_labels = utils.create_annotation_labels(ann_text, True)
@@ -717,37 +736,13 @@ def load_slow_pig_numpy_data_and_labels(num_pigs=-1, ds=1):
     critical_times = [ann_time[idx] for idx in critical_anns]
     critical_text = {idx:ann_text[idx] for idx in critical_anns}
     label_dict = create_label_timeline(ann_labels)
-    labels = convert_tstamps_to_labels(tstamps, critical_times, label_dict, ws)
+    labels = convert_tstamps_to_labels(tstamps, critical_times, label_dict, None)
 
     valid_inds = (labels != -1)
-    features = [c_f[valid_inds, :] for c_f in features]
+    features = features[valid_inds, :]
     labels = labels[valid_inds]
 
-    lvals, counts = np.unique(labels, False, False, True)
-
-    # Debugging and data-quality checks:
-    # print(counts, counts.astype(float)/counts.sum())
-    # if (counts.astype(float)/counts.sum() < 0.05).any(): IPython.embed()
-    # if (labels == 0).sum() > 70: IPython.embed()
-    # if len(counts) < 6: IPython.embed()
-    # if (labels == 0).sum() < 50: IPython.embed()
-    # if key == 18: IPython.embed()
-
-    # Something weird happened with the data:
-    # 1. Too label types are missing
-    # 2. The stabilization period is too small
-    if len(lvals) < 5:
-      if VERBOSE:
-        print("Not using pig %i. Missing data from some phases."%key)
-      unused_pigs.append(key)
-      continue
-    if counts[0] < 10:
-      if VERBOSE:
-        print("Not using pig %i. Stabilization period is too small."%key)
-      unused_pigs.append(key)
-      continue
-
-    all_data[key] = {"features": features, "labels": labels, "ann_text":critical_text}
+    all_data[key] = {"features": np.atleast_2d(features), "labels": labels, "ann_text":critical_text}
     if num_pigs > 0:
       num_selected += 1
       if num_selected >= num_pigs:
@@ -758,6 +753,7 @@ def load_slow_pig_numpy_data_and_labels(num_pigs=-1, ds=1):
   unused_pigs.extend(pig_ids[num_selected+new_unused_pigs:])
 
   return all_data, unused_pigs
+
 
 ################################################################################
 
@@ -997,8 +993,73 @@ def pred_lstm_slow_pigs(ws=5):
   dset_test, dset_validate = dset_test.split([0.8, 0.2])
   # IPython.embed()
   # LSTM Config:
-  num_classes = 6 if pos_label is None else 2
+  if allowed_labels is not None:
+    num_classes = len(allowed_labels) if pos_label is None else 2
+  else:
+    num_classes = 6 if pos_label is None else 2
   num_features = train_ts[0].shape[1]
+
+  hidden_size = 600
+  forget_bias = 0.5
+  use_sru = False
+  keep_prob = 1.0
+  num_layers = 2
+  init_scale = 0.1
+  max_grad_norm = 5
+  max_epochs = 5 ##
+  max_max_epochs = 50 ##
+  init_lr = 1.0
+  lr_decay = 0.9
+  batch_size = 20
+  num_steps = 10
+  verbose = True
+
+  config = lstm.LSTMConfig(
+      num_classes=num_classes, num_features=num_features, use_sru=use_sru,
+      hidden_size=hidden_size, forget_bias=forget_bias, keep_prob=keep_prob,
+      num_layers=num_layers, init_scale=init_scale, max_grad_norm=max_grad_norm,
+      max_epochs=max_epochs, max_max_epochs=max_max_epochs, init_lr=init_lr,
+      lr_decay=lr_decay, batch_size=batch_size, num_steps=num_steps,
+      verbose=verbose)
+  lstm_classifier = lstm.LSTM(config)
+  lstm_classifier.fit(dset=dset_train, dset_v=dset_validate)
+  IPython.embed()
+
+
+def pred_lstm_slow_pigs_raw():
+  num_pigs = 2
+  ds_factor = 5
+  columns = [0, 7]
+  allowed_labels = [0, 1, 2]
+  pos_label = None
+  if pos_label not in allowed_labels:
+    pos_label is None
+
+  all_data, _ = load_slow_pig_features_and_labels_numpy(
+      num_pigs=num_pigs, ds=1, ds_factor=ds_factor, feature_columns=columns, save_new=False)
+
+  pig_ids = all_data.keys()
+  all_ts = [all_data[idx]["features"] for idx in pig_ids]
+  all_labels = [np.array(all_data[idx]["labels"]) for idx in pig_ids]
+  if allowed_labels is not None:
+    valid_inds = [[l in allowed_labels for l in lbls] for lbls in all_labels]
+    all_ts = [ts[vi] for ts, vi in zip(all_ts, valid_inds)]
+    all_labels = [lbls[vi] for lbls, vi in zip(all_labels, valid_inds)]
+  if pos_label is not None:
+    all_labels = [(lbls == pos_label).astype(int) for lbls in all_labels]
+
+  ttv_split = [0.6, 0.2, 0.2]
+
+  all_dsets = dataset.TimeseriesDataset(all_ts, all_labels)
+  dset_train, dset_test, dset_validate = dset_test.split(ttv_split)
+  IPython.embed()
+
+  # LSTM Config:
+  if allowed_labels is not None:
+    num_classes = len(allowed_labels) if pos_label is None else 2
+  else:
+    num_classes = 6 if pos_label is None else 2
+  num_features = all_ts[0].shape[1]
 
   hidden_size = 600
   forget_bias = 0.5
