@@ -681,13 +681,15 @@ def load_slow_pig_features_and_labels_numpy(
   if 0 not in feature_columns:
     feature_columns = sorted([0] + feature_columns)
 
+  str_pattern = str(feature_columns)[1:-1]
   fdict = utils.create_number_dict_from_files(
-      features_dir, wild_card_str="*_numpy_ds_%i_columns_%s.npy"%(ds, feature_columns))
+      features_dir, wild_card_str="*_numpy_ds_%i_cols*%s*"%(ds, str_pattern))
   using_all = False
   if not fdict:
     all_columns = [0, 3, 4, 5, 6, 7, 11]
+    str_pattern = str(all_columns)[1:-1]
     fdict = utils.create_number_dict_from_files(
-        features_dir, wild_card_str="*_numpy_ds_%i_columns_%s.npy"%(ds, all_columns))
+        features_dir, wild_card_str="*_numpy_ds_%i_cols*%s*"%(ds, str_pattern))
     using_all = True
   adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
 
@@ -708,7 +710,10 @@ def load_slow_pig_features_and_labels_numpy(
   curr_unused_pigs = len(unused_pigs)
   num_selected = 0
   for key in pig_ids:
-    pig_data = np.load(fdict[key]).tolist()
+    if VERBOSE:
+      t_start = time.time()
+
+    pig_data = np.load(fdict[key])
     if using_all:
       finds = [all_columns.index(idx) for idx in feature_columns[:]]
       pig_data = pig_data[:, finds]
@@ -717,8 +722,8 @@ def load_slow_pig_features_and_labels_numpy(
     features = pig_data[:, 1:]
 
     if save_new:
-      new_file = os.join(
-          features_dir, "%i_numpy_ds_%i_columns_%s.npy"%(key, ds, feature_columns)))
+      new_file = os.path.join(
+          features_dir, "%i_numpy_ds_%i_columns_%s.npy"%(key, ds, feature_columns))
       if not os.path.exists(new_file):
         np.save(new_file, pig_data)
 
@@ -743,6 +748,9 @@ def load_slow_pig_features_and_labels_numpy(
     labels = labels[valid_inds]
 
     all_data[key] = {"features": np.atleast_2d(features), "labels": labels, "ann_text":critical_text}
+
+    if VERBOSE:
+      print("Time taken to load pig %i: %.2f"%(key, time.time() - t_start))
     if num_pigs > 0:
       num_selected += 1
       if num_selected >= num_pigs:
@@ -1028,15 +1036,15 @@ def pred_lstm_slow_pigs(ws=5):
 
 def pred_lstm_slow_pigs_raw():
   num_pigs = 2
-  ds_factor = 5
-  columns = [0, 7]
+  ds_factor = 25
+  columns = [0, 6, 7, 11]
   allowed_labels = [0, 1, 2]
   pos_label = None
   if pos_label not in allowed_labels:
     pos_label is None
 
   all_data, _ = load_slow_pig_features_and_labels_numpy(
-      num_pigs=num_pigs, ds=1, ds_factor=ds_factor, feature_columns=columns, save_new=False)
+      num_pigs=-1, ds=1, ds_factor=ds_factor, feature_columns=columns, save_new=True)
 
   pig_ids = all_data.keys()
   all_ts = [all_data[idx]["features"] for idx in pig_ids]
@@ -1051,8 +1059,8 @@ def pred_lstm_slow_pigs_raw():
   ttv_split = [0.6, 0.2, 0.2]
 
   all_dsets = dataset.TimeseriesDataset(all_ts, all_labels)
-  dset_train, dset_test, dset_validate = dset_test.split(ttv_split)
-  IPython.embed()
+  dset_train, dset_test, dset_validate = all_dsets.split(ttv_split)
+  # IPython.embed()
 
   # LSTM Config:
   if allowed_labels is not None:
@@ -1062,17 +1070,17 @@ def pred_lstm_slow_pigs_raw():
   num_features = all_ts[0].shape[1]
 
   hidden_size = 600
-  forget_bias = 0.5
+  forget_bias = 1.0
   use_sru = False
-  keep_prob = 1.0
+  keep_prob = 0.8
   num_layers = 2
   init_scale = 0.1
   max_grad_norm = 5
   max_epochs = 5 ##
-  max_max_epochs = 50 ##
+  max_max_epochs = 15 ##
   init_lr = 1.0
   lr_decay = 0.9
-  batch_size = 20
+  batch_size = 50
   num_steps = 10
   verbose = True
 
@@ -1103,7 +1111,7 @@ if __name__ == "__main__":
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
   # pred_nn_slow_pigs(ws=5)
-  pred_lstm_slow_pigs(ws=5)
+  pred_lstm_slow_pigs_raw()
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
 
