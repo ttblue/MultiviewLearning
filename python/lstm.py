@@ -42,6 +42,7 @@ class LSTMConfig(classifier.Config):
                num_classes,
                num_features,
                use_sru,
+               dynamic_rnn,
                hidden_size,
                forget_bias,
                keep_prob,
@@ -60,6 +61,7 @@ class LSTMConfig(classifier.Config):
     self.num_features = num_features
 
     self.use_sru = use_sru
+    self.dynamic_rnn = dynamic_rnn
     self.hidden_size = hidden_size
     self.forget_bias = forget_bias
     self.keep_prob = keep_prob
@@ -154,8 +156,12 @@ class LSTMModel(object):
    #  IPython.embed()
     with tf.variable_scope("LSTM"):
       inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
-      outputs, state = tf.contrib.rnn.static_rnn(
-          self._cell, inputs, initial_state=self._initial_state)
+      if self.config.use_dynamic:
+        outputs, state = tf.nn.dynamic_rnn(
+            self._cell, inputs, initial_state=self._initial_state)
+      else:
+        outputs, state = tf.contrib.rnn.static_rnn(
+            self._cell, inputs, initial_state=self._initial_state)
     # IPython.embed()
     # outputs = []
     # state = self._initial_state
@@ -271,7 +277,7 @@ class LSTM(classifier.Classifier):
       print("\n\nEpoch: %i\tLearning rate: %.3f"%(self._epoch_idx + 1, lr))
 
     costs = 0
-    iters = 0
+    iters = 0  # TODO: Don't need.
     accuracy = 0
     tot_steps = 0
     for ts_idx in xrange(dset.num_ts):
@@ -294,35 +300,38 @@ class LSTM(classifier.Classifier):
         sys.stdout.flush()
 
     accuracy /= tot_steps
+    self.train_results.append({"accuracy": accuracy, "costs": costs})
+
     if self.config.verbose:
       print("\tTrain TS %i\tAccuracy: %.3f\tTime: %.2fs."%
             (ts_idx + 1, ts_accuracy, (time.time() - start_time)))
       print("\n\tTrain Costs: %.3f\n\tTrain Accuracy: %.3f\n\t"
             "Time: %.2fs."%
-            (costs / iters, accuracy, (time.time() - epoch_start_time)))
+            (costs, accuracy, (time.time() - epoch_start_time)))
 
       start_time = time.time()
 
-      self._load_model("valid")
-      v_iters = 0
-      v_costs = 0
-      v_accuracy = 0
-      v_tot_steps = 0
-      for ts_idx in xrange(dset_v.num_ts):
-        x_batches, y_batches = dset_v.get_ts_batches(
-            self.config.batch_size, self.config.num_steps)
-        ts_costs, ts_iters, ts_accuracy = self._run_single_ts(
-            x_batches, y_batches, training=False)
-        v_costs += ts_costs
-        v_iters += ts_iters
-        epoch_size = len(x_batches)
-        v_tot_steps += epoch_size
-        v_accuracy += ts_accuracy * epoch_size
+    self._load_model("valid")
+    v_iters = 0  # TODO: Don't need.
+    v_costs = 0
+    v_accuracy = 0
+    v_tot_steps = 0
+    for ts_idx in xrange(dset_v.num_ts):
+      x_batches, y_batches = dset_v.get_ts_batches(
+          self.config.batch_size, self.config.num_steps)
+      ts_costs, ts_iters, ts_accuracy = self._run_single_ts(
+          x_batches, y_batches, training=False)
+      v_costs += ts_costs
+      v_iters += ts_iters
+      epoch_size = len(x_batches)
+      v_tot_steps += epoch_size
+      v_accuracy += ts_accuracy * epoch_size
 
-      v_accuracy /= v_tot_steps
-      print("\n\tValidation Costs: %.3f\n\t"
-            "Validation Accuracy: %.3f\n\tTime: %.2fs."%
-            (v_costs / v_iters, v_accuracy, (time.time() - start_time)))
+    v_accuracy /= v_tot_steps
+    print("\n\tValidation Costs: %.3f\n\t"
+          "Validation Accuracy: %.3f\n\tTime: %.2fs."%
+          (v_costs, v_accuracy, (time.time() - start_time)))
+    self.validation_results.append({"accuracy": v_accuracy, "costs": v_costs})
 
   def _run_single_ts(self, x, y, training=True):
     costs = 0.0
@@ -399,6 +408,8 @@ class LSTM(classifier.Classifier):
       if dset_v is None:
         dset, dset_v = dset.split([0.8, 0.2])
 
+    self.train_results = []
+    self.validation_results = []
     with tf.Graph().as_default():
       initializer = tf.random_uniform_initializer(-self.config.init_scale,
                                                   self.config.init_scale)
