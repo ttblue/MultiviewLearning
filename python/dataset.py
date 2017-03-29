@@ -29,10 +29,17 @@ def create_batches(x, y, batch_size, num_steps):
 
 class TimeseriesDataset:
 
-  def __init__(self, xs, ys, shuffle=True):
+  def __init__(self, xs, ys, shuffle=True, shift_scale=False):
     # xs, ys are a list of time-series data.
     self.xs = [np.array(x) for x in xs]
     self.ys = [np.array(y) for y in ys]
+
+    if shift_scale:
+      self.shift_and_scale()
+    else:
+      self.mu = np.zeros(self.xs[0].shape[1])
+      self.sigma = np.ones(self.xs[0].shape[1])
+
     self.num_ts = len(xs)
 
     if self.num_ts != len(ys):
@@ -61,6 +68,28 @@ class TimeseriesDataset:
       self.xs = xs
       self.ys = ys
 
+  def shift_and_scale(self, mu=None, sigma=None):
+    # Every shift and scale is cumulative.
+    # So only use this once, unless you know what you're doing.
+    if mu is None or sigma is None:
+      wts = np.array([x.shape[0] for x in self.xs]).astype("float")
+      wts /= wts.sum()
+
+      if mu is None:
+        ts_mus = np.array([x.mean(axis=0) for x in self.xs])
+        mu = ts_mus.T.dot(wts)
+
+      if sigma is None:
+        ts_sigmas_squared = np.array(
+            [np.square(x-mu).mean(axis=0) for x in self.xs])
+        sigma_squared = ts_sigmas_squared.T.dot(wts)
+        sigma = np.sqrt(sigma_squared)
+
+    self.mu = mu
+    self.sigma = sigma
+
+    self.xs = [(x - mu) / sigma for x in self.xs]
+
   def get_ts_batches(self, batch_size, num_steps):
     x = self.xs[self.ts_idx]
     y = self.ys[self.ts_idx]
@@ -79,7 +108,6 @@ class TimeseriesDataset:
     self.shuffle_data()
 
   def split(self, proportions):
-
     proportions = np.array(proportions)
     if proportions.sum() != 1:
       proportions /= proportions.sum()

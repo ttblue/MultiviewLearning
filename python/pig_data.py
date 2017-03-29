@@ -1010,7 +1010,7 @@ def pred_lstm_slow_pigs(ws=5):
   hidden_size = 600
   forget_bias = 0.5
   use_sru = False
-  use_dynamic = False
+  use_dynamic_rnn = False
   keep_prob = 1.0
   num_layers = 2
   init_scale = 0.1
@@ -1025,7 +1025,7 @@ def pred_lstm_slow_pigs(ws=5):
 
   config = lstm.LSTMConfig(
       num_classes=num_classes, num_features=num_features, use_sru=use_sru,
-      use_dynamic = use_dynamic, hidden_size=hidden_size,
+      use_dynamic_rnn=use_dynamic_rnn, hidden_size=hidden_size,
       forget_bias=forget_bias, keep_prob=keep_prob, num_layers=num_layers,
       init_scale=init_scale, max_grad_norm=max_grad_norm, max_epochs=max_epochs,
       max_max_epochs=max_max_epochs, init_lr=init_lr, lr_decay=lr_decay,
@@ -1036,7 +1036,8 @@ def pred_lstm_slow_pigs(ws=5):
 
 
 def pred_lstm_slow_pigs_raw():
-  num_pigs = 2
+  num_pigs = -1
+  ds = 1
   ds_factor = 25
   columns = [0, 6, 7, 11]
   allowed_labels = [0, 1, 2]
@@ -1045,13 +1046,15 @@ def pred_lstm_slow_pigs_raw():
     pos_label is None
 
   all_data, _ = load_slow_pig_features_and_labels_numpy(
-      num_pigs=num_pigs, ds=1, ds_factor=ds_factor, feature_columns=columns, save_new=False)
+      num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
+      save_new=False)
 
   pig_ids = all_data.keys()
   all_ts = [all_data[idx]["features"] for idx in pig_ids]
   all_labels = [np.array(all_data[idx]["labels"]) for idx in pig_ids]
   if allowed_labels is not None:
-    valid_inds = [np.array([l in allowed_labels for l in lbls]) for lbls in all_labels]
+    valid_inds = [
+        np.array([l in allowed_labels for l in lbls]) for lbls in all_labels]
     all_ts = [ts[vi] for ts, vi in zip(all_ts, valid_inds)]
     all_labels = [lbls[vi] for lbls, vi in zip(all_labels, valid_inds)]
   if pos_label is not None:
@@ -1059,10 +1062,12 @@ def pred_lstm_slow_pigs_raw():
 
   all_dsets = dataset.TimeseriesDataset(all_ts, all_labels)
   # ttv_split = [0.6, 0.2, 0.2]
-  # dset_train, dset_test, dset_validate = all_dsets.split(ttv_split)
+  # dset_train, dset_test, dset_validation = all_dsets.split(ttv_split)
   ttv_split = [0.8, 0.2]
-  dset_train, dset_validate = all_dsets.split(ttv_split)
-  # IPython.embed()
+  dset_train, dset_validation = all_dsets.split(ttv_split)
+  dset_train.shift_and_scale()
+  dset_validation.shift_and_scale(dset_train.mu, dset_train.sigma)
+  IPython.embed()
 
   # LSTM Config:
   if allowed_labels is not None:
@@ -1074,28 +1079,28 @@ def pred_lstm_slow_pigs_raw():
   hidden_size = 100
   forget_bias = 1.0
   use_sru = False
-  use_dynamic = True
-  keep_prob = 0.5
-  num_layers = 2
+  use_dynamic_rnn = False
+  keep_prob = 1.0
+  num_layers = 1
   init_scale = 0.1
   max_grad_norm = 5
-  max_epochs = 5 ##
-  max_max_epochs = 15 ##
+  max_epochs = 30
+  max_max_epochs = 100
   init_lr = 1.0
-  lr_decay = 0.9
-  batch_size = 50
-  num_steps = 10
+  lr_decay = 0.95
+  batch_size = 20
+  num_steps = 20
   verbose = True
 
   config = lstm.LSTMConfig(
       num_classes=num_classes, num_features=num_features, use_sru=use_sru,
-      use_dynamic = use_dynamic, hidden_size=hidden_size,
+      use_dynamic_rnn=use_dynamic_rnn, hidden_size=hidden_size,
       forget_bias=forget_bias, keep_prob=keep_prob, num_layers=num_layers,
       init_scale=init_scale, max_grad_norm=max_grad_norm, max_epochs=max_epochs,
       max_max_epochs=max_max_epochs, init_lr=init_lr, lr_decay=lr_decay,
       batch_size=batch_size, num_steps=num_steps, verbose=verbose)
   lstm_classifier = lstm.LSTM(config)
-  lstm_classifier.fit(dset=dset_train, dset_v=dset_validate)
+  lstm_classifier.fit(dset=dset_train, dset_v=dset_validation)
   IPython.embed()
 
 

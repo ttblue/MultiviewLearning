@@ -42,7 +42,7 @@ class LSTMConfig(classifier.Config):
                num_classes,
                num_features,
                use_sru,
-               dynamic_rnn,
+               use_dynamic_rnn,
                hidden_size,
                forget_bias,
                keep_prob,
@@ -61,7 +61,7 @@ class LSTMConfig(classifier.Config):
     self.num_features = num_features
 
     self.use_sru = use_sru
-    self.dynamic_rnn = dynamic_rnn
+    self.use_dynamic_rnn = use_dynamic_rnn
     self.hidden_size = hidden_size
     self.forget_bias = forget_bias
     self.keep_prob = keep_prob
@@ -156,7 +156,7 @@ class LSTMModel(object):
    #  IPython.embed()
     with tf.variable_scope("LSTM"):
       inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
-      if self.config.use_dynamic:
+      if self.config.use_dynamic_rnn:
         outputs, state = tf.nn.dynamic_rnn(
             self._cell, inputs, initial_state=self._initial_state)
       else:
