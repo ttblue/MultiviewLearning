@@ -51,6 +51,9 @@ class TimeseriesDataset:
     self.epoch = 0
     self.ts_idx = 0
 
+  def toggle_shuffle(self, shuffle=None):
+    self._shuffle = not self._shuffle if shuffle is None else shuffle
+
   def shuffle_data(self, rtn=False):
     if not self._shuffle:
       if not rtn:

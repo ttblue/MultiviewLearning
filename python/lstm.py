@@ -47,14 +47,17 @@ class LSTMConfig(classifier.Config):
                forget_bias,
                keep_prob,
                num_layers,
-               init_scale,
-               max_grad_norm,
+               batch_size,
+               num_steps,
+               optimizer,
                max_epochs,
                max_max_epochs,
                init_lr,
                lr_decay,
-               batch_size,
-               num_steps,
+               max_grad_norm,
+               initializer,
+               init_scale,
+               summary_log_path=None,
                verbose=True):
 
     self.num_classes = num_classes
@@ -62,20 +65,24 @@ class LSTMConfig(classifier.Config):
 
     self.use_sru = use_sru
     self.use_dynamic_rnn = use_dynamic_rnn
+
     self.hidden_size = hidden_size
     self.forget_bias = forget_bias
     self.keep_prob = keep_prob
     self.num_layers = num_layers
-    self.init_scale = init_scale
-    self.max_grad_norm = max_grad_norm
 
+    self.batch_size = batch_size
+    self.num_steps = num_steps
+    self.optimizer = optimizer
     self.max_epochs = max_epochs
     self.max_max_epochs = max_max_epochs
     self.init_lr = init_lr
     self.lr_decay = lr_decay
-    self.batch_size = batch_size
-    self.num_steps = num_steps
+    self.max_grad_norm = max_grad_norm
+    self.initializer = initializer
+    self.init_scale = init_scale
 
+    self.summary_log_path = summary_log_path
     self.verbose = verbose
 
 # class PTBInput(object):
@@ -202,7 +209,14 @@ class LSTMModel(object):
     tvars = tf.trainable_variables()
     grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars),
                                       self.config.max_grad_norm)
-    optimizer = tf.train.GradientDescentOptimizer(self._lr)
+
+    if self.config.optimizer == "Adam":
+      optimizer = tf.train.AdamOptimizer(self._lr)
+    elif self.config.optimizer == "Adagrad"
+      optimizer = tf.train.AdagradOptimizer(self._lr)
+    else:
+      optimizer = tf.train.GradientDescentOptimizer(self._lr)
+
     self._train_op = optimizer.apply_gradients(
         zip(grads, tvars),
         global_step=tf.contrib.framework.get_or_create_global_step())
@@ -269,12 +283,13 @@ class LSTM(classifier.Classifier):
       epoch_start_time = time.time()
 
     self._load_model("train")
-    lr_decay = (self.config.lr_decay **
-                max(self._epoch_idx + 1 - self.config.max_epochs, 0.0))
-    lr = self.config.init_lr * lr_decay
-    self._model.assign_lr(self._session, lr)
+    if self.config.lr_decay < 1:
+      lr_decay = (self.config.lr_decay **
+                  max(self._epoch_idx + 1 - self.config.max_epochs, 0.0))
+      lr = self.config.init_lr * lr_decay
+      self._model.assign_lr(self._session, lr)
     if self.config.verbose:
-      print("\n\nEpoch: %i\tLearning rate: %.3f"%(self._epoch_idx + 1, lr))
+      print("\n\nEpoch: %i\tLearning rate: %.5f"%(self._epoch_idx + 1, lr))
 
     costs = 0
     iters = 0  # TODO: Don't need.
@@ -300,14 +315,14 @@ class LSTM(classifier.Classifier):
         sys.stdout.flush()
 
     accuracy /= tot_steps
-    self.train_results.append({"accuracy": accuracy, "costs": costs})
+    self.train_results.append({"accuracy": accuracy, "costs": costs / iters})
 
     if self.config.verbose:
       print("\tTrain TS %i\tAccuracy: %.3f\tTime: %.2fs."%
             (ts_idx + 1, ts_accuracy, (time.time() - start_time)))
       print("\n\tTrain Costs: %.3f\n\tTrain Accuracy: %.3f\n\t"
             "Time: %.2fs."%
-            (costs, accuracy, (time.time() - epoch_start_time)))
+            (costs / iters, accuracy, (time.time() - epoch_start_time)))
 
       start_time = time.time()
 
@@ -330,8 +345,9 @@ class LSTM(classifier.Classifier):
     v_accuracy /= v_tot_steps
     print("\n\tValidation Costs: %.3f\n\t"
           "Validation Accuracy: %.3f\n\tTime: %.2fs."%
-          (v_costs, v_accuracy, (time.time() - start_time)))
-    self.validation_results.append({"accuracy": v_accuracy, "costs": v_costs})
+          (v_costs / v_iters, v_accuracy, (time.time() - start_time)))
+    self.validation_results.append(
+        {"accuracy": v_accuracy, "costs": v_costs / v_iters})
 
   def _run_single_ts(self, x, y, training=True):
     costs = 0.0
@@ -410,9 +426,14 @@ class LSTM(classifier.Classifier):
 
     self.train_results = []
     self.validation_results = []
+    self._best_validation = 0.0
+
     with tf.Graph().as_default():
-      initializer = tf.random_uniform_initializer(-self.config.init_scale,
-                                                  self.config.init_scale)
+      if self.config.initializer = "xavier":
+        initializer = tf.contrib.layers.xavier_intializer()
+      else:
+        initializer = tf.random_uniform_initializer(-self.config.init_scale,
+                                                    self.config.init_scale)
 
       with tf.name_scope("Train"):
         with tf.variable_scope("Model", reuse=None, initializer=initializer):
@@ -429,7 +450,7 @@ class LSTM(classifier.Classifier):
         with tf.variable_scope("Model", reuse=True, initializer=initializer):
           self._test_model = LSTMModel(config=self.config, is_training=False)
 
-      init_op = tf.initialize_all_variables()
+      init_op = tf.global_variables_initializer()
       self._session = tf.Session()
       self._session.run(init_op)
 

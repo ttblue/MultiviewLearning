@@ -1065,6 +1065,7 @@ def pred_lstm_slow_pigs_raw():
   # dset_train, dset_test, dset_validation = all_dsets.split(ttv_split)
   ttv_split = [0.8, 0.2]
   dset_train, dset_validation = all_dsets.split(ttv_split)
+  dset_validation = dset_validation.toggle_shuffle(False)
   dset_train.shift_and_scale()
   dset_validation.shift_and_scale(dset_train.mu, dset_train.sigma)
   IPython.embed()
@@ -1076,20 +1077,26 @@ def pred_lstm_slow_pigs_raw():
     num_classes = 6 if pos_label is None else 2
   num_features = all_ts[0].shape[1]
 
-  hidden_size = 100
-  forget_bias = 1.0
   use_sru = False
   use_dynamic_rnn = False
+
+  hidden_size = 500
+  forget_bias = 1.0
   keep_prob = 1.0
   num_layers = 1
-  init_scale = 0.1
-  max_grad_norm = 5
-  max_epochs = 30
-  max_max_epochs = 100
-  init_lr = 1.0
-  lr_decay = 0.95
+
   batch_size = 20
-  num_steps = 20
+  num_steps = 50
+  optimizer = "Adam"
+  max_epochs = 100
+  max_max_epochs = 300
+  init_lr = 0.001
+  lr_decay = 0.99
+  max_grad_norm = 5
+  initializer = "xavier"
+  init_scale = 0.1
+
+  summary_lo
   verbose = True
 
   config = lstm.LSTMConfig(
