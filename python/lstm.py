@@ -126,7 +126,8 @@ class LSTMModel(object):
     # Can be replaced with a different cell
     if self.config.use_sru:
       cell = sru.SimpleSRUCell(
-          256, [0.0, 0.5, 0.9, 0.99, 0.999],self.config.hidden_size, 64)
+          self.config.hidden_size, [0.0, 0.5, 0.9, 0.99, 0.999],
+          self.config.hidden_size, 64)
     else:
       cell = tf.contrib.rnn.LSTMCell(
         self.config.hidden_size, forget_bias=self.config.forget_bias,
@@ -141,14 +142,15 @@ class LSTMModel(object):
       return self._lstm_cell()
 
   def _setup_cell(self):
-    self._cell = tf.contrib.rnn.MultiRNNCell(
-        [self._attn_cell() for _ in xrange(self.config.num_layers)],
-        state_is_tuple=True)
-    # self._cell = self._attn_cell()
+    if self.config.num_layers <= 1:
+      self._cell = self._attn_cell()
+    else:
+      self._cell = tf.contrib.rnn.MultiRNNCell(
+          [self._attn_cell() for _ in xrange(self.config.num_layers)],
+          state_is_tuple=True)
 
     self._initial_state = self._cell.zero_state(
         self.config.batch_size, data_type())
-    # IPython.embed()
 
     with tf.device("/cpu:0"):
       if self.is_training and self.config.keep_prob < 1:
@@ -162,11 +164,11 @@ class LSTMModel(object):
     #                            initial_state=self._initial_state)
    #  IPython.embed()
     with tf.variable_scope("LSTM"):
-      inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
-      if self.config.use_dynamic_rnn:
+      if self.config.use_dynamic_rnn or self.config.use_sru:
         outputs, state = tf.nn.dynamic_rnn(
-            self._cell, inputs, initial_state=self._initial_state)
+            self._cell, self._inputs, initial_state=self._initial_state)
       else:
+        inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
         outputs, state = tf.contrib.rnn.static_rnn(
             self._cell, inputs, initial_state=self._initial_state)
     # IPython.embed()
@@ -212,7 +214,7 @@ class LSTMModel(object):
 
     if self.config.optimizer == "Adam":
       optimizer = tf.train.AdamOptimizer(self._lr)
-    elif self.config.optimizer == "Adagrad"
+    elif self.config.optimizer == "Adagrad":
       optimizer = tf.train.AdagradOptimizer(self._lr)
     else:
       optimizer = tf.train.GradientDescentOptimizer(self._lr)
@@ -368,9 +370,13 @@ class LSTM(classifier.Classifier):
       feed_dict = {}
       feed_dict[self._model._x] = x[step]
       feed_dict[self._model._y] = y[step]
-      for i, (c, h) in enumerate(self._model.initial_state):
-        feed_dict[c] = state[i].c
-        feed_dict[h] = state[i].h
+      # IPython.embed()
+      if self.config.use_sru:
+        feed_dict[self._model.initial_state] = state
+      else:
+        for i, (c, h) in enumerate(self._model.initial_state):
+          feed_dict[c] = state[i].c
+          feed_dict[h] = state[i].h
 
       vals = self._session.run(fetches, feed_dict)
       cost = vals["cost"]
@@ -429,8 +435,8 @@ class LSTM(classifier.Classifier):
     self._best_validation = 0.0
 
     with tf.Graph().as_default():
-      if self.config.initializer = "xavier":
-        initializer = tf.contrib.layers.xavier_intializer()
+      if self.config.initializer == "xavier":
+        initializer = tf.contrib.layers.xavier_initializer()
       else:
         initializer = tf.random_uniform_initializer(-self.config.init_scale,
                                                     self.config.init_scale)

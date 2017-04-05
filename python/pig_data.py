@@ -1010,7 +1010,7 @@ def pred_lstm_slow_pigs(ws=5):
   hidden_size = 600
   forget_bias = 0.5
   use_sru = False
-  use_dynamic_rnn = False
+  use_dynamic_rnn = True
   keep_prob = 1.0
   num_layers = 2
   init_scale = 0.1
@@ -1036,9 +1036,9 @@ def pred_lstm_slow_pigs(ws=5):
 
 
 def pred_lstm_slow_pigs_raw():
-  num_pigs = -1
+  num_pigs = 3
   ds = 1
-  ds_factor = 25
+  ds_factor = 250
   columns = [0, 6, 7, 11]
   allowed_labels = [0, 1, 2]
   pos_label = None
@@ -1065,10 +1065,10 @@ def pred_lstm_slow_pigs_raw():
   # dset_train, dset_test, dset_validation = all_dsets.split(ttv_split)
   ttv_split = [0.8, 0.2]
   dset_train, dset_validation = all_dsets.split(ttv_split)
-  dset_validation = dset_validation.toggle_shuffle(False)
+  dset_validation.toggle_shuffle(False)
   dset_train.shift_and_scale()
   dset_validation.shift_and_scale(dset_train.mu, dset_train.sigma)
-  IPython.embed()
+  # IPython.embed()
 
   # LSTM Config:
   if allowed_labels is not None:
@@ -1077,10 +1077,10 @@ def pred_lstm_slow_pigs_raw():
     num_classes = 6 if pos_label is None else 2
   num_features = all_ts[0].shape[1]
 
-  use_sru = False
-  use_dynamic_rnn = False
+  use_sru = True
+  use_dynamic_rnn = True
 
-  hidden_size = 500
+  hidden_size = 256
   forget_bias = 1.0
   keep_prob = 1.0
   num_layers = 1
@@ -1096,16 +1096,17 @@ def pred_lstm_slow_pigs_raw():
   initializer = "xavier"
   init_scale = 0.1
 
-  summary_lo
+  summary_log_path = None
   verbose = True
 
   config = lstm.LSTMConfig(
       num_classes=num_classes, num_features=num_features, use_sru=use_sru,
       use_dynamic_rnn=use_dynamic_rnn, hidden_size=hidden_size,
       forget_bias=forget_bias, keep_prob=keep_prob, num_layers=num_layers,
-      init_scale=init_scale, max_grad_norm=max_grad_norm, max_epochs=max_epochs,
-      max_max_epochs=max_max_epochs, init_lr=init_lr, lr_decay=lr_decay,
-      batch_size=batch_size, num_steps=num_steps, verbose=verbose)
+      batch_size=batch_size, num_steps=num_steps, optimizer=optimizer,
+      max_epochs=max_epochs, max_max_epochs=max_max_epochs, init_lr=init_lr,
+      lr_decay=lr_decay, max_grad_norm=max_grad_norm, initializer=initializer,
+      init_scale=init_scale, summary_log_path=summary_log_path, verbose=verbose)
   lstm_classifier = lstm.LSTM(config)
   lstm_classifier.fit(dset=dset_train, dset_v=dset_validation)
   IPython.embed()
