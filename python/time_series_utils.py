@@ -349,7 +349,7 @@ def compute_total_variation_derivatives(
   DX = None
   # Stitch together derivatives.
   for idx in xrange(num_inds):
-    print("\t\tWindow %i."%(idx+1))
+    t1 = time.time()
     Xsub = X[start_inds[idx]:end_inds[idx]]
     DXsub = TVRegDiff(
         Xsub, max_iter, alpha, dx=dt, ep=ep, scale=scale,
@@ -361,7 +361,8 @@ def compute_total_variation_derivatives(
       num_overlap = end_inds[idx-1] - start_inds[idx]
       half_overlap = num_overlap // 2
       DX = np.r_[DX[:-half_overlap], DXsub[half_overlap:]]
-
+    print("\t\tWindow %i out of %i took %.2fs."%
+              (idx + 1, num_inds, time.time() - t1))
   return DX
 
 
@@ -424,39 +425,44 @@ def compute_multi_channel_tv_derivs(Xs, dt, max_len=20000, overlap=100,
 if __name__ == "__main__":
   data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/10_numpy_ds_1_cols_[0, 3, 4, 5, 6, 7, 11].npy')
   ds_factor = 10
-  data = data[:3000:ds_factor]
+  data = data[:500000:ds_factor]
 
   T = data[:, 0]
-  X = data[:, 1:]
+  X = data[:, 3]
   dt = np.mean(T[1:] - T[:-1])
 
   t1 = time.time()
-  # DXs1 = compute_multi_channel_tv_derivs(
-  #     X, dt, max_len=200, overlap=10, alpha=1e-3, scale="large", max_iter=100, n_jobs=-1)
+  DXs1 = compute_multi_channel_tv_derivs(
+      X, dt, max_len=2000, overlap=10, alpha=5e-3, scale="large", max_iter=100, n_jobs=-1)
+  t2 = time.time()
+  print("TIME:", t2 - t1)
   DXs2 = compute_multi_channel_tv_derivs(
-      X, dt, max_len=200, overlap=10, alpha=1e-2, scale="large", max_iter=100, n_jobs=-1)
+      X, dt, max_len=5000, overlap=10, alpha=5e-3, scale="large", max_iter=100, n_jobs=1)
+  t3 = time.time()
+  print("TIME:", t3 - t2)
   DXs3 = compute_multi_channel_tv_derivs(
-      X, dt, max_len=200, overlap=10, alpha=5e-3, scale="large", max_iter=100, n_jobs=-1)
+      X, dt, max_len=20000, overlap=10, alpha=5e-3, scale="large", max_iter=100, n_jobs=1)
+  t4 = time.time()
+  print("TIME:", t4 - t3)
   # DXs4 = compute_multi_channel_tv_derivs(
   #     X, dt, max_len=200, overlap=10, alpha=1, scale="large", max_iter=100, n_jobs=-1)
   # DX = compute_total_variation_derivatives(
   #     X, dt, max_len=2000, overlap=50, scale="large", max_iter=100,
   #     plotting=False)
-  print("TIME:", time.time() - t1)
 
-  # import IPython
-  # IPython.embed()
+  import IPython
+  IPython.embed()
   titles = {0: "CVP", 1: "Pleth", 2: "Airway Pressure"}
   import matplotlib.pyplot as plt
   for channel in xrange(X.shape[1]):
-    # dxc1 = DXs1[:, channel].cumsum()
+    dxc1 = DXs1[:, channel].cumsum()
     dxc2 = DXs2[:, channel].cumsum()
     dxc3 = DXs3[:, channel].cumsum()
     # dxc4 = DXs4[:, channel].cumsum()
 
     x0 = X[0, channel]
     # x1 = x0 + dxc1*dt
-    x2 = x0 + dxc2*dt
+    # x2 = x0 + dxc2*dt
     x3 = x0 + dxc3*dt
     # x4 = x0 + dxc4*dt
 

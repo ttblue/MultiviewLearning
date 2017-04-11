@@ -576,7 +576,7 @@ def save_derivatives_single_pig(args):
   dt = np.mean(T[1:] - T[:-1])
 
   DX = tsu.compute_multi_channel_tv_derivs(
-      Xs, dt, max_len=2000, overlap=100, alpha=5e-3, scale="large",
+      Xs, dt, max_len=20000, overlap=50, alpha=5e-3, scale="large",
       max_iter=100, n_jobs=None)
 
   save_data = {"tstamps": T, "X": Xs, "DX": DX}
