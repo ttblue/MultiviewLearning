@@ -290,6 +290,9 @@ class LSTM(classifier.Classifier):
                   max(self._epoch_idx + 1 - self.config.max_epochs, 0.0))
       lr = self.config.init_lr * lr_decay
       self._model.assign_lr(self._session, lr)
+    else:
+      lr = self.config.init_lr
+
     if self.config.verbose:
       print("\n\nEpoch: %i\tLearning rate: %.5f"%(self._epoch_idx + 1, lr))
 
@@ -371,7 +374,7 @@ class LSTM(classifier.Classifier):
       feed_dict[self._model._x] = x[step]
       feed_dict[self._model._y] = y[step]
       # IPython.embed()
-      if self.config.use_sru:
+      if self.config.use_sru or self.config.num_layers <= 1:
         feed_dict[self._model.initial_state] = state
       else:
         for i, (c, h) in enumerate(self._model.initial_state):

@@ -1,5 +1,9 @@
+import time
+
 import numpy as np
 import scipy.sparse as ss
+
+import IPython
 
 def L21_block_regression(
     Y, X, lmbda, tol=1e-6, max_iterations=100, verbose=True):
@@ -13,7 +17,7 @@ def L21_block_regression(
   # %
   # % algorithm adapted from:
   # % @inproceedings{nie2010efficient,
-  # %   title={Efficient and robust feature selection via joint ℓ2, 1-norms minimization},
+  # %   title={Efficient and robust feature selection via joint L2, 1-norms minimization},
   # %   author={Nie, Feiping and Huang, Heng and Cai, Xiao and Ding, Chris H},
   # %   booktitle={Advances in neural information processing systems},
   # %   pages={1813--1821},
@@ -76,7 +80,7 @@ def L21_block_regression(
   U2 = np.zeros((n, d))
 
   for it in xrange(max_iterations):
-    for j in xrange(d)
+    for j in xrange(d):
       jdx = ((j - 1) % T)
       if m < n:
         v = (1 / lmbda ** 2) * (Y[:, j] - X[jdx] * (

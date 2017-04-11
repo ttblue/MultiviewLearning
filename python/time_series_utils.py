@@ -20,6 +20,7 @@ except ImportError:
 
 import IPython
 
+from tvregdiff import TVRegDiff
 import utils
 
 VERBOSE = True
@@ -307,3 +308,195 @@ def compute_multichannel_timeseries_window_only(
   tvals = tvals[final_valid_inds]
 
   return all_features, tstamps[tvals]
+
+################################################################################
+# Derivatives stuff:
+
+### UTILITY FUNCTIONS:
+def compute_finite_differences(T, X):
+  # Computes derivatives at midpoints of T.
+  T = np.array(T)
+  X = np.array(X)
+
+  DX = X[1:] - X[:-1]
+  DT = T[1:] - T[:-1]
+
+  return DX / DT
+
+
+def compute_total_variation_derivatives(
+    X, dt, max_len=20000, overlap=100, max_iter=100, alpha=1e-1, ep=1e-2,
+    scale="large", plotting=False, verbose=False):
+
+  X = np.squeeze(X)
+  if len(X.shape) > 1:
+    raise ValueError("Data must be one dimensional.")
+
+  if X.shape[0] <= max_len:
+    return TVRegDiff(
+        X, max_iter, alpha, dx=dt, ep=ep, scale=scale,
+        plotflag=int(plotting), diagflag=verbose)
+
+  stride = max_len - overlap
+  # stride = max_len
+  start_inds = np.arange(0, X.shape[0], stride)
+  start_inds[-1] = X.shape[0] - stride
+
+  end_inds = start_inds + max_len
+  end_inds[-1] = X.shape[0]
+
+  num_inds = len(start_inds)
+  DX = None
+  # Stitch together derivatives.
+  for idx in xrange(num_inds):
+    print("\t\tWindow %i."%(idx+1))
+    Xsub = X[start_inds[idx]:end_inds[idx]]
+    DXsub = TVRegDiff(
+        Xsub, max_iter, alpha, dx=dt, ep=ep, scale=scale,
+        plotflag=int(plotting), diagflag=verbose)
+
+    if idx == 0:
+      DX = DXsub
+    else:
+      num_overlap = end_inds[idx-1] - start_inds[idx]
+      half_overlap = num_overlap // 2
+      DX = np.r_[DX[:-half_overlap], DXsub[half_overlap:]]
+
+  return DX
+
+
+def _single_channel_tvd_helper(args):
+  print("Channel: %i"%(args["channel"] + 1))
+  return compute_total_variation_derivatives(
+    args["X"], args["dt"], args["max_len"], args["overlap"], args["max_iter"],
+    args["alpha"], args["ep"], args["scale"], args["plotting"], args["verbose"])  
+
+
+def compute_multi_channel_tv_derivs(Xs, dt, max_len=20000, overlap=100,
+    max_iter=100, alpha=1e-1, ep=1e-2, scale="large", n_jobs=None,
+    verbose=False):
+
+  DX = []
+  Xs = np.array(Xs)
+  if len(Xs.shape) == 1:
+    Xs = np.atleast_2d(Xs).T
+    n_jobs = None
+  if n_jobs is None:
+    args = {
+        "dt": dt,
+        "max_len": max_len,
+        "overlap": overlap,
+        "max_iter": max_iter,
+        "alpha": alpha,
+        "ep": ep,
+        "scale": scale,
+        "plotting": False,
+        "verbose": verbose,
+    }
+    for channel in xrange(Xs.shape[1]):
+      args["channel"] = channel
+      args["X"] = Xs[:, channel]
+      DX.append(_single_channel_tvd_helper(args))
+
+    return np.atleast_2d(DX).T
+
+  n_jobs = Xs.shape[1] if n_jobs == -1 else n_jobs
+  all_args = [{
+      "channel": channel,
+      "X" : Xs[:, channel],
+      "dt": dt,
+      "max_len": max_len,
+      "overlap": overlap,
+      "max_iter": max_iter,
+      "alpha": alpha,
+      "ep": ep,
+      "scale": scale,
+      "plotting": False,
+      "verbose": verbose,
+  } for channel in xrange(Xs.shape[1])]
+
+  pl = multiprocessing.Pool(n_jobs)
+  DX = pl.map(_single_channel_tvd_helper, all_args)
+
+  return np.atleast_2d(DX).T
+
+
+if __name__ == "__main__":
+  data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/10_numpy_ds_1_cols_[0, 3, 4, 5, 6, 7, 11].npy')
+  ds_factor = 10
+  data = data[:3000:ds_factor]
+
+  T = data[:, 0]
+  X = data[:, 1:]
+  dt = np.mean(T[1:] - T[:-1])
+
+  t1 = time.time()
+  # DXs1 = compute_multi_channel_tv_derivs(
+  #     X, dt, max_len=200, overlap=10, alpha=1e-3, scale="large", max_iter=100, n_jobs=-1)
+  DXs2 = compute_multi_channel_tv_derivs(
+      X, dt, max_len=200, overlap=10, alpha=1e-2, scale="large", max_iter=100, n_jobs=-1)
+  DXs3 = compute_multi_channel_tv_derivs(
+      X, dt, max_len=200, overlap=10, alpha=5e-3, scale="large", max_iter=100, n_jobs=-1)
+  # DXs4 = compute_multi_channel_tv_derivs(
+  #     X, dt, max_len=200, overlap=10, alpha=1, scale="large", max_iter=100, n_jobs=-1)
+  # DX = compute_total_variation_derivatives(
+  #     X, dt, max_len=2000, overlap=50, scale="large", max_iter=100,
+  #     plotting=False)
+  print("TIME:", time.time() - t1)
+
+  # import IPython
+  # IPython.embed()
+  titles = {0: "CVP", 1: "Pleth", 2: "Airway Pressure"}
+  import matplotlib.pyplot as plt
+  for channel in xrange(X.shape[1]):
+    # dxc1 = DXs1[:, channel].cumsum()
+    dxc2 = DXs2[:, channel].cumsum()
+    dxc3 = DXs3[:, channel].cumsum()
+    # dxc4 = DXs4[:, channel].cumsum()
+
+    x0 = X[0, channel]
+    # x1 = x0 + dxc1*dt
+    x2 = x0 + dxc2*dt
+    x3 = x0 + dxc3*dt
+    # x4 = x0 + dxc4*dt
+
+    plt.figure()
+    plt.plot(X[:, channel], color='b')
+    # plt.plot(x1, color='r', label="1e-3")
+    # plt.plot(x2, color='g', label="1e-2")
+    plt.plot(DXs3[:, channel], color='r')#, label="5e-3")
+    # plt.plot(x4, color='k', label="1")
+    # plt.plot(dxc)
+    plt.legend()
+    plt.title(titles[channel])
+
+  # dxc = DX2.squeeze().cumsum()
+  # x3 = x0+dxc*dt
+
+  # plt.plot(X, color='b')
+  # plt.plot(x2, color='r')
+  # plt.plot(x3, color='g')
+  plt.show()
+  import IPython
+  IPython.embed()
+  # t1 = time.time()
+  # DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], scale="large", max_iter=5, plotting=False)
+  # print("TIME:", time.time() - t1)
+  # import cProfile
+#   # cProfile.run("DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], max_iter=2, plotting=False)")
+
+# import matplotlib.pyplot as plt, numpy as np  
+# idx = 11
+# data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/derivs/%i_derivs_numpy_10_columns_[0, 3, 4, 5, 6, 7, 11].npy'%idx).tolist()
+# Xs = data['X']
+# T = data['tstamps']
+# DXs = data['DX']
+# dt = np.mean(T[1:] - T[:-1])
+
+# channel = 2
+# x0 = Xs[0, channel]
+# dxc = DXs[:, channel].cumsum()
+# x2 = x0 + dxc*dt
+# plt.plot(Xs[:, channel], color='b')
+# plt.plot(x2, color='r')
+# plt.show()
