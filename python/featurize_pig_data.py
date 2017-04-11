@@ -10,8 +10,6 @@ import multiprocessing
 import numpy as np
 
 import dataset
-import lstm
-import multi_task_learning as mtl
 # import time_series_ml as tsml
 import time_series_utils as tsu
 import utils
@@ -577,8 +575,8 @@ def save_derivatives_single_pig(args):
   Xs = Xs[:, 1:]
   dt = np.mean(T[1:] - T[:-1])
 
-  DX = compute_multi_channel_tv_derivs(
-      Xs, dt, max_len=25000, overlap=100, alpha=5e-3, scale="large",
+  DX = tsu.compute_multi_channel_tv_derivs(
+      Xs, dt, max_len=2000, overlap=100, alpha=5e-3, scale="large",
       max_iter=100, n_jobs=None)
 
   save_data = {"tstamps": T, "X": Xs, "DX": DX}
@@ -590,12 +588,14 @@ def save_derivatives_pigs(
 
   features_dir = os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays"%pig_type)
   derivs_dir = os.path.join(features_dir, "derivs")
+  if not os.path.exists(derivs_dir):
+    os.makedirs(derivs_dir)
 
   feature_columns = [0, 3, 4, 5, 6, 7, 11]
   str_pattern = str(feature_columns)[1:-1]
 
   fdict = utils.create_number_dict_from_files(
-      features_dir, wild_card_str="*_numpy_ds_%i_cols*%s*"%(ds, str_pattern))
+      features_dir, wild_card_str="*_numpy_ds_1_cols*%s*"%(str_pattern))
 
   pig_ids = sorted(fdict)
   if min_id is not None:
@@ -606,8 +606,9 @@ def save_derivatives_pigs(
   if max_id is not None:
     pig_ids = pig_ids[:(max_id - min_id)]
 
-  suffix = "_derivs_numpy_%i_columns_%s"%(ds, str_pattern)
-  odict = {idx:os.path.join(derivs, str(idx) + suffix) for idx in pig_ids}
+  # pig_ids = [10, 11, 12]
+  suffix = "_derivs_numpy_%i_columns_[%s]"%(ds, str_pattern)
+  odict = {idx:os.path.join(derivs_dir, str(idx) + suffix) for idx in pig_ids}
   already_finished = [os.path.exists(odict[idx] + ".npy") for idx in pig_ids]
 
   restart = any(already_finished)
@@ -849,3 +850,4 @@ if __name__ == "__main__":
   # tsml.cluster_windows(feature_file)
   # all_data, unused_pigs = load_slow_pig_features_and_labels()
   # IPython.embed()
+  save_derivatives_pigs(n_jobs=3, min_id=0, max_id=1)

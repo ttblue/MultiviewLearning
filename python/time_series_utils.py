@@ -395,7 +395,7 @@ def compute_multi_channel_tv_derivs(Xs, dt, max_len=20000, overlap=100,
     }
     for channel in xrange(Xs.shape[1]):
       args["channel"] = channel
-        args["X"] = Xs[:, channel]
+      args["X"] = Xs[:, channel]
       DX.append(_single_channel_tvd_helper(args))
 
     return np.atleast_2d(DX).T
@@ -422,7 +422,7 @@ def compute_multi_channel_tv_derivs(Xs, dt, max_len=20000, overlap=100,
 
 
 if __name__ == "__main__":
-  data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/10_numpy_ds_1_columns_[0, 6, 7, 11].npy')
+  data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/10_numpy_ds_1_cols_[0, 3, 4, 5, 6, 7, 11].npy')
   ds_factor = 10
   data = data[:3000:ds_factor]
 
@@ -483,4 +483,20 @@ if __name__ == "__main__":
   # DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], scale="large", max_iter=5, plotting=False)
   # print("TIME:", time.time() - t1)
   # import cProfile
-  # cProfile.run("DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], max_iter=2, plotting=False)")
+#   # cProfile.run("DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], max_iter=2, plotting=False)")
+
+# import matplotlib.pyplot as plt, numpy as np  
+# idx = 11
+# data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/derivs/%i_derivs_numpy_10_columns_[0, 3, 4, 5, 6, 7, 11].npy'%idx).tolist()
+# Xs = data['X']
+# T = data['tstamps']
+# DXs = data['DX']
+# dt = np.mean(T[1:] - T[:-1])
+
+# channel = 2
+# x0 = Xs[0, channel]
+# dxc = DXs[:, channel].cumsum()
+# x2 = x0 + dxc*dt
+# plt.plot(Xs[:, channel], color='b')
+# plt.plot(x2, color='r')
+# plt.show()
