@@ -12,7 +12,7 @@ import numpy as np
 import dataset
 import featurize_pig_data as fpd
 import lstm
-import multi_task_learning as mtl
+# import multi_task_learning as mtl
 # import time_series_ml as tsml
 import time_series_utils as tsu
 import utils
@@ -300,7 +300,9 @@ def pred_lstm_slow_pigs(ws=5):
 
 
 def pred_lstm_slow_pigs_raw():
-  num_pigs = -1
+  np.random.seed(0)
+  num_pigs = 10
+  
   ds = 1
   ds_factor = 25
   columns = [0, 6, 7, 11]
@@ -344,7 +346,7 @@ def pred_lstm_slow_pigs_raw():
   use_sru = False
   use_dynamic_rnn = True
 
-  hidden_size = 256
+  hidden_size = 100
   forget_bias = 1.0
   keep_prob = 1.0
   num_layers = 1
@@ -353,9 +355,9 @@ def pred_lstm_slow_pigs_raw():
   num_steps = 50
   optimizer = "Adam"
   max_epochs = 100
-  max_max_epochs = 300
-  init_lr = 0.001
-  lr_decay = 0.99
+  max_max_epochs = 100
+  init_lr = 0.1
+  lr_decay = 1.0
   max_grad_norm = 5
   initializer = "xavier"
   init_scale = 0.1
