@@ -415,12 +415,11 @@ def pred_L21reg_slow_pigs_raw():
 
 def pred_nn_tde_slow_pigs_raw():
   # np.random.seed(0)
-  num_pigs = 5
-  
+  num_pigs = -1
   ds = 1
-  ds_factor = 100
+  ds_factor = 10
   columns = [0, 7]
-  valid_labels = [0, 1, 2]
+  valid_labels = [0, 1, 2, 3, 4, 5, 6]
   wsize = 30 # seconds
   dt = 1 / (fpd.FREQUENCY / (ds * ds_factor))
 
@@ -450,7 +449,7 @@ def pred_nn_tde_slow_pigs_raw():
   #   tau_s_to_search = 0.75
   #   M = int(tau_s_to_search / dt)
 
-  #   # IPython.embed()
+  # IPython.embed()
   #   all_taus = {}
   #   for i, channel in enumerate(columns[1:]):
   #     taus = []
