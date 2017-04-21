@@ -1,5 +1,6 @@
 import time
 
+import itertools
 import numpy as np
 import scipy.sparse as ss
 
@@ -53,28 +54,32 @@ def L21_block_regression(
   # end
 
   
-  Y = np.array(Y)
+  Y = [np.array(yval) for yval in Y]
   X = [np.array(xval) for xval in X]
 
-  n, d = Y.shape
   T = len(X)
+  if len(Y) != T:
+    raise ValueError("X and Y not of the same size.")
 
-  m = X[0].shape[1]
+  # Assume all X's are the same shape.
+  n, m = X[0].shape
+  d = Y[0].shape[0]
   last_objective_value = np.inf
-  D = ss.spdiags(np.ones((m,1)), 0, m, m)
+  D = ss.spdiags(np.ones(m), 0, m, m)
   if m < n:
-    L = ss.spdiags((lmbda ** 2) * np.ones((m,1)), 0, m, m)
-    XX = []
-    XY = []
-    for i in xrange(T):
-      XX[i] = X[i].T.dot(X[i])
-
-    for j in xrange(d):
-      jdx = ((j - 1) % T)
-      XY[j] = X[jdx].T.dot(Y[:, j]) 
+    L = ss.spdiags((lmbda ** 2) * np.ones(m), 0, m, m)
+    XX = [x.T.dot(x) for x in X]
+    IPython.embed()
+    XY = [X[((j - 1) % T)].T.dot(Y[j]) for j in xrange(d)]
+    # XY = []
+    # for i in xrange(T):
+    #   XX.append(X[i].T.dot(X[i]))
+    # for j in xrange(d):
+    #   jdx = ((j - 1) % T)
+    #   XY.append(X[jdx].T.dot(Y[j]) )
 
   else:
-    L = ss.spdiags((lmbda ** 2) * np.ones((n,1)), 0, n, n)
+    L = ss.spdiags((lmbda ** 2) * np.ones(n), 0, n, n)
 
   U1 = np.zeros((m, d))
   U2 = np.zeros((n, d))
@@ -83,10 +88,10 @@ def L21_block_regression(
     for j in xrange(d):
       jdx = ((j - 1) % T)
       if m < n:
-        v = (1 / lmbda ** 2) * (Y[:, j] - X[jdx] * (
+        v = (1 / lmbda ** 2) * (Y[j] - X[jdx] * (
             np.linalg.pinv(L + D.dot(XX[jdx])).dot(D.dot(XY[j]))))
       else:
-           v = np.pinv(L + X[jdx].dot(D.dot(X[jdx].T))).dot(Y[:, j])
+           v = np.pinv(L + X[jdx].dot(D.dot(X[jdx].T))).dot(Y[j])
       U1[:, j] = D.dot(X[jdx].T).dot(v)
       U2[:, j] = lmbda*v
 
@@ -111,3 +116,22 @@ def L21_block_regression(
           " final delta: %.3f." % (max_iterations, tol, delta))
 
   return U1
+
+
+def generate_polynomials(X, max_degree=3, include_zero=True):
+  X = np.array(X)
+  if len(X.shape) < 2:
+    X = np.atleast_2d(X).T
+
+  n, d = X.shape
+  PX = np.ones((n, 1)) if include_zero else np.empty((n,0))
+  idxs = range(d)
+  for degree in xrange(1, max_degree + 1):
+    d_combs = itertools.combinations_with_replacement(idxs, degree)
+    for dc in d_combs:
+      xcomb = np.ones(n)
+      for cidx in dc:
+        xcomb *= X[:, cidx]
+      PX = np.c_[PX, xcomb.reshape(-1, 1)]
+
+  return PX

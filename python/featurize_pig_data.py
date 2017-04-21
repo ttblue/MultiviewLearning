@@ -11,6 +11,7 @@ import numpy as np
 
 import dataset
 # import time_series_ml as tsml
+import math_utils as mu
 import time_series_utils as tsu
 import utils
 
@@ -82,7 +83,7 @@ def save_window_rff_slow_pigs(num_pigs=-1, ws=30, parallel=False, n_jobs=5):
     os.makedirs(save_dir)
 
   mmrff_file = os.path.join(params_dir, "mmrff_di_%i_do_%i_bw_%.3f"%(d_lag, d_features, bandwidth))
-  mm_rff = tsu.mm_rbf_fourierfeatures(d_lag, d_features, bandwidth, mmrff_file)
+  mm_rff = mu.mm_rbf_fourierfeatures(d_lag, d_features, bandwidth, mmrff_file)
 
   suffix = "_window_rff_ds_%i_ws_%i"%(downsample, window_length_s)
   data_files, features_files = utils.create_data_feature_filenames(
@@ -523,7 +524,7 @@ def save_pigs_as_numpy_arrays(
   columns = [0, 3, 4, 5, 6, 7, 11]
   # columns = [0, 7]
   columns = sorted(columns)
-  suffix = "_numpy_ds_%i_cols_%s"%(ds, columns)
+  suffix = "_numpy_ds_%i_columns_%s"%(ds, columns)
   data_files, out_files = utils.create_data_feature_filenames(
       data_dir, save_dir, suffix, extension=".csv")
 
@@ -595,7 +596,7 @@ def save_derivatives_pigs(
   str_pattern = str(feature_columns)[1:-1]
 
   fdict = utils.create_number_dict_from_files(
-      features_dir, wild_card_str="*_numpy_ds_1_cols*%s*"%(str_pattern))
+      features_dir, wild_card_str="*_numpy_ds_1_columns*%s*"%(str_pattern))
 
   pig_ids = sorted(fdict)
   if min_id is not None:
@@ -658,9 +659,10 @@ def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length
   return labels
 
 
-def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both"):
-  _dir = os.path.join(SAVE_DIR, "waveform/slow/numpy_arrays/")
-  ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
+def load_slow_pig_features_and_labels(
+    num_pigs=-1, ds=5, ws=30, category="both", pig_type="slow"):
+  _dir = os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays/"%pig_type)
+  ann_dir = os.path.join(DATA_DIR, "raw/annotation/%s"%pig_type)
   
   fdict = utils.create_number_dict_from_files(
       features_dir, wild_card_str="*_ds_%i_ws_%i.npy"%(ds, ws))
@@ -745,29 +747,51 @@ def load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30, category="both")
   return all_data, unused_pigs
 
 
-def load_slow_pig_features_and_labels_numpy(
-      num_pigs=-1, ds=1, ds_factor=5, feature_columns=[0, 7], save_new=False):
-  features_dir = os.path.join(SAVE_DIR, "waveform/slow/numpy_arrays")
-  ann_dir = os.path.join(DATA_DIR, "raw/annotation/slow")
+def load_pig_features_and_labels_numpy(
+      num_pigs=-1, ds=10, ds_factor=5, feature_columns=[0, 7], save_new=False,
+      valid_labels=None, use_derivs=False, pig_type="slow"):
+  if use_derivs and save_new:
+    print("Save new not implemented for derivs. Not saving.")
+    save_new = False
 
+  # Relevant data directories
+  features_dir = os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays"%pig_type)
+  if use_derivs:
+    features_dir = os.path.join(features_dir, "derivs")
+  ann_dir = os.path.join(DATA_DIR, "raw/annotation/%s"%pig_type)
+
+  # Feature columns
   feature_columns = sorted(feature_columns)
   if 0 not in feature_columns:
     feature_columns = sorted([0] + feature_columns)
 
+  # Finding file names from directories
   str_pattern = str(feature_columns)[1:-1]
+  wild_card_str = (
+      "*_derivs_numpy_%i_columns*%s*"%(ds, str_pattern)
+      if use_derivs else "*_numpy_ds_%i_columns*%s*"%(ds, str_pattern))
+
   fdict = utils.create_number_dict_from_files(
-      features_dir, wild_card_str="*_numpy_ds_%i_cols*%s*"%(ds, str_pattern))
+      features_dir, wild_card_str=wild_card_str)
   using_all = False
+
+  # If specific feature columns not found, load the data with all columns
   if not fdict:
     all_columns = [0, 3, 4, 5, 6, 7, 11]
     str_pattern = str(all_columns)[1:-1]
+    wild_card_str = (
+        "*_derivs_numpy_%i_columns*%s*"%(ds, str_pattern)
+        if use_derivs else "*_numpy_ds_%i_columns*%s*"%(ds, str_pattern))
+
     fdict = utils.create_number_dict_from_files(
-        features_dir, wild_card_str="*_numpy_ds_%i_cols*%s*"%(ds, str_pattern))
+        features_dir, wild_card_str=wild_card_str)
     using_all = True
   adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
 
+  # Find common pigs between annotations and data.
   common_keys = np.intersect1d(fdict.keys(), adict.keys()).tolist()
 
+  # Create list of unused pigs for bookkeeping.
   unused_pigs = []
   unused_pigs.extend([p for p in fdict if p not in common_keys])
   unused_pigs.extend([p for p in adict if p not in common_keys])
@@ -779,48 +803,95 @@ def load_slow_pig_features_and_labels_numpy(
   if num_pigs > 0:
     np.random.shuffle(pig_ids)
 
+  # Extract data.
   all_data = {}
   curr_unused_pigs = len(unused_pigs)
   num_selected = 0
+
+  if use_derivs:
+    finds = ([all_columns.index(idx) - 1 for idx in feature_columns[1:]]
+             if using_all else None)
+  else:
+    finds = ([all_columns.index(idx) for idx in feature_columns]
+             if using_all else None)
+
+  # IPython.embed()
   for key in pig_ids:
     if VERBOSE:
       t_start = time.time()
 
     pig_data = np.load(fdict[key])
-    if using_all:
-      finds = [all_columns.index(idx) for idx in feature_columns[:]]
-      pig_data = pig_data[:, finds]
+    if use_derivs:
+      pig_data = pig_data.tolist()
+      tstamps = pig_data["tstamps"]
+      features = pig_data["X"]
+      derivs = pig_data["DX"]
 
-    tstamps = pig_data[:, 0]
-    features = pig_data[:, 1:]
+      if using_all:
+        features = features[:, finds]
+        derivs = derivs[:, finds]
 
-    if save_new:
-      new_file = os.path.join(
-          features_dir, "%i_numpy_ds_%i_columns_%s.npy"%(key, ds, feature_columns))
-      if not os.path.exists(new_file):
-        np.save(new_file, pig_data)
+      if ds_factor > 1:
+        tstamps = tstamps[::ds_factor]
+        features = features[::ds_factor]
+        derivs = derivs[::ds_factor]
+
+    else:
+      if using_all:
+        pig_data = pig_data[:, finds]
+
+      tstamps = pig_data[:, 0]
+      features = pig_data[:, 1:]
+
+      if save_new:
+        new_file = os.path.join(
+            features_dir, "%i_numpy_ds_%i_columns_%s.npy"%(key, ds, feature_columns))
+        if not os.path.exists(new_file):
+          np.save(new_file, pig_data)
+
+      if ds_factor > 1:
+        tstamps = tstamps[::ds_factor]
+        features = features[::ds_factor]
 
     del pig_data
 
-    if ds_factor > 1:
-      tstamps = tstamps[::ds_factor]
-      features = features[::ds_factor]
-
     ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
-    # if key == 37:
-    #   critical_anns, ann_labels = utils.create_annotation_labels(ann_text, True)
-    # else:
     critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
     critical_times = [ann_time[idx] for idx in critical_anns]
     critical_text = {idx:ann_text[idx] for idx in critical_anns}
     label_dict = create_label_timeline(ann_labels)
     labels = convert_tstamps_to_labels(tstamps, critical_times, label_dict, None)
 
-    valid_inds = (labels != -1)
+    if valid_labels is None:
+      valid_inds = (labels != -1)
+    else:
+      valid_inds = np.zeros(labels.shape).astype("bool")
+      for vl in valid_labels:
+        valid_inds = np.logical_or(valid_inds, labels==vl)
+
+    # IPython.embed()
     features = features[valid_inds, :]
     labels = labels[valid_inds]
+    if use_derivs:
+      if valid_inds.shape[0] > derivs.shape[0]:
+        valid_inds = valid_inds[:derivs.shape[0]]
+      elif valid_inds.shape[0] < derivs.shape[0]:
+        derivs = derivs[:valid_inds.shape[0], :]
+      derivs = derivs[valid_inds, :]
 
-    all_data[key] = {"features": np.atleast_2d(features), "labels": labels, "ann_text":critical_text}
+    if len(features.shape) == 1:
+      features = np.atleast_2d(features).T
+      if use_derivs:
+        derivs = np.atleast_2d(derivs).T
+
+    all_data[key] = {
+        "features": features,
+        "labels": labels,
+        "ann_text":critical_text
+    }
+
+    if use_derivs:
+      all_data[key]["derivs"] = derivs
 
     if VERBOSE:
       print("Time taken to load pig %i: %.2f"%(key, time.time() - t_start))
@@ -828,6 +899,7 @@ def load_slow_pig_features_and_labels_numpy(
       num_selected += 1
       if num_selected >= num_pigs:
         break
+
   new_unused_pigs = len(unused_pigs) - curr_unused_pigs
   if num_pigs > 0:
     print("Not using pigs %s. Already have enough."%(pig_ids[num_selected+new_unused_pigs:]))
@@ -850,4 +922,4 @@ if __name__ == "__main__":
   # tsml.cluster_windows(feature_file)
   # all_data, unused_pigs = load_slow_pig_features_and_labels()
   # IPython.embed()
-  save_derivatives_pigs(n_jobs=3, min_id=0, max_id=1)
+  save_derivatives_pigs(n_jobs=1, min_id=0, max_id=1)

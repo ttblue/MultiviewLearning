@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 
+import gc
 import glob
 import sys
 import os
@@ -11,13 +12,24 @@ import numpy as np
 
 import dataset
 import featurize_pig_data as fpd
-import lstm
+#import lstm
 # import multi_task_learning as mtl
 # import time_series_ml as tsml
+import math_utils as mu
+import nn_utils as nnu
 import time_series_utils as tsu
 import utils
 
 import IPython
+
+
+_PLOTTING = True
+try:
+  import matplotlib.pyplot as plt, matplotlib.cm as cm
+  from mpl_toolkits.mplot3d import Axes3D
+except ImportError:
+  _PLOTTING = False
+  pass
 
 FREQUENCY = 250
 VERBOSE = tsu.VERBOSE
@@ -28,21 +40,11 @@ np.set_printoptions(suppress=True, precision=3)
 
 ################################################################################
 
-def rbf_fourierfeatures(d_in, d_out, a):
-  # Returns a function handle to compute random fourier features.
-  W = np.random.normal(0., 1., (d_in, d_out))
-  h = np.random.uniform(0., 2 * np.pi, (1, d_out))
-  def rbf_ff(x):
-    ff = np.cos((1 / a) * x.dot(W) + h) / np.sqrt(d_out) * np.sqrt(2)
-    return ff
-  return rbf_ff
-
-
 def mt_krc_pigs_slow():
   # For now:
   # np.random.seed(1)
 
-  all_data, _ = fpd.load_slow_pig_features_and_labels(num_pigs=-1, ds=5, ws=30)
+  all_data, _ = fpd.load_pig_features_and_labels_numpy(num_pigs=-1, ds=5, ws=30)
 
   pig_ids = all_data.keys()
   num_train, num_test = 1, 1
@@ -71,7 +73,7 @@ def mt_krc_pigs_slow():
   d_in = training_tasks[0][0].shape[1]
   d_out = 100
   a = 1.
-  feature_gen = rbf_fourierfeatures(d_in, d_out, a)
+  feature_gen = mu.rbf_fourierfeatures(d_in, d_out, a)
   omega = mtl.create_independent_omega(T=channels, lambda_s=1.)
 
   pred_y = mtl.mt_krc(training_tasks, test_tasks, omega, feature_gen)
@@ -82,7 +84,7 @@ def mt_krc_pigs_slow():
 ################################################################################
 
 def cluster_slow_pigs(num_pigs=4, ws=30):
-  all_data, _ = fpd.load_slow_pig_features_and_labels(num_pigs=num_pigs, ds=5, ws=ws, category="both")
+  all_data, _ = fpd.load_pig_features_and_labels_numpy(num_pigs=num_pigs, ds=5, ws=ws, category="both")
   class_names = [
       "Ground_Truth", "EKG", "Art_pressure_MILLAR", "Art_pressure_Fluid_Filled",
       "Pulmonary_pressure", "CVP", "Plethysmograph", "CCO", "SVO2", "SPO2",
@@ -173,8 +175,8 @@ def pred_nn_slow_pigs(ws=30):
   num_train_pigs = -1
   num_test_pigs = -1
 
-  train_data, _ = fpd.load_slow_pig_features_and_labels(num_pigs=num_train_pigs, ds=5, ws=ws, category="train")
-  test_data, _ = fpd.load_slow_pig_features_and_labels(num_pigs=num_test_pigs, ds=5, ws=ws, category="test")
+  train_data, _ = fpd.load_pig_features_and_labels_numpy(num_pigs=num_train_pigs, ds=5, ws=ws, category="train")
+  test_data, _ = fpd.load_pig_features_and_labels_numpy(num_pigs=num_test_pigs, ds=5, ws=ws, category="test")
 
   train_ids = train_data.keys()
   train_ts = [train_data[idx]["features"][channel] for idx in train_ids]
@@ -237,7 +239,7 @@ def pred_lstm_slow_pigs(ws=5):
   num_train_pigs = -1
   num_test_pigs = -1
 
-  train_data, _ = fpd.load_slow_pig_features_and_labels(num_pigs=num_train_pigs, ds=5, ws=ws, category="train")
+  train_data, _ = fpd.load_pig_features_and_labels_numpy(num_pigs=num_train_pigs, ds=5, ws=ws, category="train")
   test_data, _ = fpd.oad_slow_pig_features_and_labels(num_pigs=num_test_pigs, ds=5, ws=ws, category="test")
 
   train_ids = train_data.keys()
@@ -311,7 +313,7 @@ def pred_lstm_slow_pigs_raw():
   if pos_label not in allowed_labels:
     pos_label is None
 
-  all_data, _ = fpd.load_slow_pig_features_and_labels_numpy(
+  all_data, _ = fpd.load_pig_features_and_labels_numpy(
       num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
       save_new=False)
 
@@ -378,11 +380,226 @@ def pred_lstm_slow_pigs_raw():
   IPython.embed()
 
 
+def pred_L21reg_slow_pigs_raw():
+  num_pigs = 10
+  
+  ds = 10
+  ds_factor = 1
+  columns = [0, 6, 7, 11]
+  valid_labels = [0, 1, 2]
+
+  all_data, _ = fpd.load_pig_features_and_labels_numpy(
+      num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
+      save_new=False, valid_labels=valid_labels, use_derivs=True)
+
+  pos_label = None
+  if pos_label not in valid_labels:
+    pos_label is None
+
+  IPython.embed()
+
+  # pig_ids = all_data.keys()
+  # all_ts = [all_data[idx]["features"] for idx in pig_ids]
+  # all_labels = [np.array(all_data[idx]["labels"]) for idx in pig_ids]
+  # if allowed_labels is not None:
+  #   valid_inds = [
+  #       np.array([l in allowed_labels for l in lbls]) for lbls in all_labels]
+  #   all_ts = [ts[vi] for ts, vi in zip(all_ts, valid_inds)]
+  #   all_labels = [lbls[vi] for lbls, vi in zip(all_labels, valid_inds)]
+  # if pos_label is not None:
+  #   all_labels = [(lbls == pos_label).astype(int) for lbls in all_labels]
+
+
+################################################################################
+
+def pred_nn_tde_slow_pigs_raw():
+  np.random.seed(0)
+  num_pigs = -1
+  
+  ds = 1
+  ds_factor = 10
+  columns = [0, 7]
+  valid_labels = [0, 1, 2]
+  wsize = 30 # seconds
+  dt = 1 / (fpd.FREQUENCY / (ds * ds_factor))
+
+  all_data, _ = fpd.load_pig_features_and_labels_numpy(
+      num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
+      save_new=False, valid_labels=valid_labels, use_derivs=False)
+
+  pig_ids = all_data.keys()
+  all_ts = [all_data[idx]["features"] for idx in pig_ids]
+  all_labels = [np.array(all_data[idx]["labels"]) for idx in pig_ids]
+  
+  all_dsets = dataset.TimeseriesDataset(all_ts, all_labels)
+  # ttv_split = [0.6, 0.2, 0.2]
+  # dset_train, dset_test, dset_validation = all_dsets.split(ttv_split)
+  ttv_split = [0.8, 0.2]
+  dset_train, dset_test = all_dsets.split(ttv_split)
+  dset_test.toggle_shuffle(False)
+  dset_train.shift_and_scale()
+  dset_test.shift_and_scale(dset_train.mu, dset_train.sigma)
+
+  # recompute_taus = True
+  # taus_file = os.path.join(SAVE_DIR, "waveform/slow/params", "taus_ds_%i_columns_%s.npy"%(ds, columns))
+  # if recompute_taus or not os.path.exists(taus_file):
+  #   if not recompute_taus and not os.path.exists(os.path.dirname(taus_file)):
+  #     os.makedirs(os.path.dirname(taus_file))
+
+  #   tau_s_to_search = 0.75
+  #   M = int(tau_s_to_search / dt)
+
+  #   # IPython.embed()
+  #   all_taus = {}
+  #   for i, channel in enumerate(columns[1:]):
+  #     taus = []
+  #     for xs in dset_test.xs:
+  #       taus.append(tsu.compute_tau(xs[:, i] , M=M, show=False))
+  #     all_taus[channel] = int(np.mean(taus))
+
+  #   if not recompute_taus:
+  #     np.save(taus_file, all_taus)
+
+  # else:
+  #   all_taus = np.load(taus_file).tolist()
+
+  # print(all_taus)
+  channel = 7
+  tde_d = 4
+  all_taus = {}
+  all_taus[channel] = 13
+  wlen = int(wsize / dt)
+  half_wlen = int(wlen / 2)
+  train_tde_windows = [
+      tsu.compute_time_delay_embedding(xs, dt, all_taus[channel], d=tde_d)
+      for xs in dset_train.xs]
+  train_tde_windows = [
+      np.split(window, np.arange(wlen, window.shape[0], wlen)[:-1])
+      for window in train_tde_windows]
+  train_labels = [
+      [ys[i] for i in (np.arange(wlen, ys.shape[0], wlen)[:-1] + half_wlen)]
+      for ys in dset_train.ys
+  ]
+
+  test_tde_windows = [
+      tsu.compute_time_delay_embedding(xs, dt, all_taus[channel], d=tde_d)
+      for xs in dset_test.xs]
+  test_tde_windows = [
+      np.split(window, np.arange(wlen, window.shape[0], wlen)[:-1])
+      for window in test_tde_windows]
+  test_labels = [
+      [ys[i] for i in (np.arange(wlen, ys.shape[0], wlen)[:-1] + half_wlen)]
+      for ys in dset_test.ys
+  ]
+
+  del dset_train, dset_test, all_dsets, all_data
+
+  ############### TEMP
+  # tw = train_tde_windows[1][15]
+  # tw_new = train_tde_windows[1][16]
+  # tw2 = train_tde_windows[00][150]
+
+  nr = 1000
+  sample_windows = []
+  num_per_tw = 10
+  for tws in train_tde_windows:
+    sample_windows.extend(
+        [tws[i] for i in np.random.permutation(len(tws))[:num_per_tw]])
+  bandwidth = nnu._compute_kernel_bandwidth(sample_windows, c=1.0)
+  dim = tde_d
+  feature_gen = mu.rbf_fourierfeatures(dim, nr, bandwidth)
+
+  # # tw3 = nnu.one_step_wn_forecast(tw, tw, feature_gen, dr="forward")
+  # # tw3 = nnu.one_step_wn_forecast_RBF(tw, tw, bandwidth*10, dr="forward")
+  # # tw4 = nnu.one_step_wn_forecast(tw, tw2, feature_gen, dr="forward")
+  # twk2 = nnu.k_step_wn_forecast_RBF(np.atleast_2d(tw[-1]), tw, bandwidth, k=tw.shape[0]-1, dr="forward")
+  # # twk = nnu.k_step_wn_forecast(np.atleast_2d(tw[0]), tw, feature_gen, k=tw.shape[0]-1, dr="forward")
+  # # tw5 = np.concatenate(twk['forward'], axis=0)
+  # tw6 = np.concatenate(twk2['forward'], axis=0)
+
+
+
+  # # plot_td_attractor(tw)
+  # IPython.embed()
+  dr = "forward"
+  leafsize = 10
+  print("Computing KD Trees")
+  train_kdtrees = [
+      [nnu.ForecasterKDTree(twin, leafsize, dr) for twin in twindows]
+      for twindows in train_tde_windows]
+
+  bandwidth = 100#21571441786008  # As computed previously.
+  n_jobs = 1
+  nn = 1
+  num_steps = 10
+  all_pred_labels = []
+  feature_gen = None
+  first = True
+  forecast_type = "knn"
+  num_test = len(test_tde_windows)
+  print("Computing NN predictions:")
+  for test_i, test_windows in enumerate(test_tde_windows):
+    print("Test time series %i out of %i."%(test_i + 1, num_test))
+    pred_labels = []
+    num_windows = len(test_windows)
+    for test_wi, tw in enumerate(test_windows):
+      t1 = time.time()
+      print("\n\tWindow %i out of %i."%(test_wi + 1, num_windows))#, end='\r')
+      sys.stdout.flush()
+      gc.collect()
+      all_train_windows = train_kdtrees if first else None
+      first = False
+
+      ts_idx, w_idx, _ = nnu.find_nearest_windows_forecast_dist(
+          tw, all_train_windows, num_steps, dr=dr, forecast_type=forecast_type,
+          nn=10, n_jobs=n_jobs)
+
+      print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
+      print("\tPred: %i\t Actual: %i"%(
+          train_labels[ts_idx][w_idx], test_labels[test_i][test_wi]))
+      print("Time taken: %.2f"%(time.time() - t1))
+      if train_labels[ts_idx][w_idx] != test_labels[test_i][test_wi]:
+
+        trw = train_kdtrees[ts_idx][w_idx]
+        tew = tw
+        twk = nnu.k_step_wn_forecast(np.atleast_2d(tew[0]), trw, nn, k=tew.shape[0]-1, forecast_type="knn", dr="forward")
+        tw6 = np.concatenate([np.atleast_2d(tew[0]).tolist()] + twk['forward'], axis=0)
+        # tw3 = np.r_[np.atleast_2d(tew[0]).tolist(), nnu.one_step_wn_forecast_RBF(tew[:-1], trw, bandwidth, dr="forward")]
+        IPython.embed()
+        # pass
+      pred_labels.append(train_labels[ts_idx][w_idx])
+
+    # print("\tWindow %i."%(test_wi + 1))
+    all_pred_labels.append(pred_labels)
+
+  IPython.embed()
+
+
+def plot_td_attractor(tw):
+  plt.set_cmap('RdBu')
+  colors = cm.RdBu(np.linspace(0, 1, tw.shape[0]))
+
+  fig = plt.figure()
+  ax = fig.add_subplot(111, projection='3d')
+  ax.scatter3D(tw[:, 0], tw[:, 1], tw[:, 2], color=colors)
+  plt.show()
+
+
+def plt_ts(tws, labels=None):
+  colors = ['b', 'r', 'g']
+  if labels is None:
+    labels = ["%i"%(i+1) for i in xrange(len(tws))]
+  for i, tw, lbl in zip(xrange(len(tws)), tws, labels):
+    plt.plot(tw[:, 0], color=colors[i%3], label=lbl)
+  plt.legend()
+  plt.show()
+
 if __name__ == "__main__":
   # mt_krc_pigs_slow()
   # cluster_slow_pigs(10)
   # pred_nn_slow_pigs(ws=5)
-  pred_lstm_slow_pigs_raw()
+  # pred_lstm_slow_pigs_raw()
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
-
+  # pred_L21reg_slow_pigs_raw()
+  pred_nn_tde_slow_pigs_raw()

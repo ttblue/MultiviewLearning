@@ -5,7 +5,7 @@ import os
 import sys
 import time
 
-import numpy as np, numpy.random as nr, numpy.linalg as nlg
+import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 import mutual_info as mi
@@ -20,6 +20,7 @@ except ImportError:
 
 import IPython
 
+import math_utils as mu
 from tvregdiff import TVRegDiff
 import utils
 
@@ -39,36 +40,6 @@ VERBOSE = True
 # 12 - Airway pressure
 # 13 - Vigeleo_SVV
 # ==============================================================================
-
-
-# ==============================================================================
-# Utility functions
-# ==============================================================================
-
-def mm_rbf_fourierfeatures(d_in, d_out, a, file_name=None):
-  # Returns a function handle to compute random fourier features.
-  # Can load from/save to file if one exists.
-  if file_name is not None:
-    # Some simple checks for filename.
-    basename = os.path.basename(file_name)
-    if len(basename.split('.')) == 1:
-      file_name = file_name + ".npy"
-
-    if os.path.exists(file_name):
-      W, h, a = np.load(file_name)
-    else:
-      W = nr.normal(0., 1., (d_in, d_out))
-      h = nr.uniform(0., 2*np.pi, (1, d_out))
-      np.save(file_name, [W, h, a])
-  else:
-    W = nr.normal(0., 1., (d_in, d_out))
-    h = nr.uniform(0., 2*np.pi, (1, d_out))
-
-  def mm_rbf(x):
-    xhat = np.mean(np.cos((1/a)*x.dot(W)+h)/np.sqrt(d_out)*np.sqrt(2), axis=0)
-    return xhat
-
-  return mm_rbf
 
 
 def compute_tau(y, M=200, show=True):
@@ -109,7 +80,7 @@ def mean_scale_transform(x):
   return x
 
 
-def compute_window_mean_embdedding(y, tau, mm_rff, f_transform=mean_scale_transform, d=3):
+def compute_window_mean_embedding(y, tau, mm_rff, f_transform=mean_scale_transform, d=3):
   # Computes the explicit mean embedding in some RKHS space of the TS y
   # tau -- time lag
   # mm_rff -- mean map of random fourier features
@@ -134,7 +105,7 @@ def compute_window_PCA(Xhat, wdim, evecs=False):
   valid_inds = ~np.isnan(Xhat).any(axis=1)
   Xhat = Xhat[valid_inds]  # remove NaN rows.
 
-  E, V, _ = nlg.svd(Xhat, full_matrices=0)
+  E, V, _ = np.linalg.svd(Xhat, full_matrices=0)
   v = V[:wdim] ** 2
   e = E[:, :wdim]
 
@@ -163,18 +134,19 @@ def featurize_single_timeseries(
     if VERBOSE:
       print("\tValue of tau: %i"%tau)
 
-  mm_rff = mm_rbf_fourierfeatures(d_lag, d_features, bandwidth)
+  mm_rff = mu.mm_rbf_fourierfeatures(d_lag, d_features, bandwidth)
 
   if VERBOSE:
     print("\tCreating random windows for finding bases.")
-  random_inds = nr.randint(1, ts.shape[0] - window_length, size=(num_samples,))
+  random_inds = np.random.randint(
+      1, ts.shape[0] - window_length, size=(num_samples,))
   Z = np.zeros((num_samples, d_features))
   for i in range(num_samples):
     if VERBOSE:
       print("\t\tRandom window %i out of %i."%(i+1, num_samples), end='\r')
       sys.stdout.flush()
     window = ts[random_inds[i]:random_inds[i]+window_length+(d_lag-1)*tau]
-    Z[i, :] = compute_window_mean_embdedding(window, tau, mm_rff, d=d_lag)
+    Z[i, :] = compute_window_mean_embedding(window, tau, mm_rff, d=d_lag)
   if VERBOSE:
     print("\t\tRandom window %i out of %i."%(i+1, num_samples))
 
@@ -197,7 +169,7 @@ def featurize_single_timeseries(
       print("\t\tWindow %i out of %i."%(i+1, num_windows), end='\r')
       sys.stdout.flush()
     window = ts[t:t+window_length+(d_lag-1)*tau]
-    window_mm = compute_window_mean_embdedding(window, tau, mm_rff, d=d_lag)
+    window_mm = compute_window_mean_embedding(window, tau, mm_rff, d=d_lag)
     ts_features[i,:] = window_mm.dot(Zhat.T)
   if VERBOSE:
     print("\t\tWindow %i out of %i."%(i+1, num_windows))
@@ -269,7 +241,7 @@ def compute_timeseries_windows_only(
       print("\t\tWindow %i out of %i."%(i+1, num_windows), end='\r')
       sys.stdout.flush()
     window = ts[t:t+window_length+(d_lag-1)*tau]
-    ts_features[i,:] = compute_window_mean_embdedding(window, tau, mm_rff, d=d_lag)
+    ts_features[i,:] = compute_window_mean_embedding(window, tau, mm_rff, d=d_lag)
   if VERBOSE:
     print("\t\tWindow %i out of %i."%(i+1, num_windows))
 
@@ -422,6 +394,25 @@ def compute_multi_channel_tv_derivs(Xs, dt, max_len=20000, overlap=100,
   return np.atleast_2d(DX).T
 
 
+def compute_time_delay_embedding(X, dt, tau=None, d=3, tau_s_to_search=2.):
+  # tau_s_to_search: number of seconds to search over for tau
+  # Note -- samples on the edge of the window will be lost
+  X = np.squeeze(X)
+  if len(X.shape) > 1:
+    raise ValueError("Input must be 1-D.")
+
+  if tau is None:
+    M = tau_s_to_search // dt
+    tau = compute_tau(X, M=M)
+
+  n = X.shape[0]
+  X_td = np.empty((n - (d - 1) * tau, 0))
+  for i in xrange(d):
+    X_td = np.c_[X_td, X[i * tau: n - (d - i - 1) * tau]]
+
+  return X_td
+
+
 if __name__ == "__main__":
   data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/10_numpy_ds_1_cols_[0, 3, 4, 5, 6, 7, 11].npy')
   ds_factor = 10
@@ -476,33 +467,4 @@ if __name__ == "__main__":
     plt.legend()
     plt.title(titles[channel])
 
-  # dxc = DX2.squeeze().cumsum()
-  # x3 = x0+dxc*dt
-
-  # plt.plot(X, color='b')
-  # plt.plot(x2, color='r')
-  # plt.plot(x3, color='g')
   plt.show()
-  import IPython
-  IPython.embed()
-  # t1 = time.time()
-  # DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], scale="large", max_iter=5, plotting=False)
-  # print("TIME:", time.time() - t1)
-  # import cProfile
-#   # cProfile.run("DX = compute_total_variation_derivatives(x[:5000, 0], x[:5000, 0], max_iter=2, plotting=False)")
-
-# import matplotlib.pyplot as plt, numpy as np  
-# idx = 11
-# data = np.load('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays/derivs/%i_derivs_numpy_10_columns_[0, 3, 4, 5, 6, 7, 11].npy'%idx).tolist()
-# Xs = data['X']
-# T = data['tstamps']
-# DXs = data['DX']
-# dt = np.mean(T[1:] - T[:-1])
-
-# channel = 2
-# x0 = Xs[0, channel]
-# dxc = DXs[:, channel].cumsum()
-# x2 = x0 + dxc*dt
-# plt.plot(Xs[:, channel], color='b')
-# plt.plot(x2, color='r')
-# plt.show()
