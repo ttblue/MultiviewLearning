@@ -415,10 +415,10 @@ def pred_L21reg_slow_pigs_raw():
 
 def pred_nn_tde_slow_pigs_raw():
   # np.random.seed(0)
-  num_pigs = -1
+  num_pigs = 5
   
   ds = 1
-  ds_factor = 10
+  ds_factor = 100
   columns = [0, 7]
   valid_labels = [0, 1, 2]
   wsize = 30 # seconds
@@ -607,11 +607,20 @@ def pred_nn_tde_slow_pigs_raw():
     all_pred_inds.append(pred_inds)
 
   try:
-    print("\n\nTotal time taken: %.f"%(time.time() - t_start))
+    print("\n\nTotal time taken: %.2f"%(time.time() - t_start))
     np.save('tst_results.npy', [all_pred_labels, test_labels, all_pred_inds])
   except:
     pass
   IPython.embed()
+  try:
+    import sklearn.metrics as sm
+    pls = np.concatenate([np.array(pl) for pl in all_pred_labels])
+    tls = np.concatenate([np.array(tl) for tl in test_labels])
+    cm = sm.confusion_matrix(tls, pls).astype(float)
+  except:
+    pass
+  IPython.embed()
+
 
 
 def plot_td_attractor(tw):
