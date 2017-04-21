@@ -415,7 +415,7 @@ def pred_L21reg_slow_pigs_raw():
 
 def pred_nn_tde_slow_pigs_raw():
   # np.random.seed(0)
-  num_pigs = -1
+  num_pigs = 5
   
   ds = 1
   ds_factor = 10
@@ -478,7 +478,8 @@ def pred_nn_tde_slow_pigs_raw():
       np.split(window, np.arange(wlen, window.shape[0], wlen)[:-1])
       for window in train_tde_windows]
   train_labels = [
-      [ys[i] for i in (np.arange(wlen, ys.shape[0], wlen)[:-1] + half_wlen)]
+      [ys[i] for i in 
+          (np.arange(0, ys.shape[0] - (tde_d - 1) * all_taus[channel], wlen)[:-1] + half_wlen)]
       for ys in dset_train.ys
   ]
 
@@ -489,11 +490,13 @@ def pred_nn_tde_slow_pigs_raw():
       np.split(window, np.arange(wlen, window.shape[0], wlen)[:-1])
       for window in test_tde_windows]
   test_labels = [
-      [ys[i] for i in (np.arange(wlen, ys.shape[0], wlen)[:-1] + half_wlen)]
+      [ys[i] for i in
+        (np.arange(0, ys.shape[0] - (tde_d - 1) * all_taus[channel], wlen)[:-1] + half_wlen)]
       for ys in dset_test.ys
-  ]
+  ] 
 
   del dset_train, dset_test, all_dsets, all_data
+
 
   ############### TEMP
   # tw = train_tde_windows[1][15]
@@ -539,6 +542,8 @@ def pred_nn_tde_slow_pigs_raw():
   first = True
   forecast_type = "knn"
   num_test = len(test_tde_windows)
+  errors = 0
+  t_start = time.time()
   print("Computing NN predictions:")
   for test_i, test_windows in enumerate(test_tde_windows):
     print("Test time series %i out of %i."%(test_i + 1, num_test))
@@ -567,10 +572,8 @@ def pred_nn_tde_slow_pigs_raw():
 
         # print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
         print(nn_labels)
-        print("\tPred: %i\t Actual: %i"%(
-            pred_label, test_labels[test_i][test_wi]))
-        print("Time taken: %.2f"%(time.time() - t1))
       except:
+        errors += 1
         pred_label = -1
       # if pred_label == test_labels[test_i][test_wi]:
       #   tew = tw
@@ -588,13 +591,17 @@ def pred_nn_tde_slow_pigs_raw():
       #   IPython.embed()
         # tw3 = np.r_[np.atleast_2d(tew[0]).tolist(), nnu.one_step_wn_forecast_RBF(tew[:-1], trw, bandwidth, dr="forward")]
         # pass
-      pred_labels.append(train_labels[ts_idx][w_idx])
+      print("\tPred: %i\t Actual: %i"%(
+          pred_label, test_labels[test_i][test_wi]))
+      print("Time taken: %.2f"%(time.time() - t1))
+      pred_labels.append(pred_label)
 
     # print("\tWindow %i."%(test_wi + 1))
     all_pred_labels.append(pred_labels)
 
   try:
-    np.save('tst_results.npy', [all_pred_labels, test_labels])
+    print("\n\nTotal time taken: %.f"%(time.time() - t_start))
+    np.save('tst_results.npy', [all_pred_labels, test_labels, errors])
   except:
     pass
   IPython.embed()
