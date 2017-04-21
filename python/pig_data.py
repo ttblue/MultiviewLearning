@@ -414,7 +414,7 @@ def pred_L21reg_slow_pigs_raw():
 ################################################################################
 
 def pred_nn_tde_slow_pigs_raw():
-  np.random.seed(0)
+  # np.random.seed(0)
   num_pigs = -1
   
   ds = 1
@@ -553,22 +553,25 @@ def pred_nn_tde_slow_pigs_raw():
       all_train_windows = train_kdtrees if first else None
       first = False
 
-      ts_inds, w_inds, _ = nnu.find_nearest_windows_forecast_dist(
-          tw, all_train_windows, num_steps, nw=nw, dr=dr,
-          forecast_type=forecast_type, nn=10, n_jobs=n_jobs)
+      try:
+        ts_inds, w_inds, _ = nnu.find_nearest_windows_forecast_dist(
+            tw, all_train_windows, num_steps, nw=nw, dr=dr,
+            forecast_type=forecast_type, nn=10, n_jobs=n_jobs)
 
-      nn_labels = [
-          train_labels[ts_idx][w_idx] for ts_idx, w_idx in zip(ts_inds, w_inds)]
-      pred_label = collections.Counter(nn_labels).most_common(1)[0][0]
-      # nn_inds = [
-      #     (ts_idx, w_idx) for ts_idx, w_idx in zip(ts_inds, w_inds)
-      #     if train_labels[ts_idx][w_idx] == pred_label]
+        nn_labels = [
+            train_labels[ts_idx][w_idx] for ts_idx, w_idx in zip(ts_inds, w_inds)]
+        pred_label = collections.Counter(nn_labels).most_common(1)[0][0]
+        # nn_inds = [
+        #     (ts_idx, w_idx) for ts_idx, w_idx in zip(ts_inds, w_inds)
+        #     if train_labels[ts_idx][w_idx] == pred_label]
 
-      # print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
-      print(nn_labels)
-      print("\tPred: %i\t Actual: %i"%(
-          pred_label, test_labels[test_i][test_wi]))
-      print("Time taken: %.2f"%(time.time() - t1))
+        # print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
+        print(nn_labels)
+        print("\tPred: %i\t Actual: %i"%(
+            pred_label, test_labels[test_i][test_wi]))
+        print("Time taken: %.2f"%(time.time() - t1))
+      except:
+        pred_label = -1
       # if pred_label == test_labels[test_i][test_wi]:
       #   tew = tw
       #   tw_nn = np.zeros(tw.shape)
