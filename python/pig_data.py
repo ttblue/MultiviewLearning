@@ -415,7 +415,7 @@ def pred_L21reg_slow_pigs_raw():
 
 def pred_nn_tde_slow_pigs_raw():
   # np.random.seed(0)
-  num_pigs = 5
+  num_pigs = -1
   
   ds = 1
   ds_factor = 10
@@ -538,6 +538,7 @@ def pred_nn_tde_slow_pigs_raw():
   nw = 10
   num_steps = 10
   all_pred_labels = []
+  all_pred_inds = []
   feature_gen = None
   first = True
   forecast_type = "knn"
@@ -548,11 +549,12 @@ def pred_nn_tde_slow_pigs_raw():
   for test_i, test_windows in enumerate(test_tde_windows):
     print("Test time series %i out of %i."%(test_i + 1, num_test))
     pred_labels = []
+    pred_inds = []
     num_windows = len(test_windows)
     for test_wi, tw in enumerate(test_windows):
       # if test_labels[test_i][test_wi] == 0: continue
       t1 = time.time()
-      print("\n\tWindow %i out of %i."%(test_wi + 1, num_windows))#, end='\r')
+      print("\n\tTS %i: Window %i out of %i."%(test_i + 1, test_wi + 1, num_windows))#, end='\r')
       sys.stdout.flush()
       gc.collect()
       all_train_windows = train_kdtrees if first else None
@@ -571,8 +573,11 @@ def pred_nn_tde_slow_pigs_raw():
         #     if train_labels[ts_idx][w_idx] == pred_label]
 
         # print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
-        print(nn_labels)
+        pred_inds.append((ts_inds, w_inds))
+        print("\t%s"%(nn_labels))
+        print("\t%s"%(zip(ts_inds, w_inds)))
       except:
+        pred_inds.append((None, None))
         errors += 1
         pred_label = -1
       # if pred_label == test_labels[test_i][test_wi]:
@@ -593,15 +598,17 @@ def pred_nn_tde_slow_pigs_raw():
         # pass
       print("\tPred: %i\t Actual: %i"%(
           pred_label, test_labels[test_i][test_wi]))
-      print("Time taken: %.2f"%(time.time() - t1))
+      print("\tTime taken: %.2f"%(time.time() - t1))
       pred_labels.append(pred_label)
+
 
     # print("\tWindow %i."%(test_wi + 1))
     all_pred_labels.append(pred_labels)
+    all_pred_inds.append(pred_inds)
 
   try:
     print("\n\nTotal time taken: %.f"%(time.time() - t_start))
-    np.save('tst_results.npy', [all_pred_labels, test_labels, errors])
+    np.save('tst_results.npy', [all_pred_labels, test_labels, all_pred_inds])
   except:
     pass
   IPython.embed()
