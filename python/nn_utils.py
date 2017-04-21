@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 
+import gc
 import multiprocessing
 import sys
 import time
@@ -302,15 +303,20 @@ def _find_nearest_window_forcast_dist_single_ts(widx):
   return dists
 
 
-def _find_min_window_inds(dists, kw=10):
+def _find_min_window_inds(dists, nw=10):
   wlens = [len(wdist) for wdist in dists]
-  w_seps = np.cumsum(wlens)
+  w_ends = np.cumsum(wlens)
+  w_starts = np.array([0] + np.cumsum(wlens)[:-1].tolist())
 
-  dists = [dist for wdist in dists for dist in wdists]
-  best_inds = np.argsort(dists)[:kw]
+  dists = [dist for wdist in dists for dist in wdist]
+  best_inds = np.argsort(dists)[:nw]
 
-  ts_inds = np.searchsorted(w_seps, best_inds, side="right")
-  w_inds = 
+  ts_inds = np.searchsorted(w_ends, best_inds, side="right").tolist()
+  w_inds = [bi - w_starts[ti] for bi, ti in zip(best_inds, ts_inds)]
+
+  best_dists = [dists[bi] for bi in best_inds]
+
+  return ts_inds, w_inds, best_dists
 
 
 # TODO: Maybe parallelize it within each ts as opposed to over all ts.
@@ -349,14 +355,18 @@ def find_nearest_windows_forecast_dist(
     pl = multiprocessing.Pool(n_jobs)
     window_dists =  pl.map(
         _find_nearest_window_forcast_dist_single_ts, all_args)
+    pl.close()
+    pl.join()
   else:
     window_dists = map(
         _find_nearest_window_forcast_dist_single_ts, all_args)
 
-  min_window_idx = np.argmin([dist for dist, _ in window_dists_idxs])
-  best_tw = window_dists_idxs[min_window_idx]
+  gc.collect()
+  return _find_min_window_inds(window_dists, nw)
+  # min_window_idx = np.argmin([dist for dist, _ in window_dists_idxs])
+  # best_tw = window_dists_idxs[min_window_idx]
 
   # IPython.embed()
-  if VERBOSE > 0:
-    print (window_dists_idxs)
-  return min_window_idx, best_tw[1], best_tw[0]
+  # if VERBOSE > 0:
+  #   print (window_dists_idxs)
+  # return min_window_idx, best_tw[1], best_tw[0]

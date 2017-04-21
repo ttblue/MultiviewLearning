@@ -8,6 +8,7 @@ import time
 
 import multiprocessing
 
+import collections
 import numpy as np
 
 import dataset
@@ -529,8 +530,9 @@ def pred_nn_tde_slow_pigs_raw():
       for twindows in train_tde_windows]
 
   bandwidth = 100#21571441786008  # As computed previously.
-  n_jobs = 1
+  n_jobs = 6
   nn = 1
+  nw = 10
   num_steps = 10
   all_pred_labels = []
   feature_gen = None
@@ -543,6 +545,7 @@ def pred_nn_tde_slow_pigs_raw():
     pred_labels = []
     num_windows = len(test_windows)
     for test_wi, tw in enumerate(test_windows):
+      # if test_labels[test_i][test_wi] == 0: continue
       t1 = time.time()
       print("\n\tWindow %i out of %i."%(test_wi + 1, num_windows))#, end='\r')
       sys.stdout.flush()
@@ -550,28 +553,47 @@ def pred_nn_tde_slow_pigs_raw():
       all_train_windows = train_kdtrees if first else None
       first = False
 
-      ts_idx, w_idx, _ = nnu.find_nearest_windows_forecast_dist(
-          tw, all_train_windows, num_steps, dr=dr, forecast_type=forecast_type,
-          nn=10, n_jobs=n_jobs)
+      ts_inds, w_inds, _ = nnu.find_nearest_windows_forecast_dist(
+          tw, all_train_windows, num_steps, nw=nw, dr=dr,
+          forecast_type=forecast_type, nn=10, n_jobs=n_jobs)
 
-      print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
+      nn_labels = [
+          train_labels[ts_idx][w_idx] for ts_idx, w_idx in zip(ts_inds, w_inds)]
+      pred_label = collections.Counter(nn_labels).most_common(1)[0][0]
+      # nn_inds = [
+      #     (ts_idx, w_idx) for ts_idx, w_idx in zip(ts_inds, w_inds)
+      #     if train_labels[ts_idx][w_idx] == pred_label]
+
+      # print("\tTS_idx: %i\t w_idx: %i"%(ts_idx, w_idx))
+      print(nn_labels)
       print("\tPred: %i\t Actual: %i"%(
-          train_labels[ts_idx][w_idx], test_labels[test_i][test_wi]))
+          pred_label, test_labels[test_i][test_wi]))
       print("Time taken: %.2f"%(time.time() - t1))
-      if train_labels[ts_idx][w_idx] != test_labels[test_i][test_wi]:
-
-        trw = train_kdtrees[ts_idx][w_idx]
-        tew = tw
-        twk = nnu.k_step_wn_forecast(np.atleast_2d(tew[0]), trw, nn, k=tew.shape[0]-1, forecast_type="knn", dr="forward")
-        tw6 = np.concatenate([np.atleast_2d(tew[0]).tolist()] + twk['forward'], axis=0)
+      # if pred_label == test_labels[test_i][test_wi]:
+      #   tew = tw
+      #   tw_nn = np.zeros(tw.shape)
+      #   tw6 = {}
+      #   ii = 0
+      #   for ts_idx, w_idx in zip(ts_inds, w_inds):
+      #     print('A')
+      #     trw = train_kdtrees[ts_idx][w_idx]
+      #     twk = nnu.k_step_wn_forecast(np.atleast_2d(tew[0]), trw, nn, k=tew.shape[0]-1, forecast_type="knn", dr="forward")
+      #     tw6[ii] = np.concatenate([np.atleast_2d(tew[0]).tolist()] + twk['forward'], axis=0)
+      #     ii += 1
+      #     # IPython.embed()
+      #   tw_nn = np.mean(np.array(tw6.values()), axis=0)
+      #   IPython.embed()
         # tw3 = np.r_[np.atleast_2d(tew[0]).tolist(), nnu.one_step_wn_forecast_RBF(tew[:-1], trw, bandwidth, dr="forward")]
-        IPython.embed()
         # pass
       pred_labels.append(train_labels[ts_idx][w_idx])
 
     # print("\tWindow %i."%(test_wi + 1))
     all_pred_labels.append(pred_labels)
 
+  try:
+    np.save('tst_results.npy', [all_pred_labels, test_labels])
+  except:
+    pass
   IPython.embed()
 
 
