@@ -304,11 +304,11 @@ def pred_lstm_slow_pigs(ws=5):
 
 def pred_lstm_slow_pigs_raw():
   np.random.seed(0)
-  num_pigs = 10
+  num_pigs = -1
   
   ds = 1
   ds_factor = 25
-  columns = [0, 6, 7, 11]
+  columns = [0, 4, 6, 7]
   allowed_labels = [0, 1, 2]
   pos_label = None
   if pos_label not in allowed_labels:
@@ -346,7 +346,7 @@ def pred_lstm_slow_pigs_raw():
     num_classes = 6 if pos_label is None else 2
   num_features = all_ts[0].shape[1]
 
-  use_sru = True
+  use_sru = False
   use_dynamic_rnn = True
 
   hidden_size = 100
@@ -652,8 +652,11 @@ if __name__ == "__main__":
   expt_type = "knn"
   if len(sys.argv) > 1:
    try:
-     if int(sys.argv[1]) == 1:
+     expt_num = int(sys.argv[1])
+     if expt_num == 1:
        expt_type = "lstm"
+     elif expt_num == 2:
+       expt_type = "l21"
    except:
      pass
 
@@ -661,3 +664,6 @@ if __name__ == "__main__":
     pred_lstm_slow_pigs_raw()
   elif expt_type == "knn":  
     pred_nn_tde_slow_pigs_raw()
+  elif expt_type == "l21":
+    pred_L21reg_slow_pigs_raw()
+    
