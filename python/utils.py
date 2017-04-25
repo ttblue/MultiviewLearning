@@ -101,21 +101,43 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
 
 
 def create_data_feature_filenames(data_dir, save_dir, suffix, extension=".csv"):
+  import os
+  import glob
   if data_dir[-5] != '*' + extension:
     data_dir = os.path.join(data_dir, '*' + extension)
-  data_files = glob.glob(data_dir)
+  all_data_files = glob.glob(data_dir)
 
+  data_file_dict = {}
+  features_file_dict = {}
+  for data_file in all_data_files:
+    data_file_basename = os.path.basename(data_file)
+    dfile_split = data_file_basename.split('.')
+    dfile_name_split = dfile_split[0].split("_")
+    dfile_idx = int(dfile_name_split[0])
+    dfile_sub_idx = 0 if len(dfile_name_split) == 1 else int(dfile_name_split[1])
+
+    if dfile_idx not in data_file_dict:
+      data_file_dict[dfile_idx] = {}
+      features_file = str(dfile_idx) + suffix
+      features_file = os.path.join(save_dir, features_file)
+      features_file_dict[dfile_idx] = features_file
+
+    data_file_dict[dfile_idx][dfile_sub_idx] = data_file
+
+  data_files = []
   features_files = []
-  for data_file in data_files:
-    data_file = os.path.basename(data_file)
-    dfile_split = data_file.split('.')
-    features_file = '.'.join(dfile_split[:-1]) + suffix
-    features_file = os.path.join(save_dir, features_file)
-    features_files.append(features_file)
+  sorted_keys = sorted(data_file_dict.keys())
 
-  sorted_inds = np.argsort([int(os.path.basename(dfile).split('.')[0]) for dfile in data_files])
-  data_files = [data_files[i] for i in sorted_inds]
-  features_files = [features_files[i] for i in sorted_inds]
+  for idx in sorted_keys:
+    features_files.append(features_file_dict[idx])
+
+    dfile_dict = data_file_dict[idx]
+    dfile_sorted_inds = sorted(dfile_dict.keys())
+    data_files.append([dfile_dict[k] for k in dfile_sorted_inds])
+
+  # sorted_inds = np.argsort([int(os.path.basename(dfile).split('.')[0]) for dfile in data_files])
+  # data_files = [data_files[i] for i in sorted_inds]
+  # features_files = [features_files[i] for i in sorted_inds]
 
   return data_files, features_files
 
@@ -238,12 +260,23 @@ def create_annotation_labels(ann_text, console=False):
   return critical_anns, ann_labels
 
 
-def convert_csv_to_np(csv_file, out_file, downsample=1, columns=None):
-  _, data = load_csv(csv_file)
-  if columns is not None:
-    data = data[:, columns]
-  if downsample is not None and downsample > 1:
-    data = data[::downsample]
+def convert_csv_to_np(csv_files, out_file, downsample=1, columns=None):
+  if not isinstance(csv_files, list):
+    _, data = load_csv(csv_files)
+    if columns is not None:
+      data = data[:, columns]
+    if downsample is not None and downsample > 1:
+      data = data[::downsample]
+  else:
+    data = []
+    for csv_file in csv_files:
+      _, file_data = load_csv(csv_file)
+      if columns is not None:
+        file_data = file_data[:, columns]
+      if downsample is not None and downsample > 1:
+        file_data = file_data[::downsample]
+      data.append(file_data)
+    data = np.concatenate(data, axis=0)
 
   np.save(out_file, data)
 

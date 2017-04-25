@@ -534,7 +534,7 @@ def save_pigs_as_numpy_arrays(
   if restart:
     if VERBOSE:
       print("Already finished pigs: %s"%(
-                [int(os.path.basename(data_files[i]).split('.')[0])
+                [int(os.path.basename(data_files[i][0]).split('.')[0])
                  for i in range(len(already_finished))
                  if already_finished[i]]))
 
