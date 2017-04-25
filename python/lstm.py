@@ -152,7 +152,7 @@ class LSTMModel(object):
     self._initial_state = self._cell.zero_state(
         self.config.batch_size, data_type())
 
-    with tf.device("/cpu:0"):
+    with tf.device("/gpu:0"):
       if self.is_training and self.config.keep_prob < 1:
         self._inputs = tf.nn.dropout(self._x, self.config.keep_prob)
       else:
@@ -292,6 +292,7 @@ class LSTM(classifier.Classifier):
       self._model.assign_lr(self._session, lr)
     else:
       lr = self.config.init_lr
+      self._model.assign_lr(self._session, lr)
 
     if self.config.verbose:
       print("\n\nEpoch: %i\tLearning rate: %.5f"%(self._epoch_idx + 1, lr))
@@ -373,7 +374,6 @@ class LSTM(classifier.Classifier):
       feed_dict = {}
       feed_dict[self._model._x] = x[step]
       feed_dict[self._model._y] = y[step]
-      # IPython.embed()
       if self.config.use_sru or self.config.num_layers <= 1:
         feed_dict[self._model.initial_state] = state
       else:
@@ -390,8 +390,6 @@ class LSTM(classifier.Classifier):
       iters += self.config.num_steps
       total_accuracy += accuracy
 
-    # import IPython
-    # IPython.embed()
     total_accuracy /= epoch_size
     return costs, iters, total_accuracy
 

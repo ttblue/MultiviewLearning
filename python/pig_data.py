@@ -13,7 +13,7 @@ import numpy as np
 
 import dataset
 import featurize_pig_data as fpd
-#import lstm
+import lstm
 # import multi_task_learning as mtl
 # import time_series_ml as tsml
 import math_utils as mu
@@ -346,12 +346,12 @@ def pred_lstm_slow_pigs_raw():
     num_classes = 6 if pos_label is None else 2
   num_features = all_ts[0].shape[1]
 
-  use_sru = False
+  use_sru = True
   use_dynamic_rnn = True
 
   hidden_size = 100
   forget_bias = 1.0
-  keep_prob = 1.0
+  keep_prob = .5
   num_layers = 1
 
   batch_size = 20
@@ -359,7 +359,7 @@ def pred_lstm_slow_pigs_raw():
   optimizer = "Adam"
   max_epochs = 100
   max_max_epochs = 100
-  init_lr = 0.1
+  init_lr = 0.0001
   lr_decay = 1.0
   max_grad_norm = 5
   initializer = "xavier"
@@ -532,7 +532,7 @@ def pred_nn_tde_slow_pigs_raw():
       for twindows in train_tde_windows]
 
   bandwidth = 100#21571441786008  # As computed previously.
-  n_jobs = 6
+  n_jobs = 22
   nn = 1
   nw = 10
   num_steps = 10
@@ -649,4 +649,15 @@ if __name__ == "__main__":
   # for j in range(1, 11):
   #    cluster_slow_pigs(j)
   # pred_L21reg_slow_pigs_raw()
-  pred_nn_tde_slow_pigs_raw()
+  expt_type = "knn"
+  if len(sys.argv) > 1:
+   try:
+     if int(sys.argv[1]) == 1:
+       expt_type = "lstm"
+   except:
+     pass
+
+  if expt_type == "lstm":
+    pred_lstm_slow_pigs_raw()
+  elif expt_type == "knn":  
+    pred_nn_tde_slow_pigs_raw()
