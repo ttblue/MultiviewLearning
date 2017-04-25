@@ -6,9 +6,9 @@ import sys
 import time
 
 import numpy as np
-import pandas as pd
 from sklearn.cluster import KMeans
 import mutual_info as mi
+
 
 try:
   import matplotlib.pyplot as plt, matplotlib.cm as cm

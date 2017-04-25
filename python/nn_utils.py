@@ -9,8 +9,17 @@ import numpy as np
 import scipy.spatial as ss
 # import _ucrdtw as ucrdtw
 
-import rpy2.robjects.numpy2ri
-from rpy2.robjects.packages import importr
+try:
+  import rpy2.robjects.numpy2ri
+  from rpy2.robjects.packages import importr
+
+  # Set up our R namespaces
+  rpy2.robjects.numpy2ri.activate()
+  R = rpy2.robjects.r
+  dtw = importr("dtw")
+  _R_UTILS = True
+except ImportError:
+  _R_UTILS = False
 
 import math_utils as mu
 
@@ -20,13 +29,14 @@ import IPython
 VERBOSE = 1
 
 
-# Set up our R namespaces
-rpy2.robjects.numpy2ri.activate()
-R = rpy2.robjects.r
-dtw = importr("dtw")
+class NNUtilsException(Exception):
+  pass
 
 
 def choose_nn_dtw(target_ts, all_ts, warp_width=0.05):
+  if not _R_UTILS:
+    raise NNUtilsException("No R utils available. Cannot do DTW.")
+
   target_ts = np.atleast_2d(target_ts)
   all_ts = [np.array(ts) for ts in all_ts]
   locs = []
