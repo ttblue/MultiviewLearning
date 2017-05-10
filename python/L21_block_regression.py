@@ -6,6 +6,11 @@ import scipy.sparse as ss
 
 import IPython
 
+
+def matrix_squeeze(mat):
+  return np.array(mat).squeeze()
+
+
 def L21_block_regression(
     Y, X, lmbda, tol=1e-6, max_iterations=100, verbose=True):
   # % input: Y - matrix, each column is a function
@@ -61,16 +66,16 @@ def L21_block_regression(
   if len(Y) != T:
     raise ValueError("X and Y not of the same size.")
 
+  lmbda = float(lmbda)
   # Assume all X's are the same shape.
   n, m = X[0].shape
-  d = Y[0].shape[0]
+  d = len(Y)
   last_objective_value = np.inf
   D = ss.spdiags(np.ones(m), 0, m, m)
   if m < n:
     L = ss.spdiags((lmbda ** 2) * np.ones(m), 0, m, m)
     XX = [x.T.dot(x) for x in X]
-    IPython.embed()
-    XY = [X[((j - 1) % T)].T.dot(Y[j]) for j in xrange(d)]
+    XY = [X[j % T].T.dot(Y[j]) for j in xrange(d)]
     # XY = []
     # for i in xrange(T):
     #   XX.append(X[i].T.dot(X[i]))
@@ -83,30 +88,37 @@ def L21_block_regression(
 
   U1 = np.zeros((m, d))
   U2 = np.zeros((n, d))
+  # IPython.embed()
 
   for it in xrange(max_iterations):
     for j in xrange(d):
-      jdx = ((j - 1) % T)
+      jdx = j % T
       if m < n:
-        v = (1 / lmbda ** 2) * (Y[j] - X[jdx] * (
-            np.linalg.pinv(L + D.dot(XX[jdx])).dot(D.dot(XY[j]))))
+        # IPython.embed()
+        v = (1 / lmbda ** 2) * (Y[j] - X[jdx].dot(
+          # np.linalg.solve(L + D.dot(XX[jdx]), D.dot(XY[j]))))
+            matrix_squeeze(np.linalg.inv(L + D.dot(XX[jdx])).dot(D.dot(XY[j])))))
       else:
-           v = np.pinv(L + X[jdx].dot(D.dot(X[jdx].T))).dot(Y[j])
-      U1[:, j] = D.dot(X[jdx].T).dot(v)
-      U2[:, j] = lmbda*v
+        # v = np.linalg.pinv(L + X[jdx].dot(D.dot(X[jdx].T))).dot(Y[j])
+        v = np.linalg.solve(L + X[jdx].dot(D.dot(X[jdx].T)), Y[j])
+      # IPython.embed()
+      U1[:, j] = matrix_squeeze(D.dot(X[jdx].T).dot(v))
+      U2[:, j] = matrix_squeeze(lmbda*v)
 
     D = ss.spdiags(2 * np.sqrt(np.sum(U1**2, 1)), 0, m, m)
     objective_value = D.sum()
     delta = last_objective_value - objective_value
+
+    if verbose:
+      print("Iteration: %i: %.3f" % (it + 1, delta))
+    # IPython.embed()
+
     if np.isnan(delta):
       break
 
     last_objective_value = objective_value
-    if delta < tol:
+    if np.abs(delta) < tol:
       break
-
-    if verbose:
-      print("Iteration: %i: %.3f" % (it + 1, delta))
 
   if np.isnan(delta):
     print("ERROR: Something is terribly wrong here.")
@@ -115,6 +127,7 @@ def L21_block_regression(
     print("WARNING: Max iterations %i reached with tol: %.3f,"
           " final delta: %.3f." % (max_iterations, tol, delta))
 
+  U1 = [u.squeeze() for u in np.split(U1, np.arange(1, d), axis=1)]
   return U1
 
 

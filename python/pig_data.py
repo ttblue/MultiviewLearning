@@ -16,10 +16,13 @@ import featurize_pig_data as fpd
 import lstm
 # import multi_task_learning as mtl
 # import time_series_ml as tsml
+import L21_block_regression as lbr
 import math_utils as mu
 import nn_utils as nnu
 import time_series_utils as tsu
 import utils
+
+import sklearn.svm as sksvm
 
 import IPython
 
@@ -382,22 +385,83 @@ def pred_lstm_slow_pigs_raw():
 
 
 def pred_L21reg_slow_pigs_raw():
-  num_pigs = 10
-  
+  np.random.seed(0)
+  num_pigs = -1
+
   ds = 10
   ds_factor = 1
-  columns = [0, 6, 7, 11]
+  columns = [0, 4, 6, 7]
   valid_labels = [0, 1, 2]
 
   all_data, _ = fpd.load_pig_features_and_labels_numpy(
       num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
       save_new=False, valid_labels=valid_labels, use_derivs=True)
 
-  pos_label = None
-  if pos_label not in valid_labels:
-    pos_label is None
+  pig_ids = all_data.keys()
+  all_xs = [all_data[idx]["features"] for idx in pig_ids]
+  all_dxs = [all_data[idx]["derivs"] for idx in pig_ids]
+  all_ys = [np.array(all_data[idx]["labels"]) for idx in pig_ids]
+
+  dt = fpd.FREQUENCY / (ds * ds_factor)
+  tau = 15
+  tde_d = 4
+  # IPython.embed()
+  # Using only pleth
+  all_xs = [
+      tsu.compute_time_delay_embedding(np.squeeze(xs[:, -1]), dt, tau, d=tde_d)
+      for xs in all_xs
+  ]
+  all_dxs = [dxs[:xs.shape[0], -1] for xs, dxs in zip(all_xs, all_dxs)]
+  all_ys = [ys[:xs.shape[0]] for xs, ys in zip(all_xs, all_ys)]
+
+  all_dsets = dataset.DynamicalSystemDataset(
+      all_xs, all_dxs, all_ys, shift_scale=True, tau=13)
+  trdset, tedset = all_dsets.split([0.8, 0.2])
+
+  sample_length_s = 30
+  sample_length = int(dt * sample_length_s)
+  # IPython.embed()
+
+  tr_xs, tr_dxs, tr_ys = trdset.get_samples(sample_length, -1, channels=None)
+  te_xs, te_dxs, te_ys = tedset.get_samples(sample_length, -1, channels=None)
+
+  degree = 3
+  tr_pxs = [lbr.generate_polynomials(xs, degree) for xs in tr_xs]
+  te_pxs = [lbr.generate_polynomials(xs, degree) for xs in te_xs]
 
   IPython.embed()
+
+  U0 = lbr.L21_block_regression(tr_dxs + te_dxs, tr_pxs + te_pxs, 300, max_iterations=20)
+  tr_f = U0[:len(tr_pxs)]
+  te_f = U0[len(tr_pxs):]
+
+  IPython.embed()
+
+  # tr_f = U0[:len(tr_pxs)]
+  # te_f = U0[len(tr_pxs):]
+
+  tr_wys = [collections.Counter(y).most_common(1)[0][0] for y in tr_ys]
+  te_wys = [collections.Counter(y).most_common(1)[0][0] for y in te_ys]
+
+  classifier = sksvm.SVC()
+  classifier.fit(tr_f, tr_wys)
+
+  pred_y = classifier.predict(te_f)
+  acc = (pred_y == te_wys).sum() / pred_y.shape[0]
+
+  # key = all_data.keys()[0]
+  # X = all_data[key]["features"][:, [0]]
+  # PX = lbr.generate_polynomials(X)
+  # PXs = np.split(PX, [int(PX.shape[0]/2)])
+  # DX = all_data[key]["derivs"][:, [0]]
+  # DXs = np.split(DX, [int(DX.shape[0]/2)])
+  IPython.embed()
+
+  plt.plot(tr_accs, color='b', label="Training Accuracy")
+  plt.plot(v_accs, color='r', label="Validation Accuracy")
+  plt.title("SRU")
+  plt.legend()
+  plt.show()
 
   # pig_ids = all_data.keys()
   # all_ts = [all_data[idx]["features"] for idx in pig_ids]
@@ -666,4 +730,3 @@ if __name__ == "__main__":
     pred_nn_tde_slow_pigs_raw()
   elif expt_type == "l21":
     pred_L21reg_slow_pigs_raw()
-    

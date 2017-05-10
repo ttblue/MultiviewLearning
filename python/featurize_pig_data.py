@@ -790,7 +790,6 @@ def load_pig_features_and_labels_numpy(
 
   # Find common pigs between annotations and data.
   common_keys = np.intersect1d(fdict.keys(), adict.keys()).tolist()
-
   # Create list of unused pigs for bookkeeping.
   unused_pigs = []
   unused_pigs.extend([p for p in fdict if p not in common_keys])
