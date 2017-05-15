@@ -15,7 +15,7 @@ import dataset
 import featurize_pig_data as fpd
 import lstm
 # import multi_task_learning as mtl
-# import time_series_ml as tsml
+import time_series_ml as tsml
 import L21_block_regression as lbr
 import math_utils as mu
 import nn_utils as nnu
@@ -475,6 +475,101 @@ def pred_L21reg_slow_pigs_raw():
   #   all_labels = [(lbls == pos_label).astype(int) for lbls in all_labels]
 
 
+def pred_L21reg_slow_fast_pigs_raw():
+  np.random.seed(0)
+  num_pigs = -1
+  use_L21 = True
+
+  ds = 10
+  ds_factor = 1
+  columns = [0, 4, 6, 7]
+  valid_labels = [0, 1, 2]
+
+  train_data, _ = fpd.load_pig_features_and_labels_numpy(
+      num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
+      save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type="slow")
+  test_data, _ = fpd.load_pig_features_and_labels_numpy(
+      num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
+      save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type-"fast")
+
+  tr_pig_ids = train_data.keys()
+  tr_xs = [train_data[idx]["features"] for idx in tr_pig_ids]
+  tr_dxs = [train_data[idx]["derivs"] for idx in tr_pig_ids]
+  tr_ys = [np.array(train_data[idx]["labels"]) for idx in tr_pig_ids]
+
+  te_pig_ids = test_data.keys()
+  te_xs = [test_data[idx]["features"] for idx in te_pig_ids]
+  te_dxs = [test_data[idx]["derivs"] for idx in te_pig_ids]
+  te_ys = [np.array(test_data[idx]["labels"]) for idx in te_pig_ids]
+
+  dt = fpd.FREQUENCY / (ds * ds_factor)
+  tau = 15
+  tde_d = 4
+  # IPython.embed()
+  # Using only pleth
+  tr_xs = [
+      tsu.compute_time_delay_embedding(np.squeeze(xs[:, -1]), dt, tau, d=tde_d)
+      for xs in tr_xs
+  ]
+  tr_dxs = [dxs[:xs.shape[0], -1] for xs, dxs in zip(tr_xs, tr_dxs)]
+  tr_ys = [ys[:xs.shape[0]] for xs, ys in zip(tr_xs, tr_ys)]
+
+  te_xs = [
+      tsu.compute_time_delay_embedding(np.squeeze(xs[:, -1]), dt, tau, d=tde_d)
+      for xs in te_xs
+  ]
+  te_dxs = [dxs[:xs.shape[0], -1] for xs, dxs in zip(te_xs, te_dxs)]
+  te_ys = [ys[:xs.shape[0]] for xs, ys in zip(te_xs, te_ys)]
+
+  te_dsets = dataset.DynamicalSystemDataset(
+      te_xs, te_dxs, te_ys, shift_scale=True, tau=13)
+
+  sample_length_s = 30
+  sample_length = int(dt * sample_length_s)
+  # IPython.embed()
+
+  tr_xs, tr_dxs, tr_ys = trdset.get_samples(sample_length, -1, channels=None)
+  te_xs, te_dxs, te_ys = tedset.get_samples(sample_length, -1, channels=None)
+
+  degree = 3
+  tr_pxs = [lbr.generate_polynomials(xs, degree) for xs in tr_xs]
+  te_pxs = [lbr.generate_polynomials(xs, degree) for xs in te_xs]
+
+  IPython.embed()
+
+  if use_L21:
+
+    num_samples = 6000
+    thresh = 10
+    sample_inds = np.random.permutation(len(tr_pxs))[:num_samples]
+    tr_pxs_samples = [tr_pxs[i] for i in sample_inds]
+    tr_dxs_samples = [tr_dxs[i] for i in sample_inds]
+    U0 = lbr.L21_block_regression(tr_dxs, tr_pxs, 300., max_iterations=20)
+
+    fsums = np.abs(np.array(U0)).sum(0)
+    finds = np.nonzero(fsums > thresh)[0]
+
+    tr_pxs = [pxs[finds] for pxs in tr_pxs]
+    te_pxs = [pxs[finds] for pxs in tr_pxs]
+
+    IPython.embed()
+
+  tr_f = tsml.compute_dynamics_coefficients_simple(tr_pxs, tr_dxs)
+  te_f = tsml.compute_dynamics_coefficients_simple(te_pxs, te_dxs)
+  # tr_f = U0[:len(tr_pxs)]
+  # te_f = U0[len(tr_pxs):]
+
+  tr_wys = [collections.Counter(y).most_common(1)[0][0] for y in tr_ys]
+  te_wys = [collections.Counter(y).most_common(1)[0][0] for y in te_ys]
+
+  classifier = sksvm.SVC()
+  classifier.fit(tr_f, tr_wys)
+
+  pred_y = classifier.predict(te_f)
+  acc = (pred_y == te_wys).sum() / pred_y.shape[0]
+
+  IPython.embed()
+
 ################################################################################
 
 def pred_nn_tde_slow_pigs_raw():
@@ -715,12 +810,14 @@ if __name__ == "__main__":
   # pred_L21reg_slow_pigs_raw()
   expt_type = "knn"
   if len(sys.argv) > 1:
-   try:
-     expt_num = int(sys.argv[1])
-     if expt_num == 1:
-       expt_type = "lstm"
-     elif expt_num == 2:
-       expt_type = "l21"
+    try:
+      expt_num = int(sys.argv[1])
+      if expt_num == 1:
+        expt_type = "lstm"
+      elif expt_num == 2:
+        expt_type = "l21"
+      elif expt_num == 3:
+        expt_type = "l21sf"
    except:
      pass
 
@@ -730,3 +827,5 @@ if __name__ == "__main__":
     pred_nn_tde_slow_pigs_raw()
   elif expt_type == "l21":
     pred_L21reg_slow_pigs_raw()
+  elif expt_type == "l21sf":
+    pred_L21reg_slow_fast_pigs_raw()
