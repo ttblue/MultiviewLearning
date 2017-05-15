@@ -13,7 +13,10 @@ import numpy as np
 
 import dataset
 import featurize_pig_data as fpd
-import lstm
+try:
+  import lstm
+except ImportError:
+  print("Cannot import LSTM")
 # import multi_task_learning as mtl
 import time_series_ml as tsml
 import L21_block_regression as lbr
@@ -490,7 +493,7 @@ def pred_L21reg_slow_fast_pigs_raw():
       save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type="slow")
   test_data, _ = fpd.load_pig_features_and_labels_numpy(
       num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
-      save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type-"fast")
+      save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type="fast")
 
   tr_pig_ids = train_data.keys()
   tr_xs = [train_data[idx]["features"] for idx in tr_pig_ids]
@@ -514,6 +517,9 @@ def pred_L21reg_slow_fast_pigs_raw():
   tr_dxs = [dxs[:xs.shape[0], -1] for xs, dxs in zip(tr_xs, tr_dxs)]
   tr_ys = [ys[:xs.shape[0]] for xs, ys in zip(tr_xs, tr_ys)]
 
+  tr_dsets = dataset.DynamicalSystemDataset(
+      tr_xs, tr_dxs, tr_ys, shift_scale=True, tau=tau)
+
   te_xs = [
       tsu.compute_time_delay_embedding(np.squeeze(xs[:, -1]), dt, tau, d=tde_d)
       for xs in te_xs
@@ -522,14 +528,14 @@ def pred_L21reg_slow_fast_pigs_raw():
   te_ys = [ys[:xs.shape[0]] for xs, ys in zip(te_xs, te_ys)]
 
   te_dsets = dataset.DynamicalSystemDataset(
-      te_xs, te_dxs, te_ys, shift_scale=True, tau=13)
+      te_xs, te_dxs, te_ys, shift_scale=True, tau=tau)
 
   sample_length_s = 30
   sample_length = int(dt * sample_length_s)
-  # IPython.embed()
+  #IPython.embed()
 
-  tr_xs, tr_dxs, tr_ys = trdset.get_samples(sample_length, -1, channels=None)
-  te_xs, te_dxs, te_ys = tedset.get_samples(sample_length, -1, channels=None)
+  tr_xs, tr_dxs, tr_ys = tr_dsets.get_samples(sample_length, -1, channels=None)
+  te_xs, te_dxs, te_ys = te_dsets.get_samples(sample_length, -1, channels=None)
 
   degree = 3
   tr_pxs = [lbr.generate_polynomials(xs, degree) for xs in tr_xs]
@@ -544,17 +550,19 @@ def pred_L21reg_slow_fast_pigs_raw():
     sample_inds = np.random.permutation(len(tr_pxs))[:num_samples]
     tr_pxs_samples = [tr_pxs[i] for i in sample_inds]
     tr_dxs_samples = [tr_dxs[i] for i in sample_inds]
-    U0 = lbr.L21_block_regression(tr_dxs, tr_pxs, 300., max_iterations=20)
+    U0 = lbr.L21_block_regression(tr_dxs, tr_pxs, 300., max_iterations=25)
 
     fsums = np.abs(np.array(U0)).sum(0)
     finds = np.nonzero(fsums > thresh)[0]
 
-    tr_pxs = [pxs[finds] for pxs in tr_pxs]
-    te_pxs = [pxs[finds] for pxs in tr_pxs]
+    tr_pxs = [pxs[:, finds] for pxs in tr_pxs]
+    te_pxs = [pxs[:, finds] for pxs in te_pxs]
 
     IPython.embed()
 
+  print("Train coeffs:")
   tr_f = tsml.compute_dynamics_coefficients_simple(tr_pxs, tr_dxs)
+  print("\nTest coeffs:")
   te_f = tsml.compute_dynamics_coefficients_simple(te_pxs, te_dxs)
   # tr_f = U0[:len(tr_pxs)]
   # te_f = U0[len(tr_pxs):]
@@ -818,8 +826,8 @@ if __name__ == "__main__":
         expt_type = "l21"
       elif expt_num == 3:
         expt_type = "l21sf"
-   except:
-     pass
+    except:
+      pass
 
   if expt_type == "lstm":
     pred_lstm_slow_pigs_raw()

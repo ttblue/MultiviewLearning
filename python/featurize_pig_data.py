@@ -612,13 +612,15 @@ def save_derivatives_pigs(
   odict = {idx:os.path.join(derivs_dir, str(idx) + suffix) for idx in pig_ids}
   already_finished = [os.path.exists(odict[idx] + ".npy") for idx in pig_ids]
 
+  IPython.embed()
   restart = any(already_finished)
   if restart:
     if VERBOSE:
-      print("Already finished pigs: %s"%(
-                [idx for idx in pig_ids if already_finished[idx]]))
+    #  print("Already finished pigs: %s"%(
+     #           [idx for idx in pig_ids if already_finished[idx]]))
+      pass
 
-    pig_ids = [idx for idx in pig_ids if not already_finished[idx]]
+    pig_ids = [pig_ids[idx] for idx in range(len(pig_ids)) if not already_finished[idx]]
 
   IPython.embed()
 
@@ -819,6 +821,13 @@ def load_pig_features_and_labels_numpy(
     if VERBOSE:
       t_start = time.time()
 
+    ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
+    critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
+    if critical_anns is None or ann_labels is None:
+      print("Something went wrong with pig %i"%key)
+      unused_pigs.append(key)
+      continue
+
     pig_data = np.load(fdict[key])
     if use_derivs:
       pig_data = pig_data.tolist()
@@ -854,8 +863,6 @@ def load_pig_features_and_labels_numpy(
 
     del pig_data
 
-    ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
-    critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
     critical_times = [ann_time[idx] for idx in critical_anns]
     critical_text = {idx:ann_text[idx] for idx in critical_anns}
     label_dict = create_label_timeline(ann_labels)
@@ -921,4 +928,5 @@ if __name__ == "__main__":
   # tsml.cluster_windows(feature_file)
   # all_data, unused_pigs = load_slow_pig_features_and_labels()
   # IPython.embed()
-  save_derivatives_pigs(n_jobs=1, min_id=0, max_id=1)
+  # save_derivatives_pigs(n_jobs=1, min_id=0, max_id=1)
+  save_derivatives_pigs(ds=1, n_jobs=14, min_id=8, max_id=22, pig_type="fast")

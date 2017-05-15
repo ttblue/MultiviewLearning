@@ -173,7 +173,7 @@ class DynamicalSystemDataset:
       self.dxs = dxs
       self.ys = ys
 
-  def get_samples(self, sample_length, num_per_ts=-1, channels=None):
+  def get_samples(self, sample_length, num_per_ts=-1, channels=None, zero_frac=0.1):
     sample_xs = []
     sample_dxs = []
     sample_ys = []
@@ -193,6 +193,9 @@ class DynamicalSystemDataset:
 
       for ridx in rinds:
         rxs = xs[start_inds[ridx]:end_inds[ridx]]
+        if zero_frac is not None and zero_frac > 0.:
+          if (rxs.sum(1) == 0).sum() > zero_frac * rxs.shape[0]:
+            continue
         rdxs = dxs[start_inds[ridx]:end_inds[ridx]]
         rys = ys[start_inds[ridx]:end_inds[ridx]]
         if self._shift_scale:

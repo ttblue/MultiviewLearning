@@ -5,7 +5,7 @@ import sys
 
 import numpy as np
 from sklearn.cluster import KMeans
-from sklearn.svm as sksvm
+from sklearn import linear_model as sklm
 import mutual_info as mi
 
 try:
@@ -103,10 +103,14 @@ def predict_nn_euclidean(train_ts, train_labels, test_windows):
 
 
 def compute_dynamics_coefficients_simple(Xs, DXs):
-  classifier = sksvm.SVC(kernel='linear')
+  classifier = sklm.LinearRegression()
   coeffs = []
-  for X, DX in zip(Xs, DXs):
+  num_idxs = len(Xs)
+  for idx, X, DX in zip(range(num_idxs), Xs, DXs):
+    print("Fitting coeffs for window %i/%i."%(idx + 1, num_idxs), end='\r')
+    sys.stdout.flush()
     classifier.fit(X, DX)
     coeffs.append(classifier.coef_.squeeze())
+  print("Fitting coeffs for window %i/%i."%(idx + 1, num_idxs))
 
   return coeffs

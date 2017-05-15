@@ -68,7 +68,14 @@ def load_annotation_file(ann_file):
 def load_xlsx_annotation_file(ann_file, convert_to_s=True):
 
   wb = xlrd.open_workbook(ann_file)
-  sh = wb.sheet_by_name('Annotations')
+  try:
+    if "Annotations" in wb.sheet_names():
+      sh = wb.sheet_by_name("Annotations")
+    else:
+      sh = wb.sheet_by_name("Sheet1")
+  except:
+    import IPython
+    IPython.embed()
 
   conversion_factor = 86400. if convert_to_s else 1
 
@@ -186,11 +193,11 @@ def create_annotation_labels(ann_text, console=False):
 
   stabilization_start_re = re.compile("30 min stabilization period$")
   stabilization_end_re = re.compile("30 min stabilization period (completed|ended)$")
-  bleed_start_re = re.compile("^bleed \# [1-9](?! stopped| temporarily stopped)")
-  bleed_end_re = re.compile("^bleed \# [1-9] (stopped|temporarily stopped)$")
-  resuscitation_start_re = re.compile("^((begin |_begin )*resuscitation with hextend( \(bag \#[1-9]\))*|cpr|co started|dobutamine started|lr started|(na|sodium) nitrite( started)*)$")
-  resuscitation_end_re = re.compile("^(co stopped|cpr (completed|stopped)|dobutamine stopped|lr (complete|stopped)|resuscitation (\(hextend\) )*complete[d]*|(na|sodium) nitrite stopped)$")
-
+  bleed_start_re = re.compile("^bleed \#[ ]*[1-9](?! stopped| temporarily stopped)")
+  bleed_end_re = re.compile("^bleed \#[ ]*[1-9] (stopped|temporarily stopped)$")
+  resuscitation_start_re = re.compile("^((begin |_begin )*resuscitation( with hextend( \(bag \#[1-9]\))*)*|cpr|co started|dobutamine started|lr started|(na|sodium) nitrite( started)*)$")
+  resuscitation_end_re = re.compile("^(co stopped|cpr (completed|stopped)|dobutamine stopped|lr (complete|stopped)|resuscitation (\(hextend\) )*(complete[d]*|stopped)|(na|sodium) nitrite stopped|stop resuscitation)$")
+  
   lbl = -1
   critical_anns = []
   ann_labels = []
@@ -226,13 +233,20 @@ def create_annotation_labels(ann_text, console=False):
       ann_labels.append(lbl)
       lbl = new_lbl
 
+  # import IPython
+  # IPython.embed()
   # TODO: Currently removing all resuscitation events before bleed.
   # I don't know what the right thing to do here is.
-  # if console:
-  #   import IPython
-  #   IPython.embed()
-  last_bleed_idx = (np.array(ann_labels) == 1).nonzero()[0][-1]
-  between_bleed_inds = (np.array(ann_labels[:last_bleed_idx]) > 2).nonzero()[0]
+  if 0 not in ann_labels:
+    import IPython
+    IPython.embed()
+    
+  try:
+    last_bleed_idx = (np.array(ann_labels) == 1).nonzero()[0][-1]
+    between_bleed_inds = (np.array(ann_labels[:last_bleed_idx]) > 2).nonzero()[0]
+  except:
+    print("No bleeds found.")
+    return None, None
   # valid_inds = ((np.array(ann_labels[:last_bleed_idx]) <= 2).tolist()
   #               + [True] * (len(ann_labels) - last_bleed_idx))
   for bidx in between_bleed_inds:
@@ -246,10 +260,10 @@ def create_annotation_labels(ann_text, console=False):
   # The last label should be "post resuscitation".
   while ann_labels[-1] == 4:
     del ann_labels[-1], critical_anns[-1]
-  if ann_labels[-1] != 3:
-    import IPython
-    IPython.embed()
-    raise UtilsException("The last label should be 3, not %i"%ann_labels[-1])
+  # if ann_labels[-1] != 3:
+  #   import IPython
+  #   IPython.embed()
+  #   raise UtilsException("The last label should be 3, not %i"%ann_labels[-1])
 
   if critical_anns[-1] != idx:
     critical_anns.append(idx)
