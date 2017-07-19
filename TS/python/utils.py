@@ -191,12 +191,12 @@ def create_annotation_labels(ann_text, console=False):
   # 5: Post resuscitation
   # -1: None
 
-  stabilization_start_re = re.compile("30 min stabilization period$")
-  stabilization_end_re = re.compile("30 min stabilization period (completed|ended)$")
+  stabilization_start_re = re.compile("min stabilization period$")
+  stabilization_end_re = re.compile("min stabilization period (completed|ended)$")
   bleed_start_re = re.compile("^bleed \#[ ]*[1-9](?! stopped| temporarily stopped)")
   bleed_end_re = re.compile("^bleed \#[ ]*[1-9] (stopped|temporarily stopped)$")
-  resuscitation_start_re = re.compile("^((begin |_begin )*resuscitation( with hextend( \(bag \#[1-9]\))*)*|cpr|co started|dobutamine started|lr started|(na|sodium) nitrite( started)*)$")
-  resuscitation_end_re = re.compile("^(co stopped|cpr (completed|stopped)|dobutamine stopped|lr (complete|stopped)|resuscitation (\(hextend\) )*(complete[d]*|stopped)|(na|sodium) nitrite stopped|stop resuscitation)$")
+  resuscitation_start_re = re.compile("^((begin |_begin )*resuscitation( with hextend( \(bag \#[1-9]\))*)*|cpr|co started|dobutamine started|lr started|(na|sodium) nitrite( started)*|resuscitation resumed)$")
+  resuscitation_end_re = re.compile("^(co stopped|cpr (completed|stopped)|dobutamine stopped|lr (complete|stopped)|resuscitation (\(hextend\) )*(complete[d]*|stopped)|(na|sodium) nitrite stopped|stop resuscitation|resuscitation paused)$")
   
   lbl = -1
   critical_anns = []

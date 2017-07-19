@@ -478,7 +478,7 @@ def pred_L21reg_slow_pigs_raw():
   #   all_labels = [(lbls == pos_label).astype(int) for lbls in all_labels]
 
 
-def pred_L21reg_slow_fast_pigs_raw():
+def pred_L21reg_slow_superslow_pigs_raw():
   np.random.seed(0)
   num_pigs = -1
   use_L21 = True
@@ -493,7 +493,7 @@ def pred_L21reg_slow_fast_pigs_raw():
       save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type="slow")
   test_data, _ = fpd.load_pig_features_and_labels_numpy(
       num_pigs=num_pigs, ds=ds, ds_factor=ds_factor, feature_columns=columns,
-      save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type="fast")
+      save_new=False, valid_labels=valid_labels, use_derivs=True, pig_type="superslow")
 
   tr_pig_ids = train_data.keys()
   tr_xs = [train_data[idx]["features"] for idx in tr_pig_ids]
@@ -537,9 +537,9 @@ def pred_L21reg_slow_fast_pigs_raw():
   tr_xs, tr_dxs, tr_ys = tr_dsets.get_samples(sample_length, -1, channels=None)
   te_xs, te_dxs, te_ys = te_dsets.get_samples(sample_length, -1, channels=None)
 
-  degree = 3
-  tr_pxs = [lbr.generate_polynomials(xs, degree) for xs in tr_xs]
-  te_pxs = [lbr.generate_polynomials(xs, degree) for xs in te_xs]
+  degree = 5
+  tr_pxso = [lbr.generate_polynomials(xs, degree) for xs in tr_xs]
+  te_pxso = [lbr.generate_polynomials(xs, degree) for xs in te_xs]
 
   IPython.embed()
 
@@ -547,34 +547,37 @@ def pred_L21reg_slow_fast_pigs_raw():
 
     num_samples = 6000
     thresh = 10
-    sample_inds = np.random.permutation(len(tr_pxs))[:num_samples]
-    tr_pxs_samples = [tr_pxs[i] for i in sample_inds]
+    sample_inds = np.random.permutation(len(tr_pxso))[:num_samples]
+    tr_pxs_samples = [tr_pxso[i] for i in sample_inds]
     tr_dxs_samples = [tr_dxs[i] for i in sample_inds]
-    U0 = lbr.L21_block_regression(tr_dxs, tr_pxs, 300., max_iterations=25)
+    U0 = lbr.L21_block_regression(tr_dxs, tr_pxso, 1000., max_iterations=30)
 
     fsums = np.abs(np.array(U0)).sum(0)
     finds = np.nonzero(fsums > thresh)[0]
 
-    tr_pxs = [pxs[:, finds] for pxs in tr_pxs]
-    te_pxs = [pxs[:, finds] for pxs in te_pxs]
+    tr_pxs = [pxs[:, finds] for pxs in tr_pxso]
+    te_pxs = [pxs[:, finds] for pxs in te_pxso]
 
     IPython.embed()
 
-  print("Train coeffs:")
-  tr_f = tsml.compute_dynamics_coefficients_simple(tr_pxs, tr_dxs)
-  print("\nTest coeffs:")
-  te_f = tsml.compute_dynamics_coefficients_simple(te_pxs, te_dxs)
+  else:
+    tr_pxs = tr_pxso
+    te_pxs = te_pxso
+
   # tr_f = U0[:len(tr_pxs)]
   # te_f = U0[len(tr_pxs):]
 
   tr_wys = [collections.Counter(y).most_common(1)[0][0] for y in tr_ys]
   te_wys = [collections.Counter(y).most_common(1)[0][0] for y in te_ys]
 
+  print("Train coeffs:")
+  tr_f = tsml.compute_dynamics_coefficients_simple(tr_pxs, tr_dxs)
+  print("\nTest coeffs:")
+  te_f = tsml.compute_dynamics_coefficients_simple(te_pxs, te_dxs)
   classifier = sksvm.SVC()
   classifier.fit(tr_f, tr_wys)
 
-  pred_y = classifier.predict(te_f)
-  acc = (pred_y == te_wys).sum() / pred_y.shape[0]
+  pred_y = classifier.predict(te_f); acc = (pred_y == te_wys).sum() / pred_y.shape[0]
 
   IPython.embed()
 
