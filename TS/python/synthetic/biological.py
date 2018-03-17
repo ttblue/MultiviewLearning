@@ -4,115 +4,87 @@ some observable variables. The hidden variable indexes into the linear model.
 """
 import numpy as np
 import pandas as pd
+from scipy import signal
+from scipy import interpolate
 
 import time_series_generator as tsg
 
 
-def generateRandomTransitionMatrix(n, self_prob=None):
+def sigmoid(x):   
+  return 1. / (1. + np.exp(-x))
+
+def generatePulse(
+    tlen, amp, expand=100, shrink=50, bias=0.075, fc=5, bw=0.5, thresh=1e-3):
   """
-  Generates a transition matrix: a column stochastic matrix with each entry >=0.
-  All values are chosen uniformly at random and then normalized, expect the
-  self-transition.
+  Generates a pulse which rise up to amp and then drop down below 0.
+  This is done by scaling and stretching a gaussian pulse.
+
+  If any of these arguments don't make sense, take a look at the code.
+  Args:
+    tlen: Length of pulse.
+    amp: Amplitude of pulse.
+    expand: Expansion of tlen to generate initial pulse which is then selected
+        and interpolated.
+    shrink: Scale of sigmoid used to "select" part of gaussian pulse.
+    bias: Bias of sigmoid used to "select" part of gaussian pulse.
+    fc
+  """
+  t = np.linspace(-1, 1, tlen * expand, endpoint=False)
+  amps = sigmoid(shrink * (t)) * sigmoid(shrink * (t[-1::-1] + bias))
+  pulse = signal.gausspulse(t, fc=fc, bw=bw)
+
+  pulse = pulse * amps
+
+  nzinds = (np.abs(pulse) > thresh).nonzero()[0]
+  pulse = pulse[nzinds[0]: nzinds[-1]]
+  pulse = pulse / np.max(np.abs(pulse)) * amp
+
+  t = t[nzinds[0]: nzinds[-1]]
+  fnc = interpolate.interp1d(t, pulse)
+  pulse = fnc(np.linspace(t[0], t[-1], tlen))
+
+  return pulse
+
+
+def generatePulseWaveform(
+      tlen, locs=[0.5], amps=[1], widths=[0.1], mu=0., noise_sigma=0.05):
+  """
+  Generates pulse waveforms with variable peaks. Pulses rise up to maximum
+  amplitude and then drop down below that.
 
   Args:
-    n: Number of states.
-    self_prob: A number of vector of size n of self-transition probabilities.
-
-  Returns:
-    P: n x n column stochastic matrix with transition probabilities.
+    tlen: Length of pulse.
+    locs: Locations of pulses in fraction of length of waveform.
+    amps: Amplitudes of pulses.
+    widths: Widths of pulses in fraction of length of waveform.
+    mu: Waveform mean.
+    noise_sigma: 
   """
-  P = np.random.uniform(0., 1., size=(n, n))
-  P = P / P.sum(0)
+  pulse_waveform = (
+      np.ones(tlen) * mu + np.random.normal(scale=noise_sigma, size=(tlen,)))
 
-  if self_prob is not None:
-    self_prob = np.squeeze(self_prob)
+  for loc, width, amp in zip(locs, widths, amps):
+    plen = np.round(tlen * width).astype(int)
+    loc = np.round(tlen * loc).astype(int)
+    pulse = generatePulse(plen, amp)
 
-    # Some error checks
-    if len(self_prob.shape) > 0:
-      if len(self_prob.shape) > 1:
-        tsg.TimeSeriesGenerationException(
-            "Incorrect shape of self probabilities: %s"%(self_prob.shape))
-      if self_prob.shape[0] != n:
-        tsg.TimeSeriesGenerationException(
-            "Incorrect length of self probabilities: %s"%(self_prob.shape[0]))
+    hplen = int(plen // 2)
+    print(loc, plen)
+    pulse_waveform[loc - hplen: loc + plen - hplen] += pulse
 
-    scale = (1 - self_prob) / (P.sum(0) - P.diagonal())
-    P = P * scale
-    P[xrange(n), xrange(n)] = self_prob
-
-  return P
+  return pulse_waveform
 
 
-def sampleTransition(P, curr_state):
-  n = P.shape[0]
-
-  if isinstance(curr_state, int):
-    if curr_state >= n or curr_state <= 0:
-      tsg.TimeSeriesGenerationException(
-          "Invalid current state %i with %i possible states: %s"
-          %(curr_state, n))
-
-    dist = P[:, curr_state]
-  else:
-    curr_state = np.squeeze(curr_state)
-    if len(curr_state.shape) != 1 or len(curr_state.shape[0]) != n:
-      tsg.TimeSeriesGenerationException(
-          "Invalid current state vector %s: "%(curr_state))
-    if np.any(curr_state < 0) or np.allclose(sum(curr_state), 1.):
-      tsg.TimeSeriesGenerationException(
-          "Invalid current state distribution %s: "%(curr_state))
-
-    dist = P.dot(curr_state)
-
-  new_state = np.random.choice(n, p=dist)
-  return new_state
-
-
-def generateLinearDynamicsModel(n, min_sv=-1, max_sv=1, min_b=-1, max_b=1):
+class SimulatedBioGenerator(tsg.TimeSeriesGenerator):
   """
-  Generates a random linear dynamics model within the singular value range.
-  The values are generated from a gaussian distribution.
+  Creates a simulated biological system with shifting means and frequency.
 
-  Args:
-    n: Number of variables.
-    min_sv: Minimum allowed singular value for transition matrix.
-    max_sv: Maximum allowed singular value for transition matrix.
-    min_b: Minimum allowed value for affine component.
-    max_b: Maximum allowed value for affine component.
-
-  Returns:
-    A: n x n matrix representing dynamics model.
-    b: n x 1 matrix representing the affine component of the model.
-  """
-  if min_sv is not None and max_sv is not None:
-    if min_sv > max_sv:
-      tsg.TimeSeriesGenerationException(
-            "Minimum allowed singular value must be less than maximum allowed"
-            " singular value.")
-
-  base_sigma = 5.
-  A = np.random.randn(n, n) * base_sigma
-
-  U, S, V = np.linalg.svd(A)
-  S = np.clip(S, min_sv, max_sv)
-  A = U.dot(np.diag(S).dot(V))
-
-  b = np.random.uniform(min_b, max_b, size=(n,))
-
-  return A, b
-
-
-class SwitchingLinearGenerator(tsg.TimeSeriesGenerator):
-  """
-  Creates a switching linear system, based on a single discrete hidden state.
+  The means and frequency change through a predetermined pattern.
   """
 
-  def __init__(
-      self, n_obs_vars, n_hidden, noise_sigma=0.5, min_steps_in_state=10,
-      transition_matrix=None, linear_bank=None, init_obs=None,
-      init_hidden=None):
+  def __init__(self, init_mean, init_period):
     """
-    Constructor.
+    Constructor for Bio Generato.
 
     Args:
       n_obs_vars: Number of observable variables.
@@ -127,7 +99,6 @@ class SwitchingLinearGenerator(tsg.TimeSeriesGenerator):
       init_obs: An initial observation for the observable variables.
       init_hidden: An initial hidden state.
     """
-
     self._n_obs_vars = n_obs_vars
     self._n_hidden = n_hidden
     self._noise_sigma = noise_sigma
@@ -208,7 +179,7 @@ def test_stuff():
   hs = [h for x,h in ns]
 
   for i in xrange(no):
-    plt.subplot(no + 1, 1, i)
+    plt.subplot(no + 1, 1, i + 1)
     plt.plot([x[i] for x in xs])
 
   plt.subplot(no + 1, 1, no + 1)
