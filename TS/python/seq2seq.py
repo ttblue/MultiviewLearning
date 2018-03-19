@@ -203,8 +203,8 @@ class Seq2SeqModel(object):
     self._final_state = state
 
     # self._pred = tf.cast(tf.argmax(self._logits, axis=2), tf.int32)
-    self._error = tf.reduce_mean(
-        tf.cast(tf.equal(self._pred, self._y), data_type()))
+    # self._error = tf.reduce_mean(
+    #     tf.cast(tf.equal(self._pred, self._y), data_type()))
 
   def _setup_optimizer(self):
     self._lr = tf.Variable(0.0, trainable=False)
@@ -359,13 +359,13 @@ class Seq2Seq(classifier.Classifier):
   def _run_single_ts(self, x, y, training=True):
     costs = 0.0
     iters = 0
-    total_accuracy = 0
+    # total_accuracy = 0
     state = self._session.run(self._model.initial_state)
 
     fetches = {
         "cost": self._model.cost,
         "final_state": self._model.final_state,
-        "accuracy": self._model._accuracy,
+        # "accuracy": self._model._accuracy,
     }
     if training:
       fetches["eval_op"] = self._model.train_op
@@ -385,14 +385,14 @@ class Seq2Seq(classifier.Classifier):
       vals = self._session.run(fetches, feed_dict)
       cost = vals["cost"]
       state = vals["final_state"]
-      accuracy = vals["accuracy"]
+      # accuracy = vals["accuracy"]
 
       costs += cost
       iters += self.config.num_steps
-      total_accuracy += accuracy
+      # total_accuracy += accuracy
 
-    total_accuracy /= epoch_size
-    return costs, iters, total_accuracy
+    # total_accuracy /= epoch_size
+    return costs, iters#, total_accuracy
 
   def _predict_single_ts(self, x):
     state = self._session.run(self._model.initial_state)
