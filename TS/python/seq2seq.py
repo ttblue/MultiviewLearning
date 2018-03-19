@@ -10,23 +10,23 @@ import tensorflow as tf
 
 # import recurrent.rnn_cell.sru as sru
 
-import classifieri
-mport dataset
+import classifier
+import dataset
 
 import IPython
 
 flags = tf.flags
 logging = tf.logging
 
-# flags.DEFINE_string(
-#     "model", "small",
-#     "A type of model. Possible options are: small, medium, large.")
-# flags.DEFINE_string("data_path", None,
-#                     "Where the training/test data is stored.")
-# flags.DEFINE_string("save_path", None,
-#                     "Model output directory.")
-# flags.DEFINE_bool("use_fp16", False,
-#                   "Train using 16-bit floats instead of 32bit floats")
+flags.DEFINE_string(
+    "model", "small",
+    "A type of model. Possible options are: small, medium, large.")
+flags.DEFINE_string("data_path", None,
+                    "Where the training/test data is stored.")
+flags.DEFINE_string("save_path", None,
+                    "Model output directory.")
+flags.DEFINE_bool("use_fp16", False,
+                  "Train using 16-bit floats instead of 32bit floats")
 
 FLAGS = flags.FLAGS
 
@@ -40,6 +40,7 @@ class Seq2SeqConfig(classifier.Config):
   def __init__(self,
                num_in,
                num_out,
+               use_sru,
                use_dynamic_rnn,
                hidden_size,
                forget_bias,
@@ -61,6 +62,7 @@ class Seq2SeqConfig(classifier.Config):
     self.num_in = num_in
     self.num_out = num_out
 
+    self.use_sru = use_sru
     self.use_dynamic_rnn = use_dynamic_rnn
 
     self.hidden_size = hidden_size
@@ -81,16 +83,6 @@ class Seq2SeqConfig(classifier.Config):
 
     self.summary_log_path = summary_log_path
     self.verbose = verbose
-
-# class PTBInput(object):
-#   """The input data."""
-
-#   def __init__(self, config, data, name=None):
-#     self.batch_size = batch_size = config.batch_size
-#     self.num_steps = num_steps = config.num_steps
-#     self.epoch_size = ((len(data) // batch_size) - 1) // num_steps
-#     self.input_data, self.targets = reader.ptb_producer(
-#         data, batch_size, num_steps, name=name)
 
 
 class Seq2SeqModel(object):
@@ -202,9 +194,7 @@ class Seq2SeqModel(object):
     self._cost = tf.reduce_sum(self._loss)
     self._final_state = state
 
-    # self._pred = tf.cast(tf.argmax(self._logits, axis=2), tf.int32)
-    # self._error = tf.reduce_mean(
-    #     tf.cast(tf.equal(self._pred, self._y), data_type()))
+    self._error = tf.norm(tf.cast(self._logits - self._y), data_type())
 
   def _setup_optimizer(self):
     self._lr = tf.Variable(0.0, trainable=False)
@@ -247,8 +237,8 @@ class Seq2SeqModel(object):
     return self._pred
 
   @property
-  def accuracy(self):
-    return self._accuracy
+  def error(self):
+    return self._error
 
   @property
   def cost(self):
@@ -299,7 +289,7 @@ class Seq2Seq(classifier.Classifier):
 
     costs = 0.
     iters = 0  # TODO: Don't need.
-    accuracy = 0.
+    error = 0.
     tot_steps = 0.
     for ts_idx in xrange(dset.num_ts):
       if self.config.verbose:
@@ -307,28 +297,28 @@ class Seq2Seq(classifier.Classifier):
 
       x_batches, y_batches = dset.get_ts_batches(
           self.config.batch_size, self.config.num_steps)
-      ts_costs, ts_iters, ts_accuracy = self._run_single_ts(
+      ts_costs, ts_iters, ts_error = self._run_single_ts(
           x_batches, y_batches, training=True)
       costs += ts_costs
       iters += ts_iters
       epoch_size = len(x_batches)
       tot_steps += epoch_size
-      accuracy += ts_accuracy * epoch_size
+      error += ts_error * epoch_size
 
       if self.config.verbose:
-        print("\tTrain TS %i\tAccuracy: %.3f\tTime: %.2fs."%
-              (ts_idx + 1, ts_accuracy, (time.time() - start_time)), end='\r')
+        print("\tTrain TS %i\tError: %.3f\tTime: %.2fs."%
+              (ts_idx + 1, ts_error, (time.time() - start_time)), end='\r')
         sys.stdout.flush()
 
-    accuracy /= tot_steps
-    self.train_results.append({"accuracy": accuracy, "costs": costs / iters})
+    error /= tot_steps
+    self.train_results.append({"error": error, "costs": costs / iters})
 
     if self.config.verbose:
-      print("\tTrain TS %i\tAccuracy: %.3f\tTime: %.2fs."%
-            (ts_idx + 1, ts_accuracy, (time.time() - start_time)))
-      print("\n\tTrain Costs: %.3f\n\tTrain Accuracy: %.3f\n\t"
+      print("\tTrain TS %i\tError: %.3f\tTime: %.2fs."%
+            (ts_idx + 1, ts_error, (time.time() - start_time)))
+      print("\n\tTrain Costs: %.3f\n\tTrain Error: %.3f\n\t"
             "Time: %.2fs."%
-            (costs / iters, accuracy, (time.time() - epoch_start_time)))
+            (costs / iters, error, (time.time() - epoch_start_time)))
 
       start_time = time.time()
 
@@ -336,36 +326,36 @@ class Seq2Seq(classifier.Classifier):
       self._load_model("valid")
       v_iters = 0  # TODO: Don't need.
       v_costs = 0
-      v_accuracy = 0
+      v_error = 0
       v_tot_steps = 0
       for ts_idx in xrange(dset_v.num_ts):
         x_batches, y_batches = dset_v.get_ts_batches(
             self.config.batch_size, self.config.num_steps)
-        ts_costs, ts_iters, ts_accuracy = self._run_single_ts(
+        ts_costs, ts_iters, ts_error = self._run_single_ts(
             x_batches, y_batches, training=False)
         v_costs += ts_costs
         v_iters += ts_iters
         epoch_size = len(x_batches)
         v_tot_steps += epoch_size
-        v_accuracy += ts_accuracy * epoch_size
+        v_error += ts_error * epoch_size
 
-      v_accuracy /= v_tot_steps
+      v_error /= v_tot_steps
       print("\n\tValidation Costs: %.3f\n\t"
-            "Validation Accuracy: %.3f\n\tTime: %.2fs."%
-            (v_costs / v_iters, v_accuracy, (time.time() - start_time)))
+            "Validation Error: %.3f\n\tTime: %.2fs."%
+            (v_costs / v_iters, v_error, (time.time() - start_time)))
       self.validation_results.append(
-          {"accuracy": v_accuracy, "costs": v_costs / v_iters})
+          {"error": v_error, "costs": v_costs / v_iters})
 
   def _run_single_ts(self, x, y, training=True):
     costs = 0.0
     iters = 0
-    # total_accuracy = 0
+    total_error = 0
     state = self._session.run(self._model.initial_state)
 
     fetches = {
         "cost": self._model.cost,
         "final_state": self._model.final_state,
-        # "accuracy": self._model._accuracy,
+        "error": self._model._error,
     }
     if training:
       fetches["eval_op"] = self._model.train_op
@@ -385,14 +375,14 @@ class Seq2Seq(classifier.Classifier):
       vals = self._session.run(fetches, feed_dict)
       cost = vals["cost"]
       state = vals["final_state"]
-      # accuracy = vals["accuracy"]
+      error = vals["error"]
 
       costs += cost
       iters += self.config.num_steps
-      # total_accuracy += accuracy
+      total_error += error
 
-    # total_accuracy /= epoch_size
-    return costs, iters#, total_accuracy
+    total_error /= epoch_size
+    return costs, iters, total_error
 
   def _predict_single_ts(self, x):
     state = self._session.run(self._model.initial_state)
@@ -408,7 +398,7 @@ class Seq2Seq(classifier.Classifier):
         feed_dict[c] = state[i].c
         feed_dict[h] = state[i].h
 
-      step_pred = self._session.run(self._model.pred, feed_dict)
+      step_pred = self._session.run(self._model._logits, feed_dict)
       pred = np.c_[pred, step_pred]
 
     return np.squeeze(np.reshape(pred, (-1, 1)))
@@ -445,18 +435,19 @@ class Seq2Seq(classifier.Classifier):
 
       with tf.name_scope("Train"):
         with tf.variable_scope("Model", reuse=None, initializer=initializer):
-          self._train_model = LSTMModel(config=self.config, is_training=True)
+          self._train_model = Seq2SeqModel(config=self.config, is_training=True)
         tf.summary.scalar("Training Loss", self._train_model.cost)
         tf.summary.scalar("Learning Rate", self._train_model.lr)
 
       with tf.name_scope("Valid"):
         with tf.variable_scope("Model", reuse=True, initializer=initializer):
-          self._validation_model = LSTMModel(config=self.config, is_training=False)
+          self._validation_model = Seq2SeqModel(
+              config=self.config, is_training=False)
         tf.summary.scalar("Validation Loss", self._validation_model.cost)
 
       with tf.name_scope("Test"):
         with tf.variable_scope("Model", reuse=True, initializer=initializer):
-          self._test_model = LSTMModel(config=self.config, is_training=False)
+          self._test_model = Seq2SeqModel(config=self.config, is_training=False)
 
       init_op = tf.global_variables_initializer()
       self._session = tf.Session()
@@ -475,67 +466,70 @@ class Seq2Seq(classifier.Classifier):
     return preds
 
 
-def create_simple_dataset(num_ts, dim=2, ts_len=5000, nc=4):
-  xs = []
-  ys = []
-  for _ in xrange(num_ts):
-    y = np.random.randint(nc, size=(ts_len, 1))
-    x = np.tile(y, [1, dim])
-    y = y.squeeze()
-
-    xs.append(x)
-    ys.append(y)
-
-  return xs, ys
-
-def create_counter_dataset(num_ts, ts_len=5000):
-  xs = []
-  ys = []
-  for _ in xrange(num_ts):
-    x = np.random.randint(2, size=(ts_len, 2))
-    y = [x[0].sum()]
-    for i in xrange(1, ts_len):
-      y.append(x[i-1:i+1].sum())
-
-    xs.append(x)
-    ys.append(np.array(y))
-
-  return xs, ys  
-
 def main():
-  num_classes = 4
-  num_features = 2
+  from synthetic import multimodal_systems as ms
 
-  hidden_size = 600
-  forget_bias = 0.5
+  num_in = 10
+  num_out = 10
+
+  use_sru = False
+  use_dynamic_rnn = False
+
+  hidden_size = 100
+  forget_bias = 0.0
   keep_prob = 1.0
   num_layers = 2
   init_scale = 0.1
-  max_grad_norm = 5
-  max_epochs = 5 ##
-  max_max_epochs = 15 ##
+  batch_size = 100
+  num_steps = 10
+  optimizer = "adam"
+  initializer = "xavier"
+  max_epochs = 5
+  max_max_epochs = 15
   init_lr = 1.0
   lr_decay = 0.9
-  batch_size = 20
-  num_steps = 10
-  verbose = True
+  max_grad_norm = 5.
+  
+  # init_scale,
+  summary_log_path="./log"
+  verbose=True
 
-  config = LSTMConfig(
-      num_classes=num_classes, num_features=num_features,
+  config = Seq2SeqConfig(
+      num_in=num_in, num_out=num_out, use_sru=use_sru, use_dynamic_rnn=use_dynamic_rnn,
       hidden_size=hidden_size, forget_bias=forget_bias, keep_prob=keep_prob,
-      num_layers=num_layers, init_scale=init_scale, max_grad_norm=max_grad_norm,
-      max_epochs=max_epochs, max_max_epochs=max_max_epochs, init_lr=init_lr,
-      lr_decay=lr_decay, batch_size=batch_size, num_steps=num_steps,
-      verbose=verbose)
+      num_layers=num_layers, batch_size=batch_size, num_steps=num_steps,
+      optimizer=optimizer, max_epochs=max_epochs, max_max_epochs=max_max_epochs,
+      init_lr=init_lr, lr_decay=lr_decay, max_grad_norm=max_grad_norm,
+      initializer=initializer, init_scale=init_scale,
+      summary_log_path=summary_log_path, verbose=verbose)
 
-  xs, ys = create_simple_dataset(100, num_features, 1000, num_classes)
-  # xs, ys = create_counter_dataset(100, 1000)
+  n = 100
+  T = 1000
+  D_latent = 10
+  D_obs1 = num_in
+  D_obs2 = num_out
+  save_file = "./log/sav_file.npz"
+  load_from_file = True
+
+  if load_from_file:
+    saved_data = np.load(save_file)
+    data = saved_data["data"]
+    C = saved_data["C"]
+  else:
+    data, C = ms.generate_LDS_data_with_two_observation_models(
+        n=n, T=T, D_latent=D_latent, D_obs1=D_obs1, D_obs2=D_obs2,
+        save_file=save_file)
+
+  xs = [d[0] for d in data]
+  ys = [d[1] for d in data]
   dset = dataset.TimeseriesDataset(xs, ys)
+
   dset_train, dset_valid, dset_test = dset.split([0.6, 0.2, 0.2])
+
+  s2s = Seq2Seq(config)
   IPython.embed()
 
-  lstm = LSTM(config)
-  lstm.fit(dset=dset_train, dset_v=dset_valid)
+  s2s.fit(dset=dset_train, dset_v=dset_valid)
   IPython.embed()
 
 if __name__ == "__main__":
