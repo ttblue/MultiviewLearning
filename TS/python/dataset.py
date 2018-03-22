@@ -8,7 +8,6 @@ class DatasetException(Exception):
 # Some utility functions
 def create_batches(x, y, batch_size, num_steps):
   data_len = x.shape[0]
-  y = np.atleast_2d(y)
   epoch_size = data_len // (batch_size * num_steps)
   if epoch_size == 0:
     raise DatasetException(
@@ -21,6 +20,7 @@ def create_batches(x, y, batch_size, num_steps):
   if y is None:
     y_batches = None
   else:
+    y = np.atleast_2d(y)
     y_batches = y[0:batch_size * num_steps * epoch_size].reshape(
         [batch_size, num_steps * epoch_size, y.shape[1]])
     y_batches.squeeze()

@@ -2,6 +2,7 @@
 
 from __future__ import division, print_function
 
+import os
 import sys
 import time
 
@@ -12,6 +13,8 @@ import tensorflow as tf
 
 import classifier
 import dataset
+
+import matplotlib.pyplot as plt
 
 import IPython
 
@@ -101,7 +104,7 @@ class Seq2SeqModel(object):
                self.config.num_in],
         name="x")
     self._y = tf.placeholder(
-        dtype=tf.int32,
+        dtype=data_type() ,
         shape=[self.config.batch_size, self.config.num_steps,
                self.config.num_out],
         name="y")
@@ -184,17 +187,28 @@ class Seq2SeqModel(object):
         tf.nn.xw_plus_b(output, self._softmax_w, self._softmax_b),
         [self.config.batch_size, self.config.num_steps, self.config.num_out])
 
-    self._loss = tf.contrib.seq2seq.sequence_loss(
-        self._logits, self._y,
-        tf.ones([self.config.batch_size, self.config.num_steps],
-                dtype=data_type()),
-        average_across_timesteps=False,
-        average_across_batch=True)
+    # IPython.embed()
+    # self._loss = tf.contrib.seq2seq.sequence_loss(
+    #     self._logits, self._y,
+    #     tf.ones([self.config.batch_size, self.config.num_steps],
+    #             dtype=data_type()),
+    #     average_across_timesteps=False, average_across_batch=True)
+    loss = 0
+    for i in xrange(self.config.num_out):
+      _y = tf.slice(self.y, [0, 0, i],
+                    [self.config.batch_size, self.config.num_steps, 1])
+      _Y = tf.slice(self._logits, [0, 0, i],
+                    [self.config.batch_size, self.config.num_steps, 1])
+      # for _y, _Y in zip(self._logits, self._y):
+       # Softmax loss
+      # loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(_y, _Y))
+      loss += tf.reduce_mean(tf.squared_difference(_y, _Y))
+    self._loss = loss
 
     self._cost = tf.reduce_sum(self._loss)
     self._final_state = state
 
-    self._error = tf.norm(tf.cast(self._logits - self._y), data_type())
+    self._error = tf.norm(tf.cast(self._logits - self._y, data_type()))
 
   def _setup_optimizer(self):
     self._lr = tf.Variable(0.0, trainable=False)
@@ -292,8 +306,6 @@ class Seq2Seq(classifier.Classifier):
     error = 0.
     tot_steps = 0.
     for ts_idx in xrange(dset.num_ts):
-      if self.config.verbose:
-        start_time = time.time()
 
       x_batches, y_batches = dset.get_ts_batches(
           self.config.batch_size, self.config.num_steps)
@@ -389,7 +401,8 @@ class Seq2Seq(classifier.Classifier):
 
     x, _ = dataset.create_batches(
         x, None, self.config.batch_size, self.config.num_steps)
-    pred = np.empty((self.config.batch_size, 0))
+    # pred = np.empty((self.config.batch_size, 0))
+    pred = np.empty((0, self.config.num_steps, self.config.num_out))
     epoch_size = len(x)
     for step in xrange(epoch_size):
       feed_dict = {}
@@ -399,9 +412,10 @@ class Seq2Seq(classifier.Classifier):
         feed_dict[h] = state[i].h
 
       step_pred = self._session.run(self._model._logits, feed_dict)
-      pred = np.c_[pred, step_pred]
+      pred = np.concatenate((pred, step_pred), axis=0)
+      # pred = np.c_[pred, step_pred]
 
-    return np.squeeze(np.reshape(pred, (-1, 1)))
+    return np.squeeze(np.reshape(pred, (-1, self.config.num_out)))
 
   def fit(self, xs=None, ys=None, dset=None, xs_v=None, ys_v=None, dset_v=None):
     if xs is None and dset is None:
@@ -461,16 +475,53 @@ class Seq2Seq(classifier.Classifier):
     num_ts = len(xs)
     preds = []
     for ts_idx in xrange(num_ts):
-      preds.append(self._predict_single_ts(xs[ts_idx]))
+      pred_idx = self._predict_single_ts(xs[ts_idx])
+      preds.append(pred_idx)
 
+    # IPython.embed()
     return preds
 
+
+def burst_plots(trs, ts1, ts2, max_rows=5):
+
+  nrows = np.minimum(max_rows, np.int(ts1.shape[1]/2))
+  f, axs = plt.subplots(nrows, 2)#, sharex='col', sharey='row')
+
+  for ch in xrange(nrows):
+    axs[ch][0].plot(ts1[:, 2 * ch], color='r')
+    axs[ch][0].plot(ts2[:, 2 * ch], color='b')
+    axs[ch][0].plot(trs[:, 2 * ch], color='g')
+    if ch == 0:
+      axs[ch][1].plot(ts1[:, 2 * ch + 1], color='r', label="Pred")
+      axs[ch][1].plot(ts2[:, 2 * ch + 1], color='b', label="True")
+      axs[ch][1].plot(trs[:, 2 * ch + 1], color='g', label="Source")
+      axs[ch][1].legend()
+    else:
+      axs[ch][1].plot(ts1[:, 2 * ch + 1], color='r')
+      axs[ch][1].plot(ts2[:, 2 * ch + 1], color='b')
+      axs[ch][1].plot(trs[:, 2 * ch + 1], color='g')
+
+  plt.legend()
+  plt.show()
+
+
+def single_channel_plots(trs, ts1, ts2, ch):
+
+  f, axs = plt.subplots(2, 1)#, sharex='col', sharey='row')
+  axs[0].plot(ts1[:, ch], color='r', label="Pred")
+  axs[0].plot(ts2[:, ch], color='b', label="True")
+  axs[0].legend()
+
+  axs[1].plot(trs[:, ch], color='g', label="Source")
+  axs[1].legend()
+
+  plt.show()
 
 def main():
   from synthetic import multimodal_systems as ms
 
-  num_in = 10
-  num_out = 10
+  num_in = 5
+  num_out = 5
 
   use_sru = False
   use_dynamic_rnn = False
@@ -484,15 +535,15 @@ def main():
   num_steps = 10
   optimizer = "adam"
   initializer = "xavier"
-  max_epochs = 5
-  max_max_epochs = 15
-  init_lr = 1.0
-  lr_decay = 0.9
+  max_epochs = 1000
+  max_max_epochs = 1000
+  init_lr = 0.0001
+  lr_decay = 1.0
   max_grad_norm = 5.
   
   # init_scale,
-  summary_log_path="./log"
-  verbose=True
+  summary_log_path = "./log/log_file.log"
+  verbose = True
 
   config = Seq2SeqConfig(
       num_in=num_in, num_out=num_out, use_sru=use_sru, use_dynamic_rnn=use_dynamic_rnn,
@@ -503,33 +554,71 @@ def main():
       initializer=initializer, init_scale=init_scale,
       summary_log_path=summary_log_path, verbose=verbose)
 
-  n = 100
+  # n = 100
+  # T = 1000
+  # D_latent = 10
+  # D_obs1 = num_in
+  # D_obs2 = num_out
+  # save_file = None #"./log/sav_file.npz"
+  # load_from_file = False
+  # load_from_file = False if not os.path.exists(save_file) else load_from_file
+
+  # if load_from_file:
+  #   saved_data = np.load(save_file)
+  #   data = saved_data["data"]
+  #   C = saved_data["C"]
+  #   print("Data loaded.")
+  # else:
+  #   data, C = ms.generate_LDS_data_with_two_observation_models(
+  #       n=n, T=T, D_latent=D_latent, D_obs1=D_obs1, D_obs2=D_obs2,
+  #       save_file=save_file)
+  #   print("Data generated.")
+
+  # xs = [d[0] for d in data]
+  # ys = [d[1] for d in data]
+  # dset = dataset.TimeseriesDataset(xs, ys)
+
+  # dset_train, dset_valid, dset_test = dset.split([0.6, 0.2, 0.2])
+
+  n_tr = 800
+  n_te = 200
   T = 1000
   D_latent = 10
   D_obs1 = num_in
   D_obs2 = num_out
-  save_file = "./log/sav_file.npz"
+  save_file = "./log/sav_file2.npz"
   load_from_file = True
+  load_from_file = False if not os.path.exists(save_file) else load_from_file
 
   if load_from_file:
     saved_data = np.load(save_file)
-    data = saved_data["data"]
+    data_tr = saved_data["data_tr"]
+    data_te = saved_data["data_te"]
     C = saved_data["C"]
+    print("Data loaded.")
   else:
-    data, C = ms.generate_LDS_data_with_two_observation_models(
-        n=n, T=T, D_latent=D_latent, D_obs1=D_obs1, D_obs2=D_obs2,
-        save_file=save_file)
+    data_tr, data_te, C = (
+        ms.generate_LDS_data_with_two_observation_models_train_test(
+            n_tr=n_tr, n_te=n_te, T=T, D_latent=D_latent, D_obs1=D_obs1,
+            D_obs2=D_obs2, save_file=save_file))
+    print("Data generated.")
 
-  xs = [d[0] for d in data]
-  ys = [d[1] for d in data]
-  dset = dataset.TimeseriesDataset(xs, ys)
+  xstr = [d[0] for d in data_tr]
+  ystr = [d[1] for d in data_tr]
+  dset_tr = dataset.TimeseriesDataset(xstr, ystr)
+  dset_train, dset_valid = dset_tr.split([0.6/0.8, 0.2/0.8])
 
-  dset_train, dset_valid, dset_test = dset.split([0.6, 0.2, 0.2])
+  xste = [d[0] for d in data_te]
+  yste = [d[1] for d in data_te]
+  dset_test = dataset.TimeseriesDataset(xste, yste)
 
+  # IPython.embed()
   s2s = Seq2Seq(config)
-  IPython.embed()
-
   s2s.fit(dset=dset_train, dset_v=dset_valid)
+  # IPython.embed()
+
+  ys_test = s2s.predict(dset_test.xs)
+  ys_true = dset_test.ys
   IPython.embed()
 
 if __name__ == "__main__":
