@@ -31,8 +31,8 @@ def data_type():
 class MalteseCrossConfig(classifier.Config):
 
   def __init__(self,
-               num_in,
-               num_out,
+               dim_A,
+               dim_B,
                use_sru,
                use_dynamic_rnn,
                hidden_size,
@@ -53,8 +53,8 @@ class MalteseCrossConfig(classifier.Config):
                summary_log_path=None,
                verbose=True):
 
-    self.num_in = num_in
-    self.num_out = num_out
+    self.dim_A = dim_A
+    self.dim_B = dim_B
 
     self.use_sru = use_sru
     self.use_dynamic_rnn = use_dynamic_rnn
@@ -109,32 +109,48 @@ def NNFeatureTransform(object):
     self.output = self.layers[-1].output
 
 
+class MalteseCross(object):
 
-class Seq2SeqModel(object):
-
-  def __init__(self, config, is_training):
-    self.config = config
+  def __init__(self, s2s_config, nn_configs, is_training):
+    self.config = s2s_config
+    self.nn_configs = nn_configs
     self.is_training = is_training
 
     # batch_size = input_.batch_size
     # num_steps = input_.num_steps
     # size = config.hidden_size
     # Create variable x, y
-    self._x = tf.placeholder(
+    self._xA = tf.placeholder(
         dtype=data_type(),
         shape=[self.config.batch_size, self.config.num_steps,
-               self.config.num_in],
-        name="x")
-    self._y = tf.placeholder(
+               self.config.dim_A],
+        name="xA")
+    self._xB = tf.placeholder(
         dtype=data_type() ,
         shape=[self.config.batch_size, self.config.num_steps,
-               self.config.num_out],
-        name="y")
+               self.config.dim_B],
+        name="xB")
 
+    self._create_AE_NN()
     self._setup_cell()
     self._setup_output()
     if is_training:
       self._setup_optimizer()
+
+
+  def _create_AE_NN(self):
+    # Create encoder and decoder for stream A
+    self._encoder_A = NNFeatureTransform(self.nn_configs["A"]["encoder"])
+    self._decoder_A = NNFeatureTransform(self.nn_configs["A"]["decoder"])
+    self._inputA = self._encoder_A.output
+    self._outputA = self._decoder_A.output
+
+    # Create encoder and decoder for stream B
+    self._encoder_B = NNFeatureTransform(self.nn_configs["B"]["encoder"])
+    self._decoder_B = NNFeatureTransform(self.nn_configs["B"]["decoder"])
+    self._inputB = self._encoder_B.output
+    self._outputB = self._decoder_B.output
+
 
   def _lstm_cell(self):
     # Can be replaced with a different cell
