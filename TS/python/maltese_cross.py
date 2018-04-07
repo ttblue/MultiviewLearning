@@ -131,26 +131,24 @@ class MalteseCross(object):
                self.config.dim_B],
         name="xB")
 
-    self._create_AE_NN()
+    self._create_encoder_NN()
     self._setup_cell()
     self._setup_output()
     if is_training:
       self._setup_optimizer()
 
+  def _create_encoder_NN(self):
 
-  def _create_AE_NN(self):
-    # Create encoder and decoder for stream A
-    self._encoder_A = NNFeatureTransform(self.nn_configs["A"]["encoder"])
-    self._decoder_A = NNFeatureTransform(self.nn_configs["A"]["decoder"])
-    self._inputA = self._encoder_A.output
-    self._outputA = self._decoder_A.output
+    with tf.variable_scope("Encoder"):
+      # Switch variables for relevant stream input
+      self._use_inputA = tf.Variable(0.0, trainable=False, name="inputA")
+      self._use_inputB = tf.Variable(0.0, trainable=False, name="inputB")
 
-    # Create encoder and decoder for stream B
-    self._encoder_B = NNFeatureTransform(self.nn_configs["B"]["encoder"])
-    self._decoder_B = NNFeatureTransform(self.nn_configs["B"]["decoder"])
-    self._inputB = self._encoder_B.output
-    self._outputB = self._decoder_B.output
-
+      # Create encoders for stream A and B
+      self._encoderA = NNFeatureTransform(
+          self._xA, self.nn_configs["A"]["encoder"])
+      self._encoderB = NNFeatureTransform(
+          self._xB, self.nn_configs["B"]["encoder"])
 
   def _lstm_cell(self):
     # Can be replaced with a different cell
@@ -183,47 +181,63 @@ class MalteseCross(object):
         self.config.batch_size, data_type())
 
     with tf.device("/cpu:0"):
+      self._inputA = self._encoderA.output
+      self._inputB = self._encoderB.output
       if self.is_training and self.config.keep_prob < 1:
-        self._inputs = tf.nn.dropout(self._x, self.config.keep_prob)
-      else:
-        self._inputs = self._x
+        self._inputA = tf.nn.dropout(self._inputA, self.config.keep_prob)
+        self._inputB = tf.nn.dropout(self._inputB, self.config.keep_prob)
 
-  def _setup_output(self):
+  def _setup_RNN_output(self):
     # inputs = tf.unstack(inputs, num=num_steps, axis=1)
     # outputs, state = tf.nn.rnn(cell, inputs,
     #                            initial_state=self._initial_state)
    #  IPython.embed()
-    with tf.variable_scope("LSTM"):
+    with tf.variable_scope("LSTM") as scope:
       if self.config.use_dynamic_rnn or self.config.use_sru:
-        outputs, state = tf.nn.dynamic_rnn(
-            self._cell, self._inputs, initial_state=self._initial_state)
+        outputA, stateA = tf.nn.dynamic_rnn(
+            self._cell, self._inputA, initial_state=self._initial_state)
+        scope.reuse_variables()
+        outputB, stateB = tf.nn.dynamic_rnn(
+          self._cell, self._inputB, initial_state=self._initial_state)
       else:
-        inputs = tf.unstack(self._inputs, num=self.config.num_steps, axis=1)
-        outputs, state = tf.contrib.rnn.static_rnn(
+        inputs = tf.unstack(self._inputA, num=self.config.num_steps, axis=1)
+        outputA, stateA = tf.contrib.rnn.static_rnn(
             self._cell, inputs, initial_state=self._initial_state)
-    # IPython.embed()
-    # outputs = []
-    # state = self._initial_state
-    # with tf.variable_scope("LSTM"):
-    #   for time_step in range(num_steps):
-    #     if time_step > 0: tf.get_variable_scope().reuse_variables()
-    #     (cell_output, state) = cell(inputs[:, time_step, :], state)
-    #     outputs.append(cell_output)
-    # IPython.embed()
+        scope.reuse_variables()
+        inputs = tf.unstack(self._inputB, num=self.config.num_steps, axis=1)
+        outputB, stateB = tf.contrib.rnn.static_rnn(
+            self._cell, inputs, initial_state=self._initial_state)
 
-    output = tf.reshape(tf.concat(outputs, 1), [-1, self.config.hidden_size])
+    self._RNN_outputA = tf.reshape(
+        tf.concat(outputA, 1), [-1, self.config.hidden_size])
+    self._final_stateA = stateA
+    self._RNN_outputB = tf.reshape(
+        tf.concat(outputB, 1), [-1, self.config.hidden_size])
+    self._final_stateB = stateB
+
+  def _setup_decoder_NN(self):
+    # Create decoders for stream A and B
+    self._decoderA = NNFeatureTransform(
+        self._RNN_outputA, self.nn_configs["A"]["decoder"])
+    self._decoderB = NNFeatureTransform(
+        self._RNN_outputB, self.nn_configs["B"]["decoder"])
+
+    self._outputA = self._decoderA.output
+    self._outputB = self._decoderB.output
+
+  def _setup_losses(self):
     # output = tf.stack(outputs, 1)
     # import IPython
     # print(output.get_shape())
     # print(len(outputs))
-    self._softmax_w = tf.get_variable(
-        "softmax_w", [self.config.hidden_size, self.config.num_out],
-        dtype=data_type())
-    self._softmax_b = tf.get_variable(
-        "softmax_b", [self.config.num_out], dtype=data_type())
-    self._logits = tf.reshape(
-        tf.nn.xw_plus_b(output, self._softmax_w, self._softmax_b),
-        [self.config.batch_size, self.config.num_steps, self.config.num_out])
+    # self._softmax_w = tf.get_variable(
+    #     "softmax_w", [self.config.hidden_size, self.config.num_out],
+    #     dtype=data_type())
+    # self._softmax_b = tf.get_variable(
+    #     "softmax_b", [self.config.num_out], dtype=data_type())
+    # self._logits = tf.reshape(
+    #     tf.nn.xw_plus_b(output, self._softmax_w, self._softmax_b),
+    #     [self.config.batch_size, self.config.num_steps, self.config.num_out])
 
     # IPython.embed()
     # self._loss = tf.contrib.seq2seq.sequence_loss(
@@ -231,6 +245,8 @@ class MalteseCross(object):
     #     tf.ones([self.config.batch_size, self.config.num_steps],
     #             dtype=data_type()),
     #     average_across_timesteps=False, average_across_batch=True)
+
+    # Train over two separate loss functions
     loss = 0
     for i in xrange(self.config.num_out):
       _y = tf.slice(self.y, [0, 0, i],
@@ -244,7 +260,6 @@ class MalteseCross(object):
     self._loss = loss
 
     self._cost = tf.reduce_sum(self._loss)
-    self._final_state = state
 
     self._error = tf.norm(tf.cast(self._logits - self._y, data_type()))
 
