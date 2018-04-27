@@ -7,14 +7,19 @@ import synthetic.lorenz as lorenz
 
 import IPython
 
-# Steps:
-# 1. Generate two coupled systems which are asynchronous
-# 2. Learn:
-#   a. Transformation from each system to latent space
-#   b. Dynamical system in the latent space
-# 3. Predict: One stream given the other
 
-d = False
+def compute_td_embedding(X, tau, d):
+  X = np.squeeze(X)
+  if len(X.shape) > 1:
+    raise ValueError("Input must be 1-D.")
+
+  n = X.shape[0]
+  X_td = np.empty((n - (d - 1) * tau, 0))
+  for i in xrange(d):
+    X_td = np.c_[X_td, X[i * tau: n - (d - i - 1) * tau]]
+
+  return X_td
+
 
 def synchronization_test (ts1, ts2, n=20):
   # Assuming the TS are already in phase-space or embedded form
@@ -65,21 +70,7 @@ def synchronization_test (ts1, ts2, n=20):
   return r1, r2
 
 
-def compute_td_embedding(X, tau, d):
-  X = np.squeeze(X)
-  if len(X.shape) > 1:
-    raise ValueError("Input must be 1-D.")
-
-  n = X.shape[0]
-  X_td = np.empty((n - (d - 1) * tau, 0))
-  for i in xrange(d):
-    X_td = np.c_[X_td, X[i * tau: n - (d - i - 1) * tau]]
-
-  return X_td
-
-
 def find_sync_distance(ts1, ts2, tau, ntau, n_check=20, max_ndt=30):
-  global d
   # Probably should be different taus/ntaus?
   # Maybe implement the second metric robust to ntau
   ts1_td = compute_td_embedding(ts1, tau, ntau)
@@ -92,8 +83,6 @@ def find_sync_distance(ts1, ts2, tau, ntau, n_check=20, max_ndt=30):
     ts1_check = ts1_td[dt:] if dt > 0 else ts1_td
     ts2_check = ts2_td[-dt:] if dt < 0 else ts2_td
 
-    # d = True if dt == 0 else False
-    print(dt)
     r1, r2 = synchronization_test(ts1_check, ts2_check, n_check)
     r = (r1 + r2) / 2.
     r = r if r >= 1 else 1. / r
