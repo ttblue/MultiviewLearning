@@ -15,7 +15,7 @@ def compute_td_embedding(X, tau, d):
 
   n = X.shape[0]
   X_td = np.empty((n - (d - 1) * tau, 0))
-  for i in xrange(d):
+  for i in range(d):
     X_td = np.c_[X_td, X[i * tau: n - (d - i - 1) * tau]]
 
   return X_td

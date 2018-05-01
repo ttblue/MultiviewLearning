@@ -1,5 +1,5 @@
 from __future__ import division, print_function
-import cPickle
+import _pickle as cPickle
 import numpy as np, numpy.random as nr, numpy.linalg as nlg
 
 
@@ -44,10 +44,9 @@ class GaussianRandomFeatures:
   def computeRandomFeatures (self, f):
     """
     Projects onto fourier feature space.
-    
+
     Assumes that f is n x r.
     """
-
     f = np.atleast_2d(f)
     if self.sine:
       rf_cos = np.cos(self.ws.dot(f.T))*np.sqrt(1/self.rn)
