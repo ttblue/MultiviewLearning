@@ -3,7 +3,7 @@ import sklearn.neighbors as sn
 
 import matplotlib.pyplot as plt
 
-import synthetic.lorenz as lorenz
+import synthetic.simple_systems as ss
 
 import IPython
 
@@ -101,7 +101,7 @@ if __name__ == "__main__":
   istart = 0
   tmax = 100
   nt = 10000 + istart
-  x, y, z = lorenz.generate_lorenz_attractor(tmax, nt)
+  x, y, z = ss.generate_lorenz_system(tmax, nt)
 
   tau = 10
   ntau = 3

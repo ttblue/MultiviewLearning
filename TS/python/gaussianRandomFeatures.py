@@ -83,11 +83,11 @@ class GaussianRandomFeatures:
             'sine': self.sine,
             'ws': self.ws,
             'bs': self.bs}
-    with open(fl, 'w') as fh:
+    with open(fl, 'wb') as fh:
       cPickle.dump(data, fh)
 
   def LoadFromFile(self, fl):
-    with open(fl, 'r') as fh:
+    with open(fl, 'rb') as fh:
       data = cPickle.load(fh)
     self.dim = data['dim']
     self.rn = data['rn']
