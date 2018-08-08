@@ -89,7 +89,7 @@ class TripleBasisEstimator(object):
            for xvals, yvals in Q_dset])
 
     I = np.eye(Z.shape[1])
-    self._Psi = np.linalg.inv(Z.T.dot(Z) + self.lm * I).dot(Z).dot(Av)
+    self._Psi = np.linalg.inv(Z.T.dot(Z) + self.lm * I).dot(Z.T).dot(Av)
 
   def fit(self, P_dset, Q_dset):
     # P_dset, Q_dset are two datasets, each being a list of sets of samples:

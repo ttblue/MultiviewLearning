@@ -26,20 +26,22 @@ class GaussianRandomFeatures:
     """
     Generate coefficients for GFF.
     """
-    self.ws = []
-    self.bs = []  # Unused if self.sine is True.
+    # self.ws = []
+    # self.bs = []  # Unused if self.sine is True.
     mean = np.zeros(self.dim)
-    cov = np.eye(self.dim)*(2*self.gammak)
+    cov = np.eye(self.dim) * (2 * self.gammak)
 
-    if self.sine:
-      for _ in range(self.rn):
-        self.ws.append(nr.multivariate_normal(mean, cov))
-    else:
-      for _ in range(self.rn):
-        self.ws.append(nr.multivariate_normal(mean, cov))
-        self.bs.append(nr.uniform(0.0, 2*np.pi))
-      self.bs = np.array(self.bs)
-    self.ws = np.array(self.ws)
+    self.ws = nr.multivariate_normal(mean, cov, size=(self.rn, ))
+    self.bs = None if self.sine else nr.uniform(0.0, 2 * np.pi, size=(self.rn,))
+    # if self.sine:
+      # for _ in range(self.rn):
+      #   self.ws.append(nr.multivariate_normal(mean, cov))
+    # else:
+      # for _ in range(self.rn):
+      #   self.ws.append(nr.multivariate_normal(mean, cov))
+      #   self.bs.append(nr.uniform(0.0, 2*np.pi))
+    #   self.bs = np.array(self.bs)
+    # self.ws = np.array(self.ws)
 
   def computeRandomFeatures (self, f):
     """
