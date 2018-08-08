@@ -32,6 +32,9 @@ torch.set_default_dtype(torch.float64)
 _RCOND = 1e-10
 
 
+raise Exception("Fix this file with new stuff.")
+
+
 def pairwise_sqeuclidean(x, y=None):
     """
     Input: 
@@ -121,7 +124,7 @@ class NNTransformLearner(nn.Module):
       # Assuming it is numpy array
       y0 = torch.from_numpy(y0)
     y0.requires_grad_(False)
-    if use_tf: 
+    if use_tf:
       y0 = self._transform_pts(y0)
 
     y_pred = [y0.unsqueeze(0)]

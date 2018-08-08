@@ -32,6 +32,16 @@ def generate_simple_harmonic_oscillator(tmax, nt, x0=0., d1x0=1., w=1.):
   return f.T
 
 
+def diff_freq_sinusoids(tmax, nt, w1=1.0, w2=2.0):
+  ts = np.linspace(0, tmax, nt)
+  x1 = np.atleast_2d(2 * np.pi * ts * w1)
+  x2 = np.atleast_2d(2 * np.pi * ts * w2)
+  x = np.r_[x1, x2]
+  f = np.sin(x)
+
+  return f.T
+
+
 if __name__ == "__main__":
   import matplotlib.pyplot as plt
 

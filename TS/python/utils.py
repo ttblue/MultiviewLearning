@@ -7,8 +7,10 @@ import sys
 import xlrd
 
 import numpy as np
+import torch
 
 import subprocess
+
 
 class UtilsException(Exception):
   pass
@@ -313,6 +315,10 @@ def get_size(obj, seen=None):
         size += sum([get_size(i, seen) for i in obj])
     return size
 
+
+def numpify(X):
+  # Convert from torch to numpy
+  return X.detach().numpy()
 
 # if __name__ == '__main__':
 #   import IPython
