@@ -18,7 +18,7 @@ class TripleBasisEstimator(object):
 
   def __init__(
     self, input_basis, output_basis, basis, fgen_args, reg=None, reg_options={},
-    rcond=1e-6, verbose=True):
+    rcond=1e-10, verbose=True):
     # input and output basis variables are indices for the basis_func
     # basis needs to have a project function which takes x, y and inds
     # fgen_args is the list of arguments to the random feature generator
@@ -87,9 +87,15 @@ class TripleBasisEstimator(object):
       Av = np.atleast_2d(
           [self.basis.project(xvals, yvals, self.output_inds)
            for xvals, yvals in Q_dset])
+    # bad for memory but good for testing:
+    self._Z = Z
+    self._Av = Av
+    self.compute_psi()
 
+  def compute_psi(self):
+    Z = self._Z
     I = np.eye(Z.shape[1])
-    self._Psi = np.linalg.inv(Z.T.dot(Z) + self.lm * I).dot(Z.T).dot(Av)
+    self._Psi = np.linalg.inv(Z.T.dot(Z) + self.lm * I).dot(Z.T).dot(self._Av)
 
   def fit(self, P_dset, Q_dset):
     # P_dset, Q_dset are two datasets, each being a list of sets of samples:

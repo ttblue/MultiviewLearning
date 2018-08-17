@@ -12,11 +12,11 @@ def lorenz_deriv(V, t, s=10, r=28, b=2.667):
 
 
 def generate_lorenz_system(
-    tmax, nt, x0=0., y0=1., z0=1.05, s=10, r=28, b=2.667):
+    tmax, nt, x0=0., y0=1., z0=1.05, s=10, r=28, b=2.667, sig=0.01):
 
   ts = np.linspace(0, tmax, nt)
   f = si.odeint(lorenz_deriv, (x0, y0, z0), ts, args=(s, r, b))
-  return f.T
+  return f.T + sig * np.random.randn(*f.T.shape)
 
 
 # Simple harmonic oscillator

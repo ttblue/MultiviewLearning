@@ -118,3 +118,18 @@ def guess_best_transform(pts1, pts2):
   R, t = RT1_to_2[:dim, :dim], RT1_to_2[:dim, -1]
 
   return R, t
+
+
+def CM(dim):
+  # centering matrix
+  return np.eye(dim) - 1. / dim * np.ones((dim, dim))
+
+
+def center_matrix(X):
+  X = np.atleast_2d(X)
+  return X - X.mean(0)
+
+
+def center_gram_matrix(G):
+  H = CM(G.shape[0])
+  return H.dot(G).dot(H)

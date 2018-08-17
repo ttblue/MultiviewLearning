@@ -55,10 +55,10 @@ class SinusoidalBasis(FunctionBasis):
     # to evaluate all points at.
     # eval_all: Flag to evaluate every basis at every point 
 
-    xvals = np.asarray(xvals)
+    xvals = np.atleast_2d(xvals)
     inds = np.asarray(inds)
     n, d = xvals.shape
-    m, _ = inds.shape
+    m = inds.shape[0]
 
     if not eval_all and m != n:
       raise TypeError("Basis function indices and data don't match.")
@@ -80,14 +80,28 @@ class SinusoidalBasis(FunctionBasis):
 
     return phix
 
+  def eval_func(self, xvals, inds, pcoeffs):
+    phix = self.eval_basis(xvals, inds, eval_all=True)
+    return phix.dot(pcoeffs)
+
   def _get_single_coeff(self, xvals, fvals, kidx):
+    # TODO: Replace with linear regression
     n, d = xvals.shape
     kidx = np.atleast_2d(kidx)
     phix = self.eval_basis(xvals, kidx, eval_all=True)
     return phix.dot(fvals) / n
 
   def project(self, xvals, fvals, inds):
-    xvals = np.asarray(xvals)
-    fvals = np.asarray(fvals).squeeze()
+    xvals = np.squeeze(xvals)
+    if len(xvals.shape) == 1:
+      xvals = xvals.reshape(-1, 1)
+    fvals = fvals.reshape(-1, 1)
     bevals = self.eval_basis(xvals, inds, eval_all=True)
-    return bevals.T.dot(fvals) / fvals.shape[0]
+    # Replaced w/ linear regression
+    # IPython.embed()
+    return np.linalg.pinv(bevals).dot(fvals).squeeze()
+    # return bevals.T.dot(fvals) / fvals.shape[0]
+
+  def func_approximation(self, xvals, fvals, inds):
+    pcoeffs = self.project(xvals, fvals, inds)
+    return self.eval_func(xvals, inds, pcoeffs)
