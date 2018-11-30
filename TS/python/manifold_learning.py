@@ -7,9 +7,13 @@ import sklearn.utils.extmath as sue
 import tfm_utils as tu
 
 
-def rbf_gmatrix(xs, ys=None, gamma=1.0):
+def rbf_gmatrix(xs, ys=None, gamma=1.0, **kwargs):
   dis = ssd.squareform(ssd.pdist(xs)) if ys is None else ssd.cdist(xs, ys)
   return np.exp(-gamma * (dis ** 2))
+
+
+def linear_gmatrix(xs, ys=None, **kwargs):
+  return xs.dot(ys.T) if ys is not None else xs.dot(xs.T)
 
 
 def laplacian_eigenmaps(
@@ -37,11 +41,15 @@ def laplacian_eigenmaps(
 
 
 def instrumental_eigenmaps(
-    xs, ys, e_dims=10, gmatrix_type="rbf", gmatrix_params={"gamma": 1.0}):
+    xs, ys, e_dims=10, gmatrix_type="rbf", gmatrix_params={"gamma": 1.0},
+    standardize=True, rtn_svals=True):
     # TODO: maybe have different gmatrix params for xs and ys?
   if gmatrix_type == "rbf":
     Gx = rbf_gmatrix(xs, gamma=gmatrix_params["gamma"])
     Gy = rbf_gmatrix(ys, gamma=gmatrix_params["gamma"])
+  elif gmatrix_type == "linear":
+    Gx = linear_gmatrix(xs)
+    Gy = linear_gmatrix(ys)
   else:
     raise NotImplementedError("%s gram matrix not available." % gmatrix_type)
 
@@ -50,8 +58,7 @@ def instrumental_eigenmaps(
 
   U, S, VT = sue.randomized_svd(
       Cx.dot(Cy), n_components=e_dims, random_state=None)
-  sqrt_S = np.diag(np.sqrt(S))
-  Ex = U.dot(sqrt_S)
-  Ey = VT.T.dot(sqrt_S)
+  sqrt_Sinv = np.diag(np.sqrt(1. / S))
+  Ex, Ey = (U.dot(sqrt_Sinv), VT.T.dot(sqrt_Sinv)) if standardize else (U, VT.T)
 
-  return Ex, Ey
+  return (Ex, Ey, S) if rtn_svals else (Ex, Ey)

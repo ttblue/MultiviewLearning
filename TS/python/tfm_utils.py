@@ -2,6 +2,13 @@
 import numpy as np
 
 
+def column_vectorize(B):
+  B = np.squeeze(B)
+  if len(B.shape) == 1:
+    B = B.reshape(-1, 1)
+  return B
+
+
 def make_homogeneous_tfm(R, t, dtype=np.float64):
   d = R.shape[0]
   t = np.atleast_2d(t).T
@@ -133,3 +140,38 @@ def center_matrix(X):
 def center_gram_matrix(G):
   H = CM(G.shape[0])
   return H.dot(G).dot(H)
+
+def project_onto_basis(v, B):
+  # Assumes basis vectors are orthogonal to each other
+  v = np.squeeze(v)
+  B = column_vectorize(B)
+  Bn = np.linalg.norm(B, axis=0)
+  return B.T.dot(v) / Bn
+
+
+def get_independent_component(v, B, normalize=False):
+  # Assumes basis vectors are orthogonal to each other
+  v = np.squeeze(v)
+
+  if B.size == 0:  # If no basis is provided, return original vector
+    vi = v
+  else:
+    B = column_vectorize(B)
+    pr = project_onto_basis(v, B)
+    vi = v - B.dot(pr)
+
+  if normalize:
+    vi = vi / np.linalg.norm(vi)
+
+  return vi
+
+
+def gram_schmidt(B):
+  B = column_vectorize(B)
+  B = B / np.linalg.norm(B, axis=0)
+
+  Bgs = B[:, 0].reshape(-1, 1)
+  for i in range(1, B.shape[1]):
+    Bgs = np.c_[Bgs, get_independent_component(B[:, i], Bgs, normalize=True)]
+
+  return Bgs

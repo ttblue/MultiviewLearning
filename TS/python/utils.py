@@ -1,6 +1,7 @@
 # Utility functions for processing data and such.
 import csv
 import glob
+import numpy as np
 import os
 import re
 import sys
@@ -14,6 +15,20 @@ import subprocess
 
 class UtilsException(Exception):
   pass
+
+
+def split_data(xs, n=10, split_inds=None):
+  xs = np.array(xs)
+
+  if split_inds is None:
+    split_inds = np.linspace(0, xs.shape[0], n + 1).astype(int)
+  else:
+    split_inds = np.array(split_inds)
+  start = split_inds[:-1]
+  end = split_inds[1:]
+
+  split_xs = [xs[idx[0]:idx[1]]for idx in zip(start, end)]
+  return split_xs, split_inds
 
 
 def file_len(fname):
