@@ -1,4 +1,4 @@
-# Autoencoder for multi-view + synchronous
+# (Variational) Autoencoder for multi-view + synchronous
 import itertools
 import numpy as np
 import torch
@@ -7,54 +7,10 @@ from torch import nn
 from torch import optim
 import time
 
+import torch_utils as tu
+from torch_utils import _DTYPE, _TENSOR_FUNC
+
 import IPython
-
-
-_DTYPE = torch.float32
-_TENSOR_FUNC = torch.FloatTensor
-torch.set_default_dtype(_DTYPE)
-
-
-class EDConfig(object):
-  def __init__(
-      self, input_size, output_size, layer_units, is_encoder, activation,
-      last_activation):
-
-    self.input_size = input_size
-    self.output_size = output_size
-    self.layer_units = layer_units
-    self.is_encoder = is_encoder
-    self.activation = activation
-    self.last_activation = last_activation
-
-
-class EncoderDecoder(nn.Module):
-  def __init__(self, config):
-    super(EncoderDecoder, self).__init__()
-    self.config = config
-    self._activation = self.config.activation
-    self._last_activation = self.config.last_activation
-    self._setup_layers()
-
-  def _setup_layers(self):
-    layer_units = [self.config.input_size] + self.config.layer_units
-    self._layers = [
-        nn.Linear(layer_units[i], layer_units[i + 1])
-        for i in range(len(layer_units) - 1)]
-
-    self._mu = nn.Linear(layer_units[-1], self.config.output_size)
-    if self.config.is_encoder:
-      self._logvar = nn.Linear(layer_units[-1], self.config.output_size)
-
-  def forward(self, x):
-    x_c = x
-#     IPython.embed()
-    for layer in self._layers:
-      x_c = self._activation(layer(x_c))
-    if self.config.is_encoder:
-      return self._mu(x_c), self._logvar(x_c)
-    else:
-      return self._last_activation(self._mu(x_c))
 
 
 class MAEConfig(object):
@@ -81,31 +37,31 @@ def default_MAE_Config(v_sizes):
   # Default Encoder config:
   output_size = code_size
   layer_units = [50, 20]
-  is_encoder = True
+  use_var = True
   activation = nn.functional.relu
   last_activation = None
   encoder_params = {
-      i: EDConfig(
+      i: tu.MNNConfig(
           input_size=v_sizes[i],
           output_size=output_size,
           layer_units=layer_units,
-          is_encoder=is_encoder,
           activation=activation,
-          last_activation=last_activation)
+          last_activation=last_activation,
+          use_var=use_var)
       for i in range(n_views)
   }
 
   input_size = code_size
-  is_encoder = False
+  use_var = False
   last_activation = nn.sigmoid
   decoder_params = {
-      i: EDConfig(
+      i: tu.MNNConfig(
           input_size=input_size,
           output_size=v_sizes[i],
           layer_units=layer_units,
-          is_encoder=is_encoder,
           activation=activation,
-          last_activation=last_activation)
+          last_activation=last_activation,
+          use_var=use_var)
       for i in range(n_views)
   }
 
@@ -145,17 +101,16 @@ class MultiAutoEncoder(nn.Module):
     self._en_layers = {}
     self._de_layers = {}
 
-    for vidx in range(self._n_views):
-      self._en_layers[vidx] = EncoderDecoder(self.config.encoder_params[vidx])
-      self._de_layers[vidx] = EncoderDecoder(self.config.decoder_params[vidx])
+    # Need to call "add_module" so the parameters are found.
+    def set_value(vdict, key, name, value):
+      self.add_module(name, value)
+      vdict[key] = value
 
-  def parameters(self):
-    params = super(MultiAutoEncoder, self).parameters()
-    enc_params = itertools.chain(
-        *[self._en_layers[vidx].parameters() for vidx in range(self._n_views)])
-    dec_params = itertools.chain(
-        *[self._de_layers[vidx].parameters() for vidx in range(self._n_views)])
-    return itertools.chain(params, enc_params, dec_params)
+    for vi in range(self._n_views):
+      set_value(self._en_layers, vi, "en_%i" % vi,
+                tu.MultiLayerNN(self.config.encoder_params[vi]))
+      set_value(self._de_layers, vi, "de_%i" % vi,
+                tu.MultiLayerNN(self.config.decoder_params[vi]))
 
   def _split_views(self, x, rtn_torch=True):
     if isinstance(x, torch.Tensor):
@@ -168,31 +123,34 @@ class MultiAutoEncoder(nn.Module):
           torch.from_numpy(v).type(_DTYPE).requires_grad_(False)
           for v in x_v
       ]
-
     return x_v
 
-  def _encode_view(self, xv, vidx):
-    return self._en_layers[vidx](xv)
+  def _encode_view(self, xv, vi):
+    return self._en_layers[vi](xv)
 
   def encode(self, x):
     xvs = self._split_views(x, rtn_torch=True)
-    codes = [self._encode_view(xv, vidx) for vidx, xv in enumerate(xvs)]
+    codes = [self._encode_view(xv, vi) for vi, xv in enumerate(xvs)]
     return codes
 
-  def _sample_codes(self, mu, logvar, noise_coeff=0.0):
+  def _sample_codes(self, mu, logvar, noise_coeff=0.5):
     # Add noise to code formed for robustness of reconstruction
     err = _TENSOR_FUNC(logvar.size()).normal_()
     codes = torch.autograd.Variable(err)
-    std = (noise_coeff * logvar).exp_()
-    return codes.mul(std).add_(mu)
+    var = (noise_coeff * logvar).exp_()
+    return codes.mul(var).add_(mu)
 
-  def _decode_view(self, z, vidx):
-    return self._de_layers[vidx](z)
+  def _decode_view(self, z, vi):
+    return self._de_layers[vi](z)
 
   def decode(self, z, vi_out=None):
     # Not assuming tied weights yet
     vi_out = range(self._n_views) if vi_out is None else vi_out
-    recons = [self._decode_view(z, vidx) for vidx in vi_out]
+    # Check if it's a single view 
+    if isinstance(vi_out, int):
+      return self._decode_view(z, vi_out)
+
+    recons = [self._decode_view(z, vi) for vi in vi_out]
     return recons
 
   def forward(self, x):
@@ -206,8 +164,8 @@ class MultiAutoEncoder(nn.Module):
 
     # This is, for every encoded view, the reconstruction of every view
     recons = {}
-    for vidx in range(self._n_views):
-      recons[vidx] = self.decode(sampled_zs[vidx])
+    for vi in range(self._n_views):
+      recons[vi] = self.decode(sampled_zs[vi])
 
     return zs, recons
 
@@ -215,9 +173,9 @@ class MultiAutoEncoder(nn.Module):
     xv = self._split_views(x, rtn_torch=True)
 
     obj = 0.
-    for vidx in recons:
+    for vi in recons:
       for ridx in range(self._n_views):
-        obj += self.recon_criterion(xv[ridx], recons[vidx][ridx])
+        obj += self.recon_criterion(xv[ridx], recons[vi][ridx])
 
     # Additional loss based on the encoding:
     # Maybe explicitly force the encodings to be similar

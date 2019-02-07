@@ -10,6 +10,8 @@ import xlrd
 import numpy as np
 import torch
 
+import IPython
+
 import subprocess
 
 
@@ -17,18 +19,80 @@ class UtilsException(Exception):
   pass
 
 
-def split_data(xs, n=10, split_inds=None):
-  xs = np.array(xs)
+def flatten(lsts):
+  return [i for l in lsts for i in l]
+
+
+def split_data(xs, n=10, split_inds=None, const_len=False):
+  n_pts = len(xs) if isinstance(xs, list) else xs.shape[0]
+  # n_pts = xs.shape[0]
 
   if split_inds is None:
-    split_inds = np.linspace(0, xs.shape[0], n + 1).astype(int)
+    stride = int(np.ceil(n_pts / n ))
+    split_inds = [i * stride for i in range(n + 1)]
+    if const_len and split_inds[-1] > n_pts:
+      split_inds = split_inds[:-1]
   else:
+    # If we get split inds, ignore constant length
+    const_len = False
     split_inds = np.array(split_inds)
   start = split_inds[:-1]
   end = split_inds[1:]
 
-  split_xs = [xs[idx[0]:idx[1]]for idx in zip(start, end)]
+  split_xs = [xs[idx[0]:idx[1]] for idx in zip(start, end)]
+  # Only the last element will have different len
+  # if const_len and split_xs[-1].shape[0] != split_xs[0].shape:
+  #   split_xs, split_inds = split_xs[:-1], split_inds[:-1]
   return split_xs, split_inds
+
+
+def split_single_ts(tx, n_length, ignore_end=False):
+  # tx: n_length x n_features time series
+  # This returns tx split into segments of size n_length
+  # If ignore_end is True, the last segment (if < n_length in length) will be
+  # ignored. Otherwise, the appropriate elements of the second last segment are
+  # pre-pended so as to make it the right length.
+  n_t = tx.shape[0]
+  if n_t < n_length:
+    return np.expand_dims(tx, axis=0)
+
+  n_ts = int(np.ceil(n_t / n_length))
+  split_inds = np.arange(1, n_ts).astype(int) * n_length
+  split_array = np.array_split(tx, split_inds)
+
+  if split_array[-1].shape[0] < n_length:
+    if ignore_end:
+      del split_array[-1]
+    else:
+      last_tx = split_array[-1]
+      lt_len = last_tx.shape[0]
+      d_len = n_length - lt_len
+      last_tx = np.r_[split_array[-2][-d_len:], last_tx]
+      split_array[-1] = last_tx
+
+  return np.array(split_array)
+
+
+def split_txs_into_length(txs, n_length, ignore_end=False, shuffle=False):
+  if not isinstance(txs[0], np.ndarray):
+    txs = [np.array(tx) for tx in txs]
+
+  all_txs = []
+  all_inds = []
+  for i, tx in enumerate(txs):
+    split_tx = split_single_ts(tx, n_length, ignore_end)
+    all_txs.append(split_tx)
+    all_inds += [i] * split_tx.shape[0]
+
+  all_txs = np.concatenate(all_txs, axis=0)
+  all_inds = np.array(all_inds)
+
+  if shuffle:
+    r_inds = np.random.permutation(all_inds.shape[0])
+    all_txs = all_txs[r_inds]
+    all_inds = all_inds[r_inds]
+
+  return all_txs, all_inds
 
 
 def file_len(fname):
