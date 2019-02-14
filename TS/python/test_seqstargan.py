@@ -19,10 +19,6 @@ import utils
 import IPython
 
 
-_PARTY_ROCK = "IN THE HOUSE TONIGHT"
-_EVERYBODY = "HAVE A GOOD TIME"
-
-
 torch.set_default_dtype(torch.float32)
 
 # Assuming < 5 views for now
@@ -145,7 +141,7 @@ def test_lorenz_SSG():
 
   # RNN
   input_size = rnn_size
-  hidden_size = n_views
+  hidden_size = ntau
   num_layers = 1
   cell_type = torch.nn.LSTM
   return_only_final = False
@@ -204,34 +200,71 @@ def test_lorenz_SSG():
   use_cla = True
   cla_iter = 5
 
+  # Generator -- MNN + RNN (similar to decoder):
+  # Generator params:
+  # MNN
+  input_size = latent_size
+  output_size = rnn_size
+  layer_units = [64, 32]
+  layer_types, layer_args = tu.generate_layer_types_args(
+      input_size, layer_units, output_size)
+  activation = torch.nn.ReLU
+  last_activation = torch.nn.Sigmoid
+  use_vae = False
+  pre_gen_config = tu.MNNConfig(
+    input_size=input_size, output_size=output_size, layer_types=layer_types,
+    layer_args=layer_args, activation=activation,
+    last_activation=last_activation, use_vae=use_vae)
+
+  # RNN
+  input_size = rnn_size
+  hidden_size = ntau
+  num_layers = 1
+  cell_type = torch.nn.LSTM
+  return_only_final = False
+  return_only_hidden = True
+  gen_rnn_config = tu.RNNConfig(
+      input_size=input_size, hidden_size=hidden_size, num_layers=num_layers,
+      cell_type=cell_type, return_only_hidden=return_only_hidden,
+      return_only_final=return_only_final)
+
+  generator_funcs = [tu.MultiLayerNN, tu.RNNWrapper]
+  generator_config = [pre_gen_config, gen_rnn_config]
+  generator_params = {
+      i: {
+          "layer_funcs": generator_funcs,
+          "layer_config": generator_config,
+          }
+      for i in range(n_views)
+  }
+
   # Generator and Discriminator:
-  # Not here for now.
-  gen_dis_iter = 10
-  generator_params = None
   discriminator_params = None
+  use_gen_dis = False
 
   # Overall config
   ae_dis_alpha = 0.1
-  use_gen_dis = False
   t_length = 50
 
-  ae_itrs = [1]
-  cla_itrs = [4] if use_cla else []
+  ae_itrs = [2, 3, 4, 5]
+  cla_itrs = [4, 3, 2, 1] if use_cla else []
   gen_itrs = [1] if use_gen_dis else []
   dis_itrs = [1] if use_gen_dis else []
+  num_epochs = [500, 500, 100]
   order = ["ae", "cla"]
   t_scheduler_config = {
       "ae_itrs": ae_itrs,
       "cla_itrs": cla_itrs,
       "gen_itrs": gen_itrs,
       "dis_itrs": dis_itrs,
+      "num_epochs": num_epochs,
       "order": order,
   }
 
   enable_cuda = False
   lr = 1e-3
   batch_size = 60
-  max_iters = 5000
+  max_iters = 2000
 
   verbose = True
 
@@ -315,8 +348,8 @@ def test_lorenz_SSG():
   #   for vi in Te_dset.views: 
   #     viouts[vo][vi] = np.ones(Te_dset.v_nts[vi]) * vo 
   IPython.embed()
-  plot_type = "all_to_one"
-  pvi = 1  # Input view
+  plot_type = "all_from_one"
+  pvi = 0  # Input view
   pvo = 2  # Output view
   pfi = 0  # Index of feature to plot
   L = {0:'X', 1: 'Y', 2: 'Z'}

@@ -93,11 +93,13 @@ class SSGTrainingScheduler(object):
   # Some of this code is silly, I know.
   # TODO: Also provide a way to have variability in order?
   def __init__(
-      self, ae_itrs, cla_itrs, gen_itrs, dis_itrs, order, use_cla, use_gen_dis):
+      self, ae_itrs, cla_itrs, gen_itrs, dis_itrs, num_epochs, order, use_cla,
+      use_gen_dis):
       # *_itrs: List with the ith element being the number of times that module
       # is gradient-stepped in the ith "epoch".
       # When the epoch exceeds the length of any *itr list, the last value is
       # used thereafter.
+      # num_epochs: List with number of "epochs" each set of itrs is run for
 
     self.ae_itrs = ae_itrs
 
@@ -108,7 +110,10 @@ class SSGTrainingScheduler(object):
     self.gen_itrs = gen_itrs
     self.dis_itrs = gen_itrs
 
+    self.num_epochs = num_epochs
+
     self.epoch_idx = 0
+    self._num_epoch_idx = 0
     self._inner_idx = 0
 
     self._epoch_order = None
@@ -138,22 +143,31 @@ class SSGTrainingScheduler(object):
     if self.epoch_idx >= self._max_len:
       return
 
+    if self._epoch_order is not None:
+      curr_num_epoch = (
+          self.num_epochs[-1] if self.epoch_idx >= len(self.num_epochs) else
+          self.num_epochs[self.epoch_idx])
+      if self._num_epoch_idx < curr_num_epoch:
+        self._num_epoch_idx += 1
+        return
+
     self._epoch_order = []
     for module in self.order:
       if module == "ae":
-        ae_idx = max(self.epoch_idx, len(self.ae_itrs) - 1)
+        ae_idx = min(self.epoch_idx, len(self.ae_itrs) - 1)
         self._epoch_order.extend(["ae"] * self.ae_itrs[ae_idx])
       elif self.use_cla and module == "cla":
-        cla_idx = max(self.epoch_idx, len(self.cla_itrs) - 1)
+        cla_idx = min(self.epoch_idx, len(self.cla_itrs) - 1)
         self._epoch_order.extend(["cla"] * self.cla_itrs[cla_idx])
       elif self.use_gen_dis:
         if module == "gen":
-          gen_idx = max(self.epoch_idx, len(self.gen_itrs) - 1)
+          gen_idx = min(self.epoch_idx, len(self.gen_itrs) - 1)
           self._epoch_order.extend(["gen"] * self.gen_itrs[gen_idx])
         elif module == "dis":
-          dis_idx = max(self.epoch_idx, len(self.dis_itrs) - 1)
+          dis_idx = min(self.epoch_idx, len(self.dis_itrs) - 1)
           self._epoch_order.extend(["dis"] * self.dis_itrs[dis_idx])
 
+    self._num_epoch_idx = 0
     self.epoch_idx += 1
 
   def get_next_train_module(self):
@@ -170,7 +184,7 @@ class SSGConfig(object):
       self, n_views, encoder_params, decoder_params, classifier_params,
       generator_params, discriminator_params, use_cla, ae_dis_alpha,
       use_gen_dis, t_length, t_scheduler_config, enable_cuda, lr, batch_size,
-      max_iters, verbose):
+      max_iters, verbose, *args, **kwargs):
 
     self.n_views = n_views
 
