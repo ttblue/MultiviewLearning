@@ -33,6 +33,9 @@ _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 
 
+_MODULES = ["ae", "cla", "dis", "gen"]
+
+
 class GANModule(nn.Module):
   def __init__(self, config):
     super(GANModule, self).__init__()
@@ -79,17 +82,101 @@ class ViewDiscriminator(GANModule):
     return torch.softmax(tx_out, dim=-1)
 
 
+class SSGTrainingScheduler(object):
+  # This class is for properly alternating the training between the different
+  # modules. It is meant to provide the order of modules for taking batch
+  # gradient steps, as well as, for each "epoch", the number of times a step is
+  # taken consecutively for each module in this order.
+  # You can provide multiple such step-splits.
+  # "Epoch" is in quotes because it doesn't correspond to a data epoch, but
+  # rather to one round of training all available modules.
+  # Some of this code is silly, I know.
+  # TODO: Also provide a way to have variability in order?
+  def __init__(
+      self, ae_itrs, cla_itrs, gen_itrs, dis_itrs, order, use_cla, use_gen_dis):
+      # *_itrs: List with the ith element being the number of times that module
+      # is gradient-stepped in the ith "epoch".
+      # When the epoch exceeds the length of any *itr list, the last value is
+      # used thereafter.
+
+    self.ae_itrs = ae_itrs
+
+    self.use_cla = use_cla
+    self.cla_itrs = cla_itrs
+
+    self.use_gen_dis = use_gen_dis
+    self.gen_itrs = gen_itrs
+    self.dis_itrs = gen_itrs
+
+    self.epoch_idx = 0
+    self._inner_idx = 0
+
+    self._epoch_order = None
+    self._check_and_save_order(order)
+    self._initialize_new_epoch()
+
+  def _check_and_save_order(self, order):
+    for module in order:
+      if module not in _MODULES:
+        raise ValueError("%s not a valid module." % module)
+
+    self.order = []
+    self._max_len = len(self.ae_itrs)
+    for module in order:
+      if self.use_cla and module == "cla":
+        self._max_len = max(len(self.cla_itrs), self._max_len)
+        self.order.append(module)
+      if self.use_gen_dis and module in ["gen", "dis"]:
+        self._max_len = max(
+            len(self.gen_itrs), len(self.dis_itrs), self._max_len)
+        self.order.append(module)
+      if module == "ae":
+        self.order.append(module)
+
+  def _initialize_new_epoch(self):
+    self._inner_idx = 0
+    if self.epoch_idx >= self._max_len:
+      return
+
+    self._epoch_order = []
+    for module in self.order:
+      if module == "ae":
+        ae_idx = max(self.epoch_idx, len(self.ae_itrs) - 1)
+        self._epoch_order.extend(["ae"] * self.ae_itrs[ae_idx])
+      elif self.use_cla and module == "cla":
+        cla_idx = max(self.epoch_idx, len(self.cla_itrs) - 1)
+        self._epoch_order.extend(["cla"] * self.cla_itrs[cla_idx])
+      elif self.use_gen_dis:
+        if module == "gen":
+          gen_idx = max(self.epoch_idx, len(self.gen_itrs) - 1)
+          self._epoch_order.extend(["gen"] * self.gen_itrs[gen_idx])
+        elif module == "dis":
+          dis_idx = max(self.epoch_idx, len(self.dis_itrs) - 1)
+          self._epoch_order.extend(["dis"] * self.dis_itrs[dis_idx])
+
+    self.epoch_idx += 1
+
+  def get_next_train_module(self):
+    if self._inner_idx >= len(self._epoch_order):
+      self._initialize_new_epoch()
+
+    next_module = self._epoch_order[self._inner_idx]
+    self._inner_idx += 1
+    return next_module
+
+
 class SSGConfig(object):
   def __init__(
       self, n_views, encoder_params, decoder_params, classifier_params,
       generator_params, discriminator_params, use_cla, ae_dis_alpha,
-      use_gen_dis, t_length, enable_cuda, lr, batch_size, max_iters, verbose):
+      use_gen_dis, t_length, t_scheduler_config, enable_cuda, lr, batch_size,
+      max_iters, verbose):
 
     self.n_views = n_views
 
     self.encoder_params = encoder_params
     self.decoder_params = decoder_params
-    
+
     self.use_cla = use_cla
     self.classifier_params = classifier_params
     self.ae_dis_alpha = ae_dis_alpha
@@ -99,6 +186,10 @@ class SSGConfig(object):
     self.discriminator_params = discriminator_params
 
     self.t_length = t_length
+
+    t_scheduler_config["use_cla"] = use_cla
+    t_scheduler_config["use_gen_dis"] = use_gen_dis
+    self.t_scheduler_config = t_scheduler_config
 
     self.enable_cuda = enable_cuda
     self.lr = lr
@@ -113,6 +204,7 @@ class SeqStarGAN(nn.Module):
   def __init__(self, config):
     super(SeqStarGAN, self).__init__()
     self.config = config
+    self.t_scheduler = SSGTrainingScheduler(**config.t_scheduler_config)
 
     self._n_views = config.n_views
 
@@ -200,8 +292,9 @@ class SeqStarGAN(nn.Module):
     # Set up optimizers
     ae_params = self.get_parameters(psets=["encoder", "decoder"])
     self._ae_opt = optim.Adam(ae_params, self.config.lr)
-    cla_params = self.get_parameters(psets="classifier")
-    self._cla_opt = optim.Adam(cla_params, self.config.lr)
+    if self.config.use_cla:
+      cla_params = self.get_parameters(psets="classifier")
+      self._cla_opt = optim.Adam(cla_params, self.config.lr)
     if self.config.use_gen_dis:
       gen_params = self.get_parameters(psets="generator")
       self._gen_opt = optim.Adam(gen_params, self.config.lr)
@@ -223,6 +316,12 @@ class SeqStarGAN(nn.Module):
     #   # Improve this by concatenating to decode in one function call
     #   return [decoder(codei) for codei in code]
     return decoder(code)
+
+  def _encode_views(self, v_tx):
+    return {vi: self.encode(v_tx[vi], vi) for vi in v_tx}
+
+  def _decode_views(self, codes):
+    return {vi: self.decode(codes[vi], vi) for vi in codes}
 
   def classify_latent(self, code):
     return self._classifier(code)
@@ -271,8 +370,8 @@ class SeqStarGAN(nn.Module):
   def _train_ae(self, tx_batch):
     # txs -- batch of time series
     # vis -- corresponding view indices
-    codes = {}
-    recons = {}
+    # codes = {}
+    # recons = {}
     loss = 0.
     n_batch = 0
     for vi, tx in tx_batch.items():
@@ -283,8 +382,8 @@ class SeqStarGAN(nn.Module):
       recon = self.decode(code, vi)
       # code = code.squeeze()
       # recon = recon.squeeze()
-      codes[vi] = code
-      recons[vi] = recon
+      # codes[vi] = code
+      # recons[vi] = recon
       loss += self._ae_loss(tx, code, recon, vi)
     # for tx, vi in zip(txs, vis):
     #   tx = torch.from_numpy(tx.astype(np.float32))
@@ -303,18 +402,35 @@ class SeqStarGAN(nn.Module):
     loss.backward(retain_graph=True)
     self._ae_opt.step()
 
-    return codes, recons, loss
+    # return codes, recons, loss
+    return loss
 
-  def _train_cla(self, codes):
+  def _evaluate_classifier_on_codes(self, codes):
+
+    n_pts = 0
+    n_correct = 0
+    for vi, code in codes.items():
+      preds = torch.argmax(self.classify_latent(code), dim=2)
+      n_correct += float(torch.sum(preds == float(vi)))
+      n_pts += float(preds.numel())
+
+    return n_correct, n_pts
+
+  def _evaluate_classifier(self, txs):
+    codes = self._encode_views(txs)
+    return self._evaluate_classifier_on_codes(codes)
+
+  def _train_cla(self, tx_batch):
     loss = 0.
     n_batch = 0
+    codes = self._encode_views(tx_batch)
     for vi, code in codes.items():
       n_batch += code.shape[0]
       loss += self._cla_loss(code, vi)
     # loss /= n_batch
 
     self._cla_opt.zero_grad()
-    loss.backward(retain_graph=self.config.use_gen_dis)
+    loss.backward(retain_graph=True)
     self._cla_opt.step()
 
     return loss
@@ -342,9 +458,10 @@ class SeqStarGAN(nn.Module):
     sampled_views = np.array(allowed_views)[sampled_views]
     return sampled_views[0] if nv == 1 else sampled_views
 
-  def _train_gen(self, codes):
+  def _train_gen(self, tx_batch):
     loss = 0.
     n_batch = 0
+    codes = self._encode_views(tx_batch)
     for vi, code in codes.items():
       n_batch += code.shape[0]
       vo = self._sample_random_views(code.shape[0], exclude=[vi])
@@ -386,26 +503,40 @@ class SeqStarGAN(nn.Module):
     # 1. Train the encoder + decoder to:
     #    (i) reconstruct image well
     #    (ii) produce speaker-independent latent representation
-    self.ae_loss = 0.
-    self.cla_loss = 0.
-    self.gen_loss = 0.
-    self.dis_loss = 0.
+    self.ae_loss, self.ae_itr = 0., 0
+    self.cla_loss, self.cla_itr = 0., 0
+    self.gen_loss, self.gen_itr = 0., 0
+    self.dis_loss, self.dis_itr = 0., 0
     for tx_batch in dset.get_ts_batches(
         self.config.batch_size, permutation=(1, 0, 2)):
       # Rearranging dimensions -- no need to do this now
       # tx_batch = [tx.permute((1, 0, 2)) for tx in tx_batch]
-      codes, _, loss_ae = self._train_ae(tx_batch)
-      self.ae_loss += loss_ae
-      if self.config.use_cla:
-        loss_cla = self._train_cla(codes)
+
+      # Assuming scheduler adheres to use_cla and use_gen_dis.
+      next_module = self.t_scheduler.get_next_train_module()
+      if next_module == "ae":
+        loss_ae = self._train_ae(tx_batch)
+        self.ae_loss += loss_ae
+        self.ae_itr += 1
+      elif next_module == "cla": 
+        loss_cla = self._train_cla(tx_batch)
         self.cla_loss += loss_cla
-      if self.config.use_gen_dis:
-        loss_gen = self._train_gen_dis(codes, vis_batch)
-        loss_dis = self._train_dis(txs_batch, codes, vis_batch)
+        self.cla_itr += 1
+      elif next_module == "gen":
+        loss_gen = self._train_gen_dis(tx_batch)
         self.gen_loss += loss_gen
+        self.gen_itr += 1
+      else:
+        loss_dis = self._train_dis(txs_batch, codes, vis_batch)
         self.dis_loss += loss_dis
 
-    return self.ae_loss, self.cla_loss, self.gen_loss, self.dis_loss
+    n_correct, n_pts = self._evaluate_classifier(dset.v_txs)
+    self.cla_acc = n_correct / n_pts
+
+    self.ae_loss, self.cla_loss, self.dis_loss, self.gen_loss, self.cla_acc = (
+        utils.convert_torch_to_float(
+            self.ae_loss, self.cla_loss, self.dis_loss, self.gen_loss,
+            self.cla_acc))
 
   def fit(self, dset): 
     # dset: dataset.MultimodalAsyncTimeSeriesDataset
@@ -418,22 +549,23 @@ class SeqStarGAN(nn.Module):
     dset.convert_to_torch()
     self._n_batches = int(np.ceil(self._n_ts / self.config.batch_size))
     try:
-      for itr in range(self.config.max_iters):
+      for self.itr in range(self.config.max_iters):
         if self.config.verbose:
           itr_start_time = time.time()
-          print("Epoch %i out of %i." % (itr + 1, self.config.max_iters))
+          print("Epoch %i out of %i." % (self.itr + 1, self.config.max_iters))
 
           self._train_loop(dset)
 
         if self.config.verbose:
           itr_duration = time.time() - itr_start_time
-          print("AE Loss: %.5f" % float(self.ae_loss.detach()))
+          print("AE Loss in %i iters: %.5f" % (self.ae_itr, self.ae_loss))
           if self.config.use_cla:
-            print("CLA Loss: %.5f" % float(self.cla_loss.detach()))
+            print("CLA Loss in %i iters: %.5f" % (self.cla_itr, self.cla_loss))
+            print("CLA Accuracy: %.5f" % self.cla_acc)
           if self.config.use_gen_dis:
-            print("GEN Loss: %.5f" % float(self.gen_loss.detach()))
-            print("DIS Loss: %.5f" % float(self.dis_loss.detach()))
-          print("Epoch %i took %0.2fs.\n" % (itr + 1, itr_duration))
+            print("GEN Loss in %i iters: %.5f" % (self.gen_itr, self.gen_loss))
+            print("DIS Loss in %i iters: %.5f" % (self.dis_itr, self.dis_loss))
+          print("Epoch %i took %0.2fs.\n" % (self.itr + 1, itr_duration))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
     print("Training finished in %0.2f s." % (time.time() - all_start_time))

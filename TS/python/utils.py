@@ -19,6 +19,14 @@ class UtilsException(Exception):
   pass
 
 
+def convert_torch_to_float(*args):
+  output = []
+  for arg in args:
+    farg = float(arg.detach()) if isinstance(arg, torch.Tensor) else float(arg)
+    output.append(farg)
+  return output
+
+
 def flatten(lsts):
   return [i for l in lsts for i in l]
 

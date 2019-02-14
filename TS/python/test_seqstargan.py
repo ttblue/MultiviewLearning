@@ -19,6 +19,10 @@ import utils
 import IPython
 
 
+_PARTY_ROCK = "IN THE HOUSE TONIGHT"
+_EVERYBODY = "HAVE A GOOD TIME"
+
+
 torch.set_default_dtype(torch.float32)
 
 # Assuming < 5 views for now
@@ -181,7 +185,7 @@ def test_lorenz_SSG():
   input_size = latent_size  # rnn_size
   hidden_size = n_views
   num_layers = 1
-  return_only_final = False
+  return_only_final = True
   return_only_hidden = True
   cla_rnn_config = tu.RNNConfig(
       input_size=input_size, hidden_size=hidden_size, num_layers=num_layers,
@@ -197,22 +201,37 @@ def test_lorenz_SSG():
       "layer_funcs": classifier_funcs,
       "layer_config": classifier_config,
   }
-  use_cla = False
+  use_cla = True
+  cla_iter = 5
 
   # Generator and Discriminator:
   # Not here for now.
+  gen_dis_iter = 10
   generator_params = None
   discriminator_params = None
 
   # Overall config
-  ae_dis_alpha = 1.0
+  ae_dis_alpha = 0.1
   use_gen_dis = False
   t_length = 50
+
+  ae_itrs = [1]
+  cla_itrs = [4] if use_cla else []
+  gen_itrs = [1] if use_gen_dis else []
+  dis_itrs = [1] if use_gen_dis else []
+  order = ["ae", "cla"]
+  t_scheduler_config = {
+      "ae_itrs": ae_itrs,
+      "cla_itrs": cla_itrs,
+      "gen_itrs": gen_itrs,
+      "dis_itrs": dis_itrs,
+      "order": order,
+  }
 
   enable_cuda = False
   lr = 1e-3
   batch_size = 60
-  max_iters = 3000
+  max_iters = 5000
 
   verbose = True
 
@@ -227,6 +246,7 @@ def test_lorenz_SSG():
       ae_dis_alpha=ae_dis_alpha,
       use_gen_dis=use_gen_dis,
       t_length=t_length,
+      t_scheduler_config=t_scheduler_config,
       enable_cuda=enable_cuda,
       lr=lr,
       batch_size=batch_size,
@@ -283,7 +303,7 @@ def test_lorenz_SSG():
   code_learner.fit(Tr_dset)
 
   viouts = {
-    vo: {vi: np.ones(Te_dset.v_nts[vi]) for vi in range(n_views)}
+    vo: {vi: np.ones(Te_dset.v_nts[vi]) * vo for vi in range(n_views)}
     for vo in range(n_views)
   }
   preds = {}
@@ -295,15 +315,41 @@ def test_lorenz_SSG():
   #   for vi in Te_dset.views: 
   #     viouts[vo][vi] = np.ones(Te_dset.v_nts[vi]) * vo 
   IPython.embed()
-  pvi = 2
-  pvo = 1
-  pfi = 0
-  for pidx in range(10):
-    plt.plot(Te_dset.v_txs[0][pidx][:, pfi], color='b', label='X')
-    plt.plot(Te_dset.v_txs[1][pidx][:, pfi], color='r', label='Y')
-    plt.plot(Te_dset.v_txs[2][pidx][:, pfi], color='g', label='Z')
-    # plt.plot(Te_dset.v_txs[pvi][pidx][:, pfi], color='b', label='T')
-    # plt.plot(preds[pvo][pvi][pidx][:, pfi], color='r', label='P')
+  plot_type = "all_to_one"
+  pvi = 1  # Input view
+  pvo = 2  # Output view
+  pfi = 0  # Index of feature to plot
+  L = {0:'X', 1: 'Y', 2: 'Z'}
+  for i in range(5):
+    l = L[pvi]
+    l2 = L[pvo]
+    if plot_type == "original":
+      plt.plot(Te_dset.v_txs[0][i][:, pfi], color='b', label='X')
+      plt.plot(Te_dset.v_txs[1][i][:, pfi], color='r', label='Y')
+      plt.plot(Te_dset.v_txs[2][i][:, pfi], color='g', label='Z')
+    elif plot_type == "single_compare":
+      plt.plot(Te_dset.v_txs[pvi][i][:, pfi], color='b', label=l2)
+      plt.plot(
+          preds[pvo][pvi][i][:, pfi], color='r', label='P%s to %s' % (l, l2))
+    elif plot_type == "all_to_one":
+      plt.plot(Te_dset.v_txs[pvo][i][:, pfi], color='k', label=l2)
+      plt.plot(
+          preds[pvo][0][i][:, pfi], color='b', ls="--", label="PX to %s" % l2)
+      plt.plot(
+          preds[pvo][1][i][:, pfi], color='r', ls="--", label="PY to %s" % l2)
+      plt.plot(
+          preds[pvo][2][i][:, pfi], color='g', ls="--", label="PZ to %s" % l2)
+    elif plot_type == "all_from_one":
+      plt.plot(Te_dset.v_txs[0][i][:, pfi], color='b', label='X')
+      plt.plot(Te_dset.v_txs[1][i][:, pfi], color='r', label='Y')
+      plt.plot(Te_dset.v_txs[2][i][:, pfi], color='g', label='Z')
+      plt.plot(
+          preds[0][pvi][i][:, pfi], color='b', ls="--", label="P%s to X" % l)
+      plt.plot(
+          preds[1][pvi][i][:, pfi], color='r', ls="--", label="P%s to Y" % l)
+      plt.plot(
+          preds[2][pvi][i][:, pfi], color='g', ls="--", label="P%s to Z" % l)
+
     plt.legend()
     plt.show()
 
