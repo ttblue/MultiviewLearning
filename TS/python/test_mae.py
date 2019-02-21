@@ -290,8 +290,8 @@ def test_lorenz_RNNMAE(forecast=True):
   }
 
   use_vae = False
-  max_iters = 1000
-  batch_size = 100
+  max_iters = 2000
+  batch_size = 80  #100
   lr = 1e-3
   verbose = True
 
@@ -324,8 +324,8 @@ def test_lorenz_RNNMAE(forecast=True):
         "layer_config": [forecaster_rnn_config],
     }
     lr = 1e-3
-    batch_size = 100
-    max_iters = 1000
+    batch_size = 80  #100
+    max_iters = 2000
     verbose = True
     forecast_config = mfor.MVForecasterConfig(
         ls_type=ls_type,
@@ -430,15 +430,22 @@ def test_lorenz_RNNMAE(forecast=True):
   recon_z = [np.array(recon_z[i]).reshape(-1, 3) for i in recon_z]
 
   if forecast:
-    half_dsets3 = []
+    half1_dsets3 = []
+    half2_dsets3 = []
     ht_length = t_length // 2
     n_steps = t_length - ht_length
     for ds in dsets3:
-      half_dsets3.append(ds[:, :ht_length])
+      half1_dsets3.append(ds[:, :ht_length])
+      half2_dsets3.append(ds[:, ht_length:])
 
-    future_x = forecaster.predict(half_dsets3[0], 0, [0, 1, 2], n_steps)
-    future_y = forecaster.predict(half_dsets3[0], 1, [0, 1, 2], n_steps)
-    future_z = forecaster.predict(half_dsets3[0], 2, [0, 1, 2], n_steps)
+    future_x = forecaster.predict(half1_dsets3[0], 0, [0, 1, 2], n_steps)
+    future_y = forecaster.predict(half1_dsets3[0], 1, [0, 1, 2], n_steps)
+    future_z = forecaster.predict(half1_dsets3[0], 2, [0, 1, 2], n_steps)
+
+    true2_ts = [np.array(tx).reshape(-1, 3) for tx in half2_dsets3]
+    future2_x = [np.array(future_x[i][ht_length:]).reshape(-1, 3) for i in future_x]
+    future2_y = [np.array(future_y[i][ht_length:]).reshape(-1, 3) for i in future_y]
+    future2_z = [np.array(future_z[i][ht_length:]).reshape(-1, 3) for i in future_z]
 
     future_x = [np.array(future_x[i]).reshape(-1, 3) for i in future_x]
     future_y = [np.array(future_y[i]).reshape(-1, 3) for i in future_y]
@@ -451,7 +458,7 @@ def test_lorenz_RNNMAE(forecast=True):
   plot_recon(true_ts, recon_z, 'xyz', title="Z recon")
 
   if forecast:
-    plot_recon(true_ts, future_x, 'xyz', title="X future")
+    plot_recon(true_ts[:1], future_x[:1], 'xyz', title="X future")
     plot_recon(true_ts, future_y, 'xyz', title="Y future")
     plot_recon(true_ts, future_z, 'xyz', title="Z future")
 

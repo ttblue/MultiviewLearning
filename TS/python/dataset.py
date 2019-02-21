@@ -269,7 +269,7 @@ class MultimodalTimeSeriesDataset:
     else:
       self.v_nts = {vi:self.n_ts for vi in self.views}
       frac = 1./ self.n_views
-      self.v_nts = {vi:frac for vi in self.views}
+      self.v_fracs = {vi:frac for vi in self.views}
 
     self.epoch = 0
     self.v_idx = {vi:0 for vi in self.views}
@@ -327,8 +327,9 @@ class MultimodalTimeSeriesDataset:
   def _get_view_batch(self, batch_size, vi, permutation):
     if self.v_empty[vi]:
       return (
-          torch.empty((0, self.v_dims[vi])) if self._is_torch else
-          np.empty((0, self.v_dims[vi]))
+          torch.empty((batch_size, 0, self.v_dims[vi])).permute(permutation)
+          if self._is_torch else
+          np.empty((batch_size, 0, self.v_dims[vi])).transpose(permutation)
       )
 
     start_idx = self.v_idx[vi]
