@@ -1,5 +1,6 @@
 # Testing multi-view autoencoder
 import numpy as np
+import pickle
 import torch
 
 try:
@@ -197,8 +198,6 @@ def test_lorenz_SSG():
       "layer_funcs": classifier_funcs,
       "layer_config": classifier_config,
   }
-  use_cla = True
-  cla_iter = 5
 
   # Generator -- MNN + RNN (similar to decoder):
   # Generator params:
@@ -238,20 +237,59 @@ def test_lorenz_SSG():
       for i in range(n_views)
   }
 
+  # Discriminator -- MNN + RNN (similar to classifier)
+  # Discriminator params:
+  input_size = ntau
+  output_size = rnn_size
+  layer_units = [64, 32]
+  layer_types, layer_args = tu.generate_layer_types_args(
+      input_size, layer_units, output_size)
+  activation = torch.nn.ReLU
+  last_activation = torch.nn.Sigmoid
+  use_vae = False
+  pre_dis_config = tu.MNNConfig(
+    input_size=input_size, output_size=output_size, layer_types=layer_types,
+    layer_args=layer_args, activation=activation,
+    last_activation=last_activation, use_vae=use_vae)
+
+  # RNN
+  input_size = ntau  # rnn_size
+  hidden_size = 2  # True or False
+  num_layers = 1
+  return_only_final = True
+  return_only_hidden = True
+  dis_rnn_config = tu.RNNConfig(
+      input_size=input_size, hidden_size=hidden_size, num_layers=num_layers,
+      cell_type=cell_type, return_only_hidden=return_only_hidden,
+      return_only_final=return_only_final)
+
+  # --
+  # classifier_funcs = [tu.MultiLayerNN, tu.RNNWrapper]
+  # classifier_config = [pre_cla_config, cla_rnn_config]
+  discriminator_funcs = [tu.RNNWrapper]
+  discriminator_config = [dis_rnn_config]
+  discriminator_params = {
+      i: {
+          "layer_funcs": discriminator_funcs,
+          "layer_config": discriminator_config,
+          }
+      for i in range(n_views)
+  }
+
   # Generator and Discriminator:
-  discriminator_params = None
-  use_gen_dis = False
+  use_cla = True
+  use_gen_dis = True
 
   # Overall config
-  ae_dis_alpha = 0.1
+  ae_dis_alpha = 1.0
   t_length = 50
 
   ae_itrs = [2, 3, 4, 5]
   cla_itrs = [4, 3, 2, 1] if use_cla else []
-  gen_itrs = [1] if use_gen_dis else []
-  dis_itrs = [1] if use_gen_dis else []
+  gen_itrs = [0, 1, 2, 3,] if use_gen_dis else []
+  dis_itrs = [0, 2, 2, 3] if use_gen_dis else []
   num_epochs = [500, 500, 100]
-  order = ["ae", "cla"]
+  order = ["ae", "cla", "gen", "dis"]
   t_scheduler_config = {
       "ae_itrs": ae_itrs,
       "cla_itrs": cla_itrs,
@@ -304,9 +342,9 @@ def test_lorenz_SSG():
   # Tr_vis = utils.flatten([[i] * len(ds[0]) for i, ds in enumerate(split_dsets)])
   # Te_txs = utils.flatten([ffunc(ds[1]) for ds in split_dsets])
   # Te_vis = utils.flatten([[i] * len(ds[1]) for i, ds in enumerate(split_dsets)])
-  # Tr_dset = dataset.MultimodalAsyncTimeSeriesDataset(
+  # Tr_dset = dataset.MultimodalTimeSeriesDataset(
   #     Tr_txs, Tr_vis, t_length, shuffle=True, synced=False)
-  # Te_dset = dataset.MultimodalAsyncTimeSeriesDataset(
+  # Te_dset = dataset.MultimodalTimeSeriesDataset(
   #     Te_txs, Te_vis, t_length, shuffle=True, synced=False)
   # all_dsets = [d1 + d2 for d1, d2 in zip(Tvs_tr, Tvs_te)]
 
@@ -327,9 +365,9 @@ def test_lorenz_SSG():
   Te_txs = [ffunc(ds[1]) for ds in split_dsets]
   Te_vis = [0, 1, 2] # [[i] * len(ds[1]) for i, ds in enumerate(split_dsets)]
 
-  Tr_dset = dataset.MultimodalAsyncTimeSeriesDataset(
+  Tr_dset = dataset.MultimodalTimeSeriesDataset(
       Tr_txs, Tr_vis, t_length, shuffle=True, synced=False)
-  Te_dset = dataset.MultimodalAsyncTimeSeriesDataset(
+  Te_dset = dataset.MultimodalTimeSeriesDataset(
       Te_txs, Te_vis, t_length, shuffle=True, synced=False)
 
   code_learner = ssg.SeqStarGAN(config)
@@ -348,42 +386,49 @@ def test_lorenz_SSG():
   #   for vi in Te_dset.views: 
   #     viouts[vo][vi] = np.ones(Te_dset.v_nts[vi]) * vo 
   IPython.embed()
-  plot_type = "all_from_one"
+  plot_type = "all_to_one"
   pvi = 0  # Input view
-  pvo = 2  # Output view
-  pfi = 0  # Index of feature to plot
+  pvo = 1  # Output view
   L = {0:'X', 1: 'Y', 2: 'Z'}
-  for i in range(5):
-    l = L[pvi]
-    l2 = L[pvo]
-    if plot_type == "original":
-      plt.plot(Te_dset.v_txs[0][i][:, pfi], color='b', label='X')
-      plt.plot(Te_dset.v_txs[1][i][:, pfi], color='r', label='Y')
-      plt.plot(Te_dset.v_txs[2][i][:, pfi], color='g', label='Z')
-    elif plot_type == "single_compare":
-      plt.plot(Te_dset.v_txs[pvi][i][:, pfi], color='b', label=l2)
-      plt.plot(
-          preds[pvo][pvi][i][:, pfi], color='r', label='P%s to %s' % (l, l2))
-    elif plot_type == "all_to_one":
-      plt.plot(Te_dset.v_txs[pvo][i][:, pfi], color='k', label=l2)
-      plt.plot(
-          preds[pvo][0][i][:, pfi], color='b', ls="--", label="PX to %s" % l2)
-      plt.plot(
-          preds[pvo][1][i][:, pfi], color='r', ls="--", label="PY to %s" % l2)
-      plt.plot(
-          preds[pvo][2][i][:, pfi], color='g', ls="--", label="PZ to %s" % l2)
-    elif plot_type == "all_from_one":
-      plt.plot(Te_dset.v_txs[0][i][:, pfi], color='b', label='X')
-      plt.plot(Te_dset.v_txs[1][i][:, pfi], color='r', label='Y')
-      plt.plot(Te_dset.v_txs[2][i][:, pfi], color='g', label='Z')
-      plt.plot(
-          preds[0][pvi][i][:, pfi], color='b', ls="--", label="P%s to X" % l)
-      plt.plot(
-          preds[1][pvi][i][:, pfi], color='r', ls="--", label="P%s to Y" % l)
-      plt.plot(
-          preds[2][pvi][i][:, pfi], color='g', ls="--", label="P%s to Z" % l)
+  subplots = True
+  num_p = 5
+  for pvo in range(3):
+    for i in range(num_p):
+      l = L[pvi]
+      l2 = L[pvo]
+      if subplots:
+        plt.subplot(3, num_p, i + pvo * num_p + 1)
+      if plot_type == "original":
+        plt.plot(Te_dset.v_txs[0][i][:, pfi], color='b', label='X')
+        plt.plot(Te_dset.v_txs[1][i][:, pfi], color='r', label='Y')
+        plt.plot(Te_dset.v_txs[2][i][:, pfi], color='g', label='Z')
+      elif plot_type == "single_compare":
+        plt.plot(Te_dset.v_txs[pvi][i][:, pfi], color='b', label=l2)
+        plt.plot(
+            preds[pvo][pvi][i][:, pfi], color='r', label='P%s to %s' % (l, l2))
+      elif plot_type == "all_to_one":
+        plt.plot(Te_dset.v_txs[pvo][i][:, pfi], color='k', label=l2)
+        plt.plot(
+            preds[pvo][0][i][:, pfi], color='b', ls="--", label="PX to %s" % l2)
+        plt.plot(
+            preds[pvo][1][i][:, pfi], color='r', ls="--", label="PY to %s" % l2)
+        plt.plot(
+            preds[pvo][2][i][:, pfi], color='g', ls="--", label="PZ to %s" % l2)
+      elif plot_type == "all_from_one":
+        plt.plot(Te_dset.v_txs[0][i][:, pfi], color='b', label='X')
+        plt.plot(Te_dset.v_txs[1][i][:, pfi], color='r', label='Y')
+        plt.plot(Te_dset.v_txs[2][i][:, pfi], color='g', label='Z')
+        plt.plot(
+            preds[0][pvi][i][:, pfi], color='b', ls="--", label="P%s to X" % l)
+        plt.plot(
+            preds[1][pvi][i][:, pfi], color='r', ls="--", label="P%s to Y" % l)
+        plt.plot(
+            preds[2][pvi][i][:, pfi], color='g', ls="--", label="P%s to Z" % l)
 
-    plt.legend()
+      plt.legend()
+      if not subplots:
+        plt.show()
+  if subplots:
     plt.show()
 
   # recon_x = code_learner.predict(Tvs_te[0], 0, vi_out=[1, 2])
@@ -409,3 +454,4 @@ def test_lorenz_SSG():
 
 if __name__ == "__main__":
   test_lorenz_SSG()
+  pfi = 0  # Index of feature to plot

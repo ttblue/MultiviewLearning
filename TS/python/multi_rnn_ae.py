@@ -12,11 +12,11 @@
 
 import itertools
 import numpy as np
+import time
 import torch
 from torch import autograd
 from torch import nn
 from torch import optim
-import time
 
 import torch_utils as tu
 from torch_utils import _DTYPE, _TENSOR_FUNC
@@ -106,6 +106,8 @@ class MultiRNNAutoEncoder(nn.Module):
     self._setup_optimizer()
 
     self.recon_criterion = nn.MSELoss(reduction="elementwise_mean")
+
+    self.trained = False
 
   def _initialize_layers(self):
     # Initialize encoder:
@@ -260,7 +262,7 @@ class MultiRNNAutoEncoder(nn.Module):
       self.itr_loss += loss_val
 
   def fit(self, dset):
-    # dset: dataset.MultimodalAsyncTimeSeriesDataset
+    # dset: dataset.MultimodalTimeSeriesDataset
     # Assuming synchronized
     if not dset.synced:
       raise ValueError("Dataset must be synchronous.")
@@ -289,16 +291,18 @@ class MultiRNNAutoEncoder(nn.Module):
           print("Epoch %i took %0.2fs.\n" % (itr + 1, itr_duration))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
+
+    self.trained = True
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
 
   def predict(self, txs, vi_in, vi_out=None, rtn_torch=False):
     # txs: List of size n_views with n_ts x n_steps x n_features(view)
-    if vi_out is None:
-      vi_out = np.arange(self._n_views).tolist()
-
     # TODO: Fix this to work with multi-view input.
     if isinstance(vi_in, list):
       raise Exception("Not yet ready for multiview input.")
+
+    if vi_out is None:
+      vi_out = np.arange(self._n_views).tolist()
 
     if not isinstance(txs, torch.Tensor):
       txs = torch.from_numpy(np.asarray(txs)).type(_DTYPE).requires_grad_(False)

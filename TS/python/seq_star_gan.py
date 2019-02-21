@@ -13,9 +13,9 @@ Discriminator (E) -- discriminates between real data and (D)-generated data
 
 For us, we have a separate versions of most components for each view.
 """
+import numpy as np
 import time
 
-import numpy as np
 import torch
 from torch import autograd
 from torch import nn
@@ -226,6 +226,8 @@ class SeqStarGAN(nn.Module):
     self._setup_loss_funcs()
     self._setup_optimizers()
 
+    self.trained = False
+
   def _enable_cuda(self):
     if not self.config.enable_cuda or not torch.cuda.is_available():
       return
@@ -371,15 +373,22 @@ class SeqStarGAN(nn.Module):
       loss -= self.config.ae_dis_alpha * self._cla_loss(code, vi)
     return loss
 
-  def _dis_loss(self, tx, vi, org=True):
-    logits = self.discriminate_view(tx, vi)
-    org = int(org)
-    return self._ce_loss(logits, org)
+  def _dis_loss(self, true_txs, fake_txs=None):
+    loss = 0.
+    if true_txs is not None:
+      for vo, tx in true_txs.items():
+        logits = self.discriminate_view(tx, vo).reshape(-1, 2)
+        targets = torch.ones((logits.shape[0]), dtype=torch.long)
+        loss += self._ce_loss(logits, targets)
+    if fake_txs is not None:
+      for vo, tx in fake_txs.items():
+        logits = self.discriminate_view(tx, vo).reshape(-1, 2)
+        targets = torch.zeros((logits.shape[0]), dtype=torch.long)
+        loss += self._ce_loss(logits, targets)
+    return loss
 
-  # TODO
-  def _gen_loss(self, code, vi):
-    tx_out = self.decode(code, vi) + self.generate_residual(code, vi)
-    loss = -self._dis_loss(tx_out, vi, False)
+  def _gen_loss(self, fake_outputs):
+    return -self._dis_loss(None, fake_outputs)
 
   def _train_ae(self, tx_batch):
     # txs -- batch of time series
@@ -472,17 +481,42 @@ class SeqStarGAN(nn.Module):
     sampled_views = np.array(allowed_views)[sampled_views]
     return sampled_views[0] if nv == 1 else sampled_views
 
+  def _generate_fake_outputs(self, codes, vos):
+    code_remap = {}
+    for idx in range(vos.shape[0]):
+      code = codes[idx]
+      vo = vos[idx]
+      if vo not in code_remap:
+        code_remap[vo] = []
+      code_remap[vo].append(code)
+
+    code_remap = {vo: torch.stack(code_remap[vo], dim=0) for vo in code_remap}
+    fake_outputs = {
+        vo: (self.decode(code, vo) + self.generate_residual(code, vo))
+        for vo, code in code_remap.items()
+    }
+    return fake_outputs
+
   def _train_gen(self, tx_batch):
     loss = 0.
     n_batch = 0
     codes = self._encode_views(tx_batch)
+    fake_outputs = {}
     for vi, code in codes.items():
       n_batch += code.shape[0]
-      vo = self._sample_random_views(code.shape[0], exclude=[vi])
+      vos = self._sample_random_views(code.shape[0], exclude=[vi])
+      fake_outputs_vi = self._generate_fake_outputs(code, vos)
+      for vo in fake_outputs_vi:
+        if vo not in fake_outputs:
+          fake_outputs[vo] = []
+        fake_outputs[vo].append(fake_outputs_vi[vo])
+
+    fake_outputs = {vo: torch.cat(fake_outputs[vo], 0) for vo in fake_outputs}
     # for code, vi in zip(codes, vis):
     #   n_batch += 1
     #   vo = self._sample_random_views(1, exclude=[vi])
-    #   loss += self._gen_loss(code, vo)
+
+    loss += self._gen_loss(fake_outputs)
     # loss /= n_batch
 
     self._gen_opt.zero_grad()
@@ -491,16 +525,31 @@ class SeqStarGAN(nn.Module):
 
     return loss
 
-  def _train_dis(self, txs, codes, vis):
-    loss = 0.
-    n_batch = 0
-    for tx, code, vi in zip(txs, codes, vis):
-      n_batch += 1
-      vo = self._sample_random_views(1, exclude=[vi])
-      tx_fake = self.decode(code, vo) + self.generate_residual(code, vo)
-      loss += self._dis_loss(tx_fake, vo, False) + self._dis_loss(tx, vi, True)
-    loss /= n_batch
+  def _evaluate_discriminator(self, txs):
+    n_pts = 0
+    n_correct = 0
+    for vi, tx in txs.items():
+      preds = torch.argmax(self.discriminate_view(tx, vi), dim=2)
+      n_correct += float(torch.sum(preds))
+      n_pts += float(preds.numel())
 
+    return n_correct, n_pts
+
+  def _train_dis(self, tx_batch):
+    n_batch = 0
+    codes = self._encode_views(tx_batch)
+    fake_outputs = {}
+    for vi, code in codes.items():
+      n_batch += code.shape[0]
+      vos = self._sample_random_views(code.shape[0], exclude=[vi])
+      fake_outputs_vi = self._generate_fake_outputs(code, vos)
+      for vo in fake_outputs_vi:
+        if vo not in fake_outputs:
+          fake_outputs[vo] = []
+        fake_outputs[vo].append(fake_outputs_vi[vo])
+    fake_outputs = {vo: torch.cat(fake_outputs[vo], 0) for vo in fake_outputs}
+    loss = self._dis_loss(tx_batch, fake_outputs)
+    # loss /= n_batch
     self._dis_opt.zero_grad()
     loss.backward()
     self._dis_opt.step()
@@ -537,24 +586,27 @@ class SeqStarGAN(nn.Module):
         self.cla_loss += loss_cla
         self.cla_itr += 1
       elif next_module == "gen":
-        loss_gen = self._train_gen_dis(tx_batch)
+        loss_gen = self._train_gen(tx_batch)
         self.gen_loss += loss_gen
         self.gen_itr += 1
       else:
-        loss_dis = self._train_dis(txs_batch, codes, vis_batch)
+        loss_dis = self._train_dis(tx_batch)
         self.dis_loss += loss_dis
+        self.dis_itr += 1
 
     n_correct, n_pts = self._evaluate_classifier(dset.v_txs)
     self.cla_acc = n_correct / n_pts
+    n_correct, n_pts = self._evaluate_discriminator(dset.v_txs)
+    self.dis_acc = n_correct / n_pts
 
-    self.ae_loss, self.cla_loss, self.dis_loss, self.gen_loss, self.cla_acc = (
+    self.ae_loss, self.cla_loss, self.dis_loss, self.gen_loss = (
         utils.convert_torch_to_float(
-            self.ae_loss, self.cla_loss, self.dis_loss, self.gen_loss,
-            self.cla_acc))
+            self.ae_loss, self.cla_loss, self.dis_loss, self.gen_loss))
+    self.cla_acc, self.dis_acc = utils.convert_torch_to_float(
+        self.cla_acc, self.dis_acc)
 
   def fit(self, dset): 
-    # dset: dataset.MultimodalAsyncTimeSeriesDataset
-    # Assuming this is coming in as non-tensor
+    # dset: dataset.MultimodalTimeSeriesDataset
     self._n_ts = dset.n_ts
     if self.config.verbose:
       all_start_time = time.time()
@@ -572,16 +624,21 @@ class SeqStarGAN(nn.Module):
 
         if self.config.verbose:
           itr_duration = time.time() - itr_start_time
-          print("AE Loss in %i iters: %.5f" % (self.ae_itr, self.ae_loss))
-          if self.config.use_cla:
+          if self.ae_itr > 0:
+            print("AE Loss in %i iters: %.5f" % (self.ae_itr, self.ae_loss))
+          if self.config.use_cla and self.cla_itr > 0:
             print("CLA Loss in %i iters: %.5f" % (self.cla_itr, self.cla_loss))
             print("CLA Accuracy: %.5f" % self.cla_acc)
-          if self.config.use_gen_dis:
+          if self.config.use_gen_dis and self.gen_itr > 0:
             print("GEN Loss in %i iters: %.5f" % (self.gen_itr, self.gen_loss))
+          if self.config.use_gen_dis and self.dis_itr > 0:
             print("DIS Loss in %i iters: %.5f" % (self.dis_itr, self.dis_loss))
+            print("DIS Accuracy: %.5f" % self.dis_acc)
           print("Epoch %i took %0.2fs.\n" % (self.itr + 1, itr_duration))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
+
+    self.trained = True
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
 
   def predict(self, txs, vi_outs, rtn_torch=False):
@@ -603,6 +660,7 @@ class SeqStarGAN(nn.Module):
     }
     txs = {vi:txs[vi].permute(1, 0, 2) for vi in txs}
 
+
     preds = {}
     for vi, vtx in txs.items():
       vos = vi_outs[vi]
@@ -611,7 +669,11 @@ class SeqStarGAN(nn.Module):
       # TODO: maybe do this more efficiently by grouping based on common vo.
       for idx, vo in enumerate(vos):
         code = codes[:, [idx]]  # Add "batch" dimension
-        vos_tx.append(self.decode(code, vo))
+        output = (
+            self.decode(code, vo) + self.generate_residual(code, vo)
+            if self.config.use_gen_dis else self.decode(code, vo)
+        )
+        vos_tx.append(output)
       preds[vi] = torch.cat(vos_tx, 1).permute(1, 0, 2)
 
     if not rtn_torch:

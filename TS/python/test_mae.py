@@ -12,6 +12,7 @@ import dataset
 import gaussian_random_features as grf
 import multi_ae as mae
 import multi_rnn_ae as mrae
+import multiview_forecaster as mfor
 from synthetic import simple_systems as ss
 import time_sync as tsync
 import torch_utils as tu
@@ -154,7 +155,7 @@ def test_lorenz_MAE():
 
 
 
-def test_lorenz_RNNMAE():
+def test_lorenz_RNNMAE(forecast=True):
   visualize = False and MPL_AVAILABLE
 
   no_ds = False
@@ -200,8 +201,6 @@ def test_lorenz_RNNMAE():
   rnn_size = 16
   l1_size = ntau
 
-  num_layers = 1
-  cell_type = torch.nn.LSTM
 
   # Not being used now.
   # input_size = ntau
@@ -217,6 +216,8 @@ def test_lorenz_RNNMAE():
 
   input_size = ntau
   hidden_size = rnn_size
+  num_layers = 1
+  cell_type = torch.nn.LSTM
   return_only_final = False
   return_only_hidden = True
   en_rnn_config = tu.RNNConfig(
@@ -260,6 +261,8 @@ def test_lorenz_RNNMAE():
 
   input_size = rnn_size
   hidden_size = ntau
+  num_layers = 1
+  cell_type = torch.nn.LSTM
   return_only_final = False
   return_only_hidden = True
   de_rnn_config = tu.RNNConfig(
@@ -287,7 +290,7 @@ def test_lorenz_RNNMAE():
   }
 
   use_vae = False
-  max_iters = 2000
+  max_iters = 1000
   batch_size = 100
   lr = 1e-3
   verbose = True
@@ -302,6 +305,36 @@ def test_lorenz_RNNMAE():
       lr=lr,
       verbose=verbose)
 
+  if forecast:
+    input_size = latent_size
+    hidden_size = latent_size
+    num_layers = 1
+    cell_type = torch.nn.LSTM
+    return_only_final = False
+    return_only_hidden = False
+    forecaster_rnn_config = tu.RNNConfig(
+        input_size=input_size, hidden_size=hidden_size, num_layers=num_layers,
+        cell_type=cell_type, return_only_hidden=return_only_hidden,
+        return_only_final=return_only_final)
+
+    ls_type = "mrae"
+    ls_learner_config = None
+    layer_params = {
+        "layer_funcs": [tu.RNNWrapper],
+        "layer_config": [forecaster_rnn_config],
+    }
+    lr = 1e-3
+    batch_size = 100
+    max_iters = 1000
+    verbose = True
+    forecast_config = mfor.MVForecasterConfig(
+        ls_type=ls_type,
+        ls_learner_config=ls_learner_config,
+        layer_params=layer_params,
+        lr=lr,
+        batch_size=batch_size,
+        max_iters=max_iters,
+        verbose=verbose)
   # input_size = ntau
   # output_size = latent_size
   # layer_units = [16]
@@ -364,7 +397,7 @@ def test_lorenz_RNNMAE():
 
   # all_dsets = [d1 + d2 for d1, d2 in zip(Tvs_tr, Tvs_te)]
 
-  dset_type = dataset.MultimodalAsyncTimeSeriesDataset
+  dset_type = dataset.MultimodalTimeSeriesDataset
   Tr_dset = dset_type(Tr_txs, Tr_vis, t_len, shuffle=True, synced=True)
   Te_dset = dset_type(Te_txs, Te_vis, t_len, shuffle=True, synced=True)
 
@@ -372,30 +405,55 @@ def test_lorenz_RNNMAE():
   code_learner = mrae.MultiRNNAutoEncoder(config)
   code_learner.fit(Tr_dset)
 
-  IPython.embed()
+  if forecast:
+    forecaster = mfor.MVForecaster(forecast_config)
+    forecaster.set_ls_learner(code_learner)
+
+    forecaster.fit(Tr_dset)
 
   # recon_x = code_learner.predict(Tvs_te[0], 0, vi_out=[1, 2])
   # recon_y = code_learner.predict(Tvs_te[1], 1, vi_out=[0, 2])
   # recon_z = code_learner.predict(Tvs_te[2], 2, vi_out=[0, 1])
+
   dsets3 = []
   for ds in dsets:
       dsets3.append(
           utils.split_txs_into_length([ds], t_length, ignore_end=False)[0])
-  recon_x = code_learner.predict(dsets3[0], 0, vi_out=[1, 2])
-  recon_y = code_learner.predict(dsets3[1], 1, vi_out=[0, 2])
-  recon_z = code_learner.predict(dsets3[2], 2, vi_out=[0, 1])
+
+  recon_x = code_learner.predict(dsets3[0], 0, vi_out=[0, 1, 2])
+  recon_y = code_learner.predict(dsets3[1], 1, vi_out=[0, 1, 2])
+  recon_z = code_learner.predict(dsets3[2], 2, vi_out=[0, 1, 2])
 
   true_ts = [np.array(tx).reshape(-1, 3) for tx in dsets3]
-  recon_x = [np.array(recon_x[i]).reshape(-1, 3) for i in [1, 2]]
-  recon_y = [np.array(recon_y[i]).reshape(-1, 3) for i in [0, 2]]
-  recon_z = [np.array(recon_z[i]).reshape(-1, 3) for i in [0, 1]]
+  recon_x = [np.array(recon_x[i]).reshape(-1, 3) for i in recon_x]
+  recon_y = [np.array(recon_y[i]).reshape(-1, 3) for i in recon_y]
+  recon_z = [np.array(recon_z[i]).reshape(-1, 3) for i in recon_z]
 
-  ttx = [true_ts[1], true_ts[2]]
-  tty = [true_ts[0], true_ts[2]]
-  ttz = [true_ts[0], true_ts[1]]
-  plot_recon(ttx, recon_x, 'yz', title="X recon")
-  plot_recon(tty, recon_y, 'xz', title="Y recon")
-  plot_recon(ttz, recon_z, 'xy', title="Z recon")
+  if forecast:
+    half_dsets3 = []
+    ht_length = t_length // 2
+    n_steps = t_length - ht_length
+    for ds in dsets3:
+      half_dsets3.append(ds[:, :ht_length])
+
+    future_x = forecaster.predict(half_dsets3[0], 0, [0, 1, 2], n_steps)
+    future_y = forecaster.predict(half_dsets3[0], 1, [0, 1, 2], n_steps)
+    future_z = forecaster.predict(half_dsets3[0], 2, [0, 1, 2], n_steps)
+
+    future_x = [np.array(future_x[i]).reshape(-1, 3) for i in future_x]
+    future_y = [np.array(future_y[i]).reshape(-1, 3) for i in future_y]
+    future_z = [np.array(future_z[i]).reshape(-1, 3) for i in future_z]
+
+  IPython.embed()
+
+  plot_recon(true_ts, recon_x, 'xyz', title="X recon")
+  plot_recon(true_ts, recon_y, 'xyz', title="Y recon")
+  plot_recon(true_ts, recon_z, 'xyz', title="Z recon")
+
+  if forecast:
+    plot_recon(true_ts, future_x, 'xyz', title="X future")
+    plot_recon(true_ts, future_y, 'xyz', title="Y future")
+    plot_recon(true_ts, future_z, 'xyz', title="Z future")
 
 
 if __name__ == "__main__":

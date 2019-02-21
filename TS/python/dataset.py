@@ -243,7 +243,7 @@ class DynamicalSystemDataset:
     return dsets
 
 
-class MultimodalAsyncTimeSeriesDataset:
+class MultimodalTimeSeriesDataset:
   def __init__(self, txs, vis, t_length, shuffle=True, synced=False):
     # If synced, the assumption is that the time-series are concatenated
     # while maintaing the synchronized order.
