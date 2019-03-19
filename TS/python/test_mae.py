@@ -438,18 +438,49 @@ def test_lorenz_RNNMAE(forecast=True):
       half1_dsets3.append(ds[:, :ht_length])
       half2_dsets3.append(ds[:, ht_length:])
 
-    future_x = forecaster.predict(half1_dsets3[0], 0, [0, 1, 2], n_steps)
-    future_y = forecaster.predict(half1_dsets3[0], 1, [0, 1, 2], n_steps)
-    future_z = forecaster.predict(half1_dsets3[0], 2, [0, 1, 2], n_steps)
+    future_x = [tx for i, tx in forecaster.predict(half1_dsets3[0], 0, [0, 1, 2], n_steps).items()]
+    future_y = [tx for i, tx in forecaster.predict(half1_dsets3[0], 1, [0, 1, 2], n_steps).items()]
+    future_z = [tx for i, tx in forecaster.predict(half1_dsets3[0], 2, [0, 1, 2], n_steps).items()]
 
-    true2_ts = [np.array(tx).reshape(-1, 3) for tx in half2_dsets3]
-    future2_x = [np.array(future_x[i][ht_length:]).reshape(-1, 3) for i in future_x]
-    future2_y = [np.array(future_y[i][ht_length:]).reshape(-1, 3) for i in future_y]
-    future2_z = [np.array(future_z[i][ht_length:]).reshape(-1, 3) for i in future_z]
+    arr_reshape = lambda x: np.array(x).reshape(-1, 3)
+    arr_reshape1 = lambda x: np.array(x[:, :25]).reshape(-1, 3)
+    arr_reshape2 = lambda x: np.array(x[:, 25:]).reshape(-1, 3)
+    cat_map = lambda x: np.r_[x[0], x[1]]
 
-    future_x = [np.array(future_x[i]).reshape(-1, 3) for i in future_x]
-    future_y = [np.array(future_y[i]).reshape(-1, 3) for i in future_y]
-    future_z = [np.array(future_z[i]).reshape(-1, 3) for i in future_z]
+    true1_ts = list(map(arr_reshape, half1_dsets3))
+    future1_x = list(map(arr_reshape1, future_x))
+    future1_y = list(map(arr_reshape1, future_y))
+    future1_z = list(map(arr_reshape1, future_z))
+
+    true2_ts = list(map(arr_reshape, half2_dsets3))
+    future2_x = list(map(arr_reshape2, future_x))
+    future2_y = list(map(arr_reshape2, future_y))
+    future2_z = list(map(arr_reshape2, future_z))
+
+    future_x = list(map(arr_reshape, future_x))
+    future_y = list(map(arr_reshape, future_y))
+    future_z = list(map(arr_reshape, future_z))
+
+    rearr_x = list(map(cat_map, zip(future1_x, future2_x)))
+    rearr_y = list(map(cat_map, zip(future1_y, future2_y)))
+    rearr_z = list(map(cat_map, zip(future1_z, future2_z)))
+    true_rearr = list(map(cat_map, zip(true1_ts, true2_ts)))
+    # future2_x = []
+    # for i, tx in future_x.items():
+    #   future2_x.append(op(tx[:, ht_length:]))
+    # future2_x = []
+    # for i, tx in future_x.items():
+    #   future2_x.append(op(tx[:, ht_length:]))
+    # future2_x = []
+    # for i, tx in future_x.items():
+    #   future2_x.append(op(tx[:, ht_length:]))
+    # future2_x = [np.array(future_x[i][:, ht_length:]).reshape(-1, 3) for i in future_x]
+    # future2_y = [np.array(future_y[i][:, ht_length:]).reshape(-1, 3) for i in future_y]
+    # future2_z = [np.array(future_z[i][:, ht_length:]).reshape(-1, 3) for i in future_z]
+
+    # future_x = [np.array(future_x[i]).reshape(-1, 3) for i in future_x]
+    # future_y = [np.array(future_y[i]).reshape(-1, 3) for i in future_y]
+    # future_z = [np.array(future_z[i]).reshape(-1, 3) for i in future_z]
 
   IPython.embed()
 
@@ -457,10 +488,40 @@ def test_lorenz_RNNMAE(forecast=True):
   plot_recon(true_ts, recon_y, 'xyz', title="Y recon")
   plot_recon(true_ts, recon_z, 'xyz', title="Z recon")
 
-  if forecast:
-    plot_recon(true_ts[:1], future_x[:1], 'xyz', title="X future")
-    plot_recon(true_ts, future_y, 'xyz', title="Y future")
-    plot_recon(true_ts, future_z, 'xyz', title="Z future")
+  pred_map = {
+      'x': [future_x, future1_x, future2_x, rearr_x],
+      'y': [future_y, future1_y, future2_y, rearr_y],
+      'z': [future_z, future1_z, future2_z, rearr_z],
+  }
+  true_map = {'x': 0, 'y': 1, 'z': 2}
+  pl_idx = 1
+  # if forecast:
+  for ip in 'xyz':
+    for op in 'xyz':
+      plt.subplot(3, 3, pl_idx)
+      pl_idx += 1
+
+      idx = true_map[op]
+      l = op.upper()
+      title = "%s to %s" % (ip.upper(), op.upper())
+
+      tr = true_rearr[idx][:, 0]
+      pr = pred_map[ip][-1][idx]
+      plt.plot(tr, color='b', label=l + " True")
+      plt.plot(pr[:, 0], color='r', ls='--', label=l + " Pred")
+      plt.legend()
+      plt.title(title)
+  plt.show()
+          # plot_simple(true_rearr[idx], pred_map[ip][-1][idx], op.upper(), lbl)
+      # plot_recon(true2_ts[1:2], future2_x[1:2], 'yz', title="X future")
+      # plot_recon(true2_ts[:1], future2_y[:1], 'xz', title="Y future")
+      # plot_recon(true2_ts[:-1], future2_z[:-1], 'xy', title="Z future")
+
+      # plot_recon(true1_ts[1:2], future1_x[1:2], 'yz', title="X future")
+      # plot_recon(true1_ts[:1], future1_y[:1], 'xz', title="Y future")
+      # plot_recon(true1_ts[:-1], future1_z[:-1], 'xy', title="Z future")
+
+
 
 
 if __name__ == "__main__":

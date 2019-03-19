@@ -1,414 +1,391 @@
-# Utility functions for processing data and such.
-import csv
-import glob
-import numpy as np
-import os
-import re
-import sys
-import xlrd
+# TODO: Probably need to fix these dataset classes:
+# 1. Add abstract parent class and such
 
 import numpy as np
 import torch
 
+import utils
+
 import IPython
 
-import subprocess
 
-
-class UtilsException(Exception):
+class DatasetException(Exception):
   pass
 
 
-def convert_torch_to_float(*args):
-  output = []
-  for arg in args:
-    farg = float(arg.detach()) if isinstance(arg, torch.Tensor) else float(arg)
-    output.append(farg)
-  return output
+# Some utility functions
+def create_batches(x, y, batch_size, num_steps):
+  data_len = x.shape[0]
+  epoch_size = data_len // (batch_size * num_steps)
+  if epoch_size == 0:
+    raise DatasetException(
+        "epoch_size is 0. Decrease batch_size or num_steps")
 
+  x_batches = x[0:batch_size * num_steps * epoch_size].reshape(
+      [batch_size, num_steps * epoch_size, x.shape[1]])
+  x_batches = np.split(x_batches, epoch_size, axis=1)
 
-def flatten(lsts):
-  return [i for l in lsts for i in l]
-
-
-def split_data(xs, n=10, split_inds=None, const_len=False):
-  n_pts = len(xs) if isinstance(xs, list) else xs.shape[0]
-  # n_pts = xs.shape[0]
-
-  if split_inds is None:
-    stride = int(np.ceil(n_pts / n ))
-    split_inds = [i * stride for i in range(n + 1)]
-    if const_len and split_inds[-1] > n_pts:
-      split_inds = split_inds[:-1]
+  if y is None:
+    y_batches = None
   else:
-    # If we get split inds, ignore constant length
-    const_len = False
-    split_inds = np.array(split_inds)
-  start = split_inds[:-1]
-  end = split_inds[1:]
+    y = np.atleast_2d(y)
+    y_batches = y[0:batch_size * num_steps * epoch_size].reshape(
+        [batch_size, num_steps * epoch_size, y.shape[1]])
+    y_batches.squeeze()
+    y_batches = np.split(y_batches, epoch_size, axis=1)
 
-  split_xs = [xs[idx[0]:idx[1]] for idx in zip(start, end)]
-  # Only the last element will have different len
-  # if const_len and split_xs[-1].shape[0] != split_xs[0].shape:
-  #   split_xs, split_inds = split_xs[:-1], split_inds[:-1]
-  return split_xs, split_inds
+  return x_batches, y_batches
 
 
-def split_single_ts(tx, n_length, ignore_end=False):
-  # tx: n_length x n_features time series
-  # This returns tx split into segments of size n_length
-  # If ignore_end is True, the last segment (if < n_length in length) will be
-  # ignored. Otherwise, the appropriate elements of the second last segment are
-  # pre-pended so as to make it the right length.
-  n_t = tx.shape[0]
-  if n_t < n_length:
-    return np.expand_dims(tx, axis=0)
+class TimeseriesDataset:
 
-  n_ts = int(np.ceil(n_t / n_length))
-  split_inds = np.arange(1, n_ts).astype(int) * n_length
-  split_array = np.array_split(tx, split_inds)
+  def __init__(self, xs, ys, shuffle=True, shift_scale=False):
+    # xs, ys are a list of time-series data.
+    self.xs = [np.array(x) for x in xs]
+    self.ys = [np.array(y) for y in ys]
 
-  if split_array[-1].shape[0] < n_length:
-    if ignore_end:
-      del split_array[-1]
+    if shift_scale:
+      self.shift_and_scale()
     else:
-      last_tx = split_array[-1]
-      lt_len = last_tx.shape[0]
-      d_len = n_length - lt_len
-      last_tx = np.r_[split_array[-2][-d_len:], last_tx]
-      split_array[-1] = last_tx
+      self.mu = np.zeros(self.xs[0].shape[1])
+      self.sigma = np.ones(self.xs[0].shape[1])
 
-  return np.array(split_array)
+    self.num_ts = len(xs)
 
+    if self.num_ts != len(ys):
+      raise DatasetException("")
 
-def split_txs_into_length(txs, n_length, ignore_end=False, shuffle=False):
-  if not isinstance(txs[0], np.ndarray):
-    txs = [np.array(tx) for tx in txs]
+    self._shuffle = shuffle
+    self.shuffle_data()
 
-  all_txs = []
-  all_inds = []
-  for i, tx in enumerate(txs):
-    split_tx = split_single_ts(tx, n_length, ignore_end)
-    all_txs.append(split_tx)
-    all_inds += [i] * split_tx.shape[0]
+    self.epoch = 0
+    self.ts_idx = 0
 
-  all_txs = np.concatenate(all_txs, axis=0)
-  all_inds = np.array(all_inds)
+  def toggle_shuffle(self, shuffle=None):
+    self._shuffle = not self._shuffle if shuffle is None else shuffle
 
-  if shuffle:
-    r_inds = np.random.permutation(all_inds.shape[0])
-    all_txs = all_txs[r_inds]
-    all_inds = all_inds[r_inds]
+  def shuffle_data(self, rtn=False):
+    if not self._shuffle:
+      if not rtn:
+        return
+      else:
+        return np.copy(self.xs).tolist(), np.copy(self.ys).tolist()
 
-  return all_txs, all_inds
+    shuffle_inds = np.random.permutation(self.num_ts)
+    xs = [self.xs[i] for i in shuffle_inds]
+    ys = [self.ys[i] for i in shuffle_inds]
 
-
-def file_len(fname):
-    p = subprocess.Popen(['wc', '-l', fname], stdout=subprocess.PIPE, 
-                                              stderr=subprocess.PIPE)
-    result, err = p.communicate()
-    if p.returncode != 0:
-        raise IOError(err)
-    return int(result.strip().split()[0])
-
-
-def load_csv(filename, delim='\t', downsample=1):
-  with open(filename, 'r') as fh:
-    reader = csv.reader(fh)
-    data = []
-
-    # First line is the name of the columns
-    row = reader.next()[0]
-    col_names = row.strip(delim).split(delim)
-    col_len = len(col_names)
-
-    idx = 0
-    for row in reader:
-      if idx % downsample == 0:
-        data_row = [float(v) for v in row[0].strip(delim).split(delim)]
-        # Assuming these are few and far between:
-        if len(data_row) != col_len:
-          continue
-        data.append(data_row)
-      idx += 1
-
-  return col_names, np.array(data)
-
-
-def load_annotation_file(ann_file):
-
-  with open(ann_file, 'r') as fh:
-    ann = fh.readlines()
-  
-  k = 0
-  ann_idx = {}
-  ann_text = {}
-  for s in ann:
-    s = s.strip()
-    s_split = s.split('\t')
-    if len(s_split) == 1: continue
-    ann_idx[k] = float(s_split[0])
-    ann_text[k] = ' '.join(s_split[1:]).lower().strip()
-    k += 1
-
-  return ann_idx, ann_text
-
-
-def load_xlsx_annotation_file(ann_file, convert_to_s=True):
-
-  wb = xlrd.open_workbook(ann_file)
-  try:
-    if "Annotations" in wb.sheet_names():
-      sh = wb.sheet_by_name("Annotations")
+    if rtn:
+      return xs, ys
     else:
-      sh = wb.sheet_by_name("Sheet1")
-  except:
-    import IPython
-    IPython.embed()
+      self.xs = xs
+      self.ys = ys
 
-  conversion_factor = 86400. if convert_to_s else 1
+  def shift_and_scale(self, mu=None, sigma=None):
+    # Every shift and scale is cumulative.
+    # So only use this once, unless you know what you're doing.
+    if mu is None or sigma is None:
+      wts = np.array([x.shape[0] for x in self.xs]).astype("float")
+      wts /= wts.sum()
 
-  k = 0
-  missing_inds = []
-  ann_time = {}
-  ann_text = {}
-  # First two rows are not useful.
-  for ridx in xrange(2, sh.nrows):
-    row = sh.row(ridx)
+      if mu is None:
+        ts_mus = np.array([x.mean(axis=0) for x in self.xs])
+        mu = ts_mus.T.dot(wts)
 
-    if row[0].ctype != xlrd.XL_CELL_EMPTY:
-      tstamp = row[0].value * conversion_factor
-      ann_time[k] = tstamp
+      if sigma is None:
+        ts_sigmas_squared = np.array(
+            [np.square(x-mu).mean(axis=0) for x in self.xs])
+        sigma_squared = ts_sigmas_squared.T.dot(wts)
+        sigma = np.sqrt(sigma_squared)
+
+    self.mu = mu
+    self.sigma = sigma
+
+    self.xs = [(x - mu) / sigma for x in self.xs]
+
+  def get_ts_batches(self, batch_size, num_steps):
+    x = self.xs[self.ts_idx]
+    y = self.ys[self.ts_idx]
+
+    self.ts_idx += 1
+    if self.ts_idx == self.num_ts:
+      self.shuffle_data()
+      self.ts_idx = 0
+      self.epoch += 1
+
+    return create_batches(x, y, batch_size, num_steps)
+
+  def reset(self):
+    self.ts_idx = 0
+    self.epoch = 0
+    self.shuffle_data()
+
+  def split(self, proportions):
+    proportions = np.array(proportions)
+    if proportions.sum() != 1:
+      proportions /= proportions.sum()
+
+    split_num = (proportions * self.num_ts).astype(int)
+    split_num[-1] = self.num_ts - split_num[:-1].sum()
+
+    x_shuffled, y_shuffled = self.shuffle_data(rtn=True)
+
+    end_inds = np.cumsum(split_num).tolist()
+    start_inds = [0] + end_inds[:-1]
+
+    dsets = []
+    for sind, eind in zip(start_inds, end_inds):
+      x_split = x_shuffled[sind:eind]
+      y_split = y_shuffled[sind:eind]
+      dsets.append(TimeseriesDataset(x_split, y_split, self._shuffle))
+
+    return dsets
+
+
+class DynamicalSystemDataset:
+
+  def __init__(self, xs, dxs, ys, shuffle=True, shift_scale=True):
+    # xs, ys are a list of time-series data.
+    self.xs = [np.array(x) for x in xs]
+    self.dxs = [np.array(dx) for dx in dxs]
+    self.ys = [np.array(y) for y in ys]
+
+    self._shift_scale = shift_scale
+    self.num_ts = len(xs)
+
+    if self.num_ts != len(ys) or self.num_ts != len(dxs):
+      raise DatasetException("")
+
+    self._shuffle = shuffle
+    self.shuffle_data()
+
+  def toggle_shuffle(self, shuffle=None):
+    self._shuffle = not self._shuffle if shuffle is None else shuffle
+
+  def shuffle_data(self, rtn=False):
+    if not self._shuffle:
+      if not rtn:
+        return
+      else:
+        return (
+            np.copy(self.xs).tolist(), np.copy(self.dxs).tolist(),
+            np.copy(self.ys).tolist())
+
+    shuffle_inds = np.random.permutation(self.num_ts)
+    xs = [self.xs[i] for i in shuffle_inds]
+    dxs = [self.dxs[i] for i in shuffle_inds]
+    ys = [self.ys[i] for i in shuffle_inds]
+
+    if rtn:
+      return xs, dxs, ys
     else:
-      missing_inds.append(k)
-    text = row[1].value
-    # Remove trailing, leading and consecutive spaces; make everything lower case.
-    ann_text[k] = ' '.join(text.strip().lower().split()) 
-    k += 1
+      self.xs = xs
+      self.dxs = dxs
+      self.ys = ys
 
-  # Interpolate existing times to get the missing values.
-  xp = ann_time.keys()
-  fp = [ann_time[i] for i in xp]
-  f = np.interp(missing_inds, xp, fp)
-  for i,t in zip(missing_inds, f):
-    ann_time[i] = t
+  def get_samples(self, sample_length, num_per_ts=-1, channels=None, zero_frac=0.1):
+    sample_xs = []
+    sample_dxs = []
+    sample_ys = []
 
-  return ann_time, ann_text
+    for idx in xrange(self.num_ts):
+      xs, dxs, ys = self.xs[idx], self.dxs[idx], self.ys[idx]
+      if channels is not None:
+        xs, dxs = xs[:, channels], dxs[:, channels]
+
+      start_inds = np.arange(0, xs.shape[0] - sample_length, sample_length)
+      end_inds = start_inds + sample_length
+
+      if num_per_ts > 0:
+        rinds = np.random.permutation(start_inds.shape[0])[:num_per_ts]
+      else:
+        rinds = np.arange(start_inds.shape[0])
+
+      for ridx in rinds:
+        rxs = xs[start_inds[ridx]:end_inds[ridx]]
+        if zero_frac is not None and zero_frac > 0.:
+          if (rxs.sum(1) == 0).sum() > zero_frac * rxs.shape[0]:
+            continue
+        rdxs = dxs[start_inds[ridx]:end_inds[ridx]]
+        rys = ys[start_inds[ridx]:end_inds[ridx]]
+        if self._shift_scale:
+          sigma = rxs[:, 0].std()
+          rxs = (rxs - np.mean(rxs[:, 0])) / sigma
+          rdxs = rdxs / sigma
+
+        sample_xs.append(rxs)
+        sample_dxs.append(rdxs)
+        sample_ys.append(rys)
+
+    return sample_xs, sample_dxs, sample_ys
+
+  def split(self, proportions):
+    proportions = np.array(proportions)
+    if proportions.sum() != 1:
+      proportions /= proportions.sum()
+
+    split_num = (proportions * self.num_ts).astype(int)
+    split_num[-1] = self.num_ts - split_num[:-1].sum()
+
+    x_shuffled, dx_shuffled, y_shuffled = self.shuffle_data(rtn=True)
+
+    end_inds = np.cumsum(split_num).tolist()
+    start_inds = [0] + end_inds[:-1]
+
+    dsets = []
+    for sind, eind in zip(start_inds, end_inds):
+      x_split = x_shuffled[sind:eind]
+      dx_split = dx_shuffled[sind:eind]
+      y_split = y_shuffled[sind:eind]
+      dsets.append(
+          DynamicalSystemDataset(x_split, dx_split, y_split, self._shuffle))
+
+    return dsets
 
 
-def create_data_feature_filenames(data_dir, save_dir, suffix, extension=".csv"):
-  if data_dir[-5] != '*' + extension:
-    data_dir = os.path.join(data_dir, '*' + extension)
-  all_data_files = glob.glob(data_dir)
+class MultimodalTimeSeriesDataset:
+  def __init__(self, txs, vis, t_length, shuffle=True, synced=False):
+    # If synced, the assumption is that the time-series are concatenated
+    # while maintaing the synchronized order.
+    self.t_length = t_length
+    self.synced = synced
 
-  data_file_dict = {}
-  features_file_dict = {}
-  for data_file in all_data_files:
-    data_file_basename = os.path.basename(data_file)
-    dfile_split = data_file_basename.split('.')
-    dfile_name_split = dfile_split[0].split("_")
-    dfile_idx = int(dfile_name_split[0])
-    dfile_sub_idx = 0 if len(dfile_name_split) == 1 else int(dfile_name_split[1])
+    txs, inds = utils.split_txs_into_length(txs, t_length, ignore_end=False)
+    vis = np.array(vis)[inds]
+    self.views, v_counts = np.unique(vis, return_counts=True)
+    if synced and not (v_counts == v_counts[0]).all():
+      raise DatasetException(
+          "Synced dataset has different number of data points for different"
+          "views.")
+    self.n_views = self.views.shape[0]
+    self.n_ts = v_counts[0] if synced else v_counts.sum()
 
-    if dfile_idx not in data_file_dict:
-      data_file_dict[dfile_idx] = {}
-      features_file = str(dfile_idx) + suffix
-      features_file = os.path.join(save_dir, features_file)
-      features_file_dict[dfile_idx] = features_file
+    self.v_txs = {vi:txs[(vis==vi).nonzero()[0]] for vi in self.views}
+    self.v_dims = {vi:self.v_txs[vi].shape[1] for vi in self.views}
 
-    data_file_dict[dfile_idx][dfile_sub_idx] = data_file
+    if not synced:
+      self.v_nts = {vi:vc for vi, vc in zip(self.views, v_counts)}
+      self.v_fracs = np.array([self.v_nts[vi]/self.n_ts for vi in self.views])
+    else:
+      self.v_nts = {vi:self.n_ts for vi in self.views}
+      frac = 1./ self.n_views
+      self.v_fracs = {vi:frac for vi in self.views}
 
-  data_files = []
-  features_files = []
-  sorted_keys = sorted(data_file_dict.keys())
+    self.epoch = 0
+    self.v_idx = {vi:0 for vi in self.views}
+    self.v_empty = {vi:False for vi in self.views}
 
-  for idx in sorted_keys:
-    features_files.append(features_file_dict[idx])
+    self._shuffle = shuffle
+    self.shuffle_data()
 
-    dfile_dict = data_file_dict[idx]
-    dfile_sorted_inds = sorted(dfile_dict.keys())
-    data_files.append([dfile_dict[k] for k in dfile_sorted_inds])
+    self._is_torch = False
 
-  # sorted_inds = np.argsort([int(os.path.basename(dfile).split('.')[0]) for dfile in data_files])
-  # data_files = [data_files[i] for i in sorted_inds]
-  # features_files = [features_files[i] for i in sorted_inds]
+  def toggle_shuffle(self, shuffle=None):
+    self._shuffle = not self._shuffle if shuffle is None else shuffle
 
-  return data_files, features_files
+  def convert_to_torch(self):
+    if self._is_torch:
+      return
 
+    self.v_txs = {
+        vi:torch.from_numpy(self.v_txs[vi])
+        for vi in self.views
+    }
+    self._is_torch = True
 
-def create_number_dict_from_files(data_dir, wild_card_str=None, extension=".npy"):
-  # Creates a dictionary from first number in filename to name of file.
-  if wild_card_str is None:
-    if extension[0] != '.': extension = '.' + extension
-    wild_card_str = '*' + extension
+  def convert_to_numpy(self):
+    if not self._is_torch:
+      return
 
-  if data_dir[-len(wild_card_str):] != wild_card_str:
-    data_dir = os.path.join(data_dir, wild_card_str)
-  data_files = glob.glob(data_dir)
+    self.v_txs = {
+        vi:self.v_txs[vi].detach().numpy().transpose(permutation)
+        for vi in self.views
+    }
+    self._is_torch = False
 
-  file_dict = {}
-  for fl in data_files:
-    fname = '.'.join(os.path.basename(fl).split('.')[:-1])
-    fnum = None
+  def shuffle_data(self, rtn=False):
+    if not self._shuffle:
+      return
+
+    if self.synced:
+      shuffle_inds = np.random.permutation(self.n_ts)
+      shuffled_txs = {vi:self.v_txs[vi][shuffle_inds] for vi in self.views}
+    else:
+      shuffle_inds = {
+          vi:np.random.permutation(self.v_nts[vi]) for vi in self.v_nts
+      }
+      shuffled_txs = {vi:self.v_txs[vi][si] for vi, si in shuffle_inds.items()}
     
-    try:
-      fnum = int(fname)
-    except ValueError:
-      pass
-    if fnum is None:
-      for separator in ['.', '_', '-']:
-        try:
-          fnum = int(fname.split(separator)[0])
-        except ValueError:
-          continue
-        break
+    if rtn:
+      return shuffled_txs
+    else:
+      self.v_txs = shuffled_txs
 
-    if fnum is None:
-      continue
-    file_dict[fnum] = fl
+  def is_empty(self):
+    return np.all(list(self.v_empty.values()))
 
-  return file_dict
+  def _get_view_batch(self, batch_size, vi, permutation):
+    if self.v_empty[vi]:
+      return (
+          torch.empty((batch_size, 0, self.v_dims[vi])).permute(permutation)
+          if self._is_torch else
+          np.empty((batch_size, 0, self.v_dims[vi])).transpose(permutation)
+      )
 
+    start_idx = self.v_idx[vi]
+    end_idx = start_idx + batch_size
 
-def create_annotation_labels(ann_text, console=False):
-  # Labels are:
-  # 0: Stabilization
-  # 1: Bleeding
-  # 2: Between bleeds
-  # 3: Resuscitation
-  # 4: Between resuscitation events
-  # 5: Post resuscitation
-  # -1: None
+    if end_idx >= self.v_nts[vi]:
+      self.v_idx[vi] = 0
+      self.v_empty[vi] = True
+    else:
+      self.v_idx[vi] = end_idx
 
-  stabilization_start_re = re.compile("min stabilization period$")
-  stabilization_end_re = re.compile("min stabilization period (completed|ended)$")
-  bleed_start_re = re.compile("^bleed \#[ ]*[1-9](?! stopped| temporarily stopped)")
-  bleed_end_re = re.compile("^bleed \#[ ]*[1-9] (stopped|temporarily stopped)$")
-  resuscitation_start_re = re.compile("^((begin |_begin )*resuscitation( with hextend( \(bag \#[1-9]\))*)*|cpr|co started|dobutamine started|lr started|(na|sodium) nitrite( started)*|resuscitation resumed)$")
-  resuscitation_end_re = re.compile("^(co stopped|cpr (completed|stopped)|dobutamine stopped|lr (complete|stopped)|resuscitation (\(hextend\) )*(complete[d]*|stopped)|(na|sodium) nitrite stopped|stop resuscitation|resuscitation paused)$")
-  
-  lbl = -1
-  critical_anns = []
-  ann_labels = []
+    if self._is_torch:
+      return self.v_txs[vi][start_idx:end_idx].permute(permutation)
+    return self.v_txs[vi][start_idx:end_idx].transpose(permutation)
 
-  for idx in range(len(ann_text)):
-    text = ann_text[idx]
-    new_lbl = lbl
-    if stabilization_start_re.search(text) is not None:
-      # Everything starts with stabilization. If there are multiple, only
-      # the last one matters.
-      critical_anns = []
-      ann_labels = []
-      lbl = -1
-      new_lbl = 0
-    # Ignore portion right after stabilization before first bleed.
-    elif stabilization_end_re.search(text) is not None:
-      new_lbl = -1
-    elif bleed_start_re.search(text) is not None:
-      new_lbl = 1
-    elif bleed_end_re.search(text) is not None:
-      new_lbl = 2
-    elif resuscitation_start_re.search(text) is not None:
-      # TODO: Not sure about this. The last "between bleeds" is actually right
-      # before resuscitation. So perhaps it should be "between resuscitation
-      # events."
-      if lbl == 2: lbl = 4
-      new_lbl = 3
-    elif resuscitation_end_re.search(text) is not None:
-      new_lbl = 4
+  def get_ts_batches(self, batch_size, permutation=(0, 1, 2)):
+    self.v_empty = {vi:False for vi in self.views}
+    self.shuffle_data()
 
-    if new_lbl != lbl:
-      critical_anns.append(idx)
-      ann_labels.append(lbl)
-      lbl = new_lbl
+    if self.synced:
+      v_bsizes = np.ones(self.n_views).astype(int) * batch_size
+    else:
+      v_bsizes = (self.v_fracs * batch_size).astype(int)
+      v_bsizes[-1] = batch_size - v_bsizes[:-1].sum()
 
-  # import IPython
-  # IPython.embed()
-  # TODO: Currently removing all resuscitation events before bleed.
-  # I don't know what the right thing to do here is.
-  if 0 not in ann_labels:
-    import IPython
-    IPython.embed()
-    
-  try:
-    last_bleed_idx = (np.array(ann_labels) == 1).nonzero()[0][-1]
-    between_bleed_inds = (np.array(ann_labels[:last_bleed_idx]) > 2).nonzero()[0]
-  except:
-    print("No bleeds found.")
-    return None, None
-  # valid_inds = ((np.array(ann_labels[:last_bleed_idx]) <= 2).tolist()
-  #               + [True] * (len(ann_labels) - last_bleed_idx))
-  for bidx in between_bleed_inds:
-    ann_labels[bidx] = 2
-  # critical_anns = np.array(critical_anns)[valid_inds].tolist()
-  # if console:
-  #   import IPython
-  #   IPython.embed()
-  # This next check is unnecessary. If the last label is anything but 3, that's
-  # worrisome.
-  # The last label should be "post resuscitation".
-  while ann_labels[-1] == 4:
-    del ann_labels[-1], critical_anns[-1]
-  # if ann_labels[-1] != 3:
-  #   import IPython
-  #   IPython.embed()
-  #   raise UtilsException("The last label should be 3, not %i"%ann_labels[-1])
+    while not self.is_empty():
+      batch = {
+          vi:self._get_view_batch(bsize, vi, permutation)
+          for vi, bsize in zip(self.views, v_bsizes)
+      }
+      yield batch
 
-  if critical_anns[-1] != idx:
-    critical_anns.append(idx)
-    ann_labels.append(5)
+  def get_all_view_ts(self, vi, permutation=(0, 1, 2)):
+    if self._is_torch:
+      return self.v_txs[vi].permute(permutation)
+    return self.v_txs[vi].transpose(permutation)
 
-  return critical_anns, ann_labels
+  def split(self, proportions):
+    raise NotImplementedError("Split function not yet ready for this class.")
+    # proportions = np.array(proportions)
+    # if proportions.sum() != 1:
+    #   proportions /= proportions.sum()
 
+    # split_num = (proportions * self.num_ts).astype(int)
+    # split_num[-1] = self.num_ts - split_num[:-1].sum()
 
-def convert_csv_to_np(csv_files, out_file, downsample=1, columns=None):
-  if not isinstance(csv_files, list):
-    _, data = load_csv(csv_files)
-    if columns is not None:
-      data = data[:, columns]
-    if downsample is not None and downsample > 1:
-      data = data[::downsample]
-  else:
-    data = []
-    for csv_file in csv_files:
-      _, file_data = load_csv(csv_file)
-      if columns is not None:
-        file_data = file_data[:, columns]
-      if downsample is not None and downsample > 1:
-        file_data = file_data[::downsample]
-      data.append(file_data)
-    data = np.concatenate(data, axis=0)
+    # x_shuffled, y_shuffled = self.shuffle_data(rtn=True)
 
-  np.save(out_file, data)
+    # end_inds = np.cumsum(split_num).tolist()
+    # start_inds = [0] + end_inds[:-1]
 
+    # dsets = []
+    # for sind, eind in zip(start_inds, end_inds):
+    #   x_split = x_shuffled[sind:eind]
+    #   y_split = y_shuffled[sind:eind]
+    #   dsets.append(
+    #       MultimodalDSDataset(x_split, y_split, self._shuffle))
 
-def get_size(obj, seen=None):
-    """Recursively finds size of objects"""
-    size = sys.getsizeof(obj)
-    if seen is None:
-        seen = set()
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0
-    # Important mark as seen *before* entering recursion to gracefully handle
-    # self-referential objects
-    seen.add(obj_id)
-    if isinstance(obj, dict):
-        size += sum([get_size(v, seen) for v in obj.values()])
-        size += sum([get_size(k, seen) for k in obj.keys()])
-    elif hasattr(obj, '__dict__'):
-        size += get_size(obj.__dict__, seen)
-    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
-        size += sum([get_size(i, seen) for i in obj])
-    return size
-
-
-def numpify(X):
-  # Convert from torch to numpy
-  return X.detach().numpy()
-
-# if __name__ == '__main__':
-#   import IPython
-#   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
-#   critical_anns, ann_labels = create_annotation_labels(ann_text)
-#   IPython.embed()
+    # return dsets
