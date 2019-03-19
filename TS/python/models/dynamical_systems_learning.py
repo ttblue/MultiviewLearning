@@ -4,7 +4,7 @@ import scipy.spatial.distance as ssd
 
 import matplotlib.pyplot as plt
 
-import gaussianRandomFeatures as grf
+import gaussian_random_features as grf
 import synthetic.simple_systems as ss
 import time_sync as tsync
 

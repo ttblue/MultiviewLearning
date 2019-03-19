@@ -3,8 +3,6 @@ from itertools import combinations_with_replacement as cwr, chain
 import numpy as np
 import torch
 
-import gaussianRandomFeatures
-
 
 torch.set_default_dtype(torch.float64)
 

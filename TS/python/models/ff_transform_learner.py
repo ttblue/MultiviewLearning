@@ -19,10 +19,10 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 
 import dynamical_systems_learning as dsl
-import gaussianRandomFeatures as grf
+import gaussian_random_features as grf
 import synthetic.simple_systems as ss
-import tfm_utils as tu
-import time_sync as tsync
+from utils import tfm_utils as tu
+from utils import time_sync as tsync
 
 import IPython
 
