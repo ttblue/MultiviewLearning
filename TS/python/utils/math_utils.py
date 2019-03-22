@@ -46,3 +46,8 @@ def mm_rbf_fourierfeatures(d_in, d_out, a, file_name=None):
     return xhat
 
   return mm_rbf
+
+
+def get_index_p_in_pdf(pdf, p):
+  cdf = np.cumsum(pdf) / pdf.sum()
+  return np.searchsorted(cdf, p, side="right")
