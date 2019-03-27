@@ -293,7 +293,7 @@ class MultiRNNAutoEncoder(nn.Module):
       print("Training interrupted. Quitting now.")
 
     self.trained = True
-    print("Training finished in %0.2f s." % (time.time() - all_start_time))
+    print("Training finished in %0.2fs." % (time.time() - all_start_time))
 
   def predict(self, txs, vi_in, vi_out=None, rtn_torch=False):
     # txs: List of size n_views with n_ts x n_steps x n_features(view)

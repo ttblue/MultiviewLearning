@@ -19,3 +19,11 @@ class Classifier(object):
 
   def predict(self, x, y):
     raise NotImplementedError()
+
+  def _print_if_verbose(self, lines, **kwargs):
+    if not self.config.verbose:
+      return
+
+    lines = lines if isinstance(lines, list) else [lines]
+    for line in lines:
+      print(line, **kwargs)
