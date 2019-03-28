@@ -19,7 +19,7 @@ def padded_identity(n, m, idx):
   #  0_{(n-idx-m) x m}]
   return np.r_[np.zeros((idx, m)), np.identity(m), np.zeros(((n - idx - m), m))]
 
-def generate_redundant_data(
+def generate_data(
       npts, nviews=3, ndim=15, scale=2, centered=True, overlap=True,
       gen_D_alpha=True):
   data = np.random.uniform(high=scale, size=(npts, ndim))
@@ -59,9 +59,10 @@ def generate_redundant_data(
         for i in range(nviews):
           v_col = (
               np.zeros((dim_per_view, n_per_view)) if i == vi else
-              padded_identity(dim_per_view, n_per_view, idx * n_per_view))
-          cidx += 1
-          col.append(v_col)
+              padded_identity(dim_per_view, n_per_view, cidx * n_per_view))
+          if i != vi:
+            cidx += 1
+          cols.append(v_col)
       else:
         cols = [
             (padded_identity(dim_per_view, n_per_view, 0) if i == vi else
@@ -118,10 +119,10 @@ def test_sslf_toy():
   ndim = 9
   scale = 1
   centered = True
-  overlap = False
-  gen_D_alpha = True
+  overlap = True
+  gen_D_alpha = False
 
-  data = generate_redundant_data(
+  data = generate_data(
       npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
       overlap=overlap, gen_D_alpha=gen_D_alpha)
 
@@ -143,8 +144,8 @@ def test_sslf_toy():
   reduce_dict_every_iter = False
   D_init_var_frac = 1.0 # 0.95
   removal_thresh = 0.02
-  lmbda = 2.0
-  gamma = 2.0
+  lmbda = 1.0
+  gamma = 1.0
   stopping_epsilon = 1e-3
   max_iters = 1000
   verbose = True
