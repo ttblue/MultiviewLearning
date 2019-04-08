@@ -106,10 +106,12 @@ class BasicDataset(object):
     return dsets
 
 
-def simple_plot(lst_of_plts):
+def simple_plot(lst_of_plts, title=None):
   for vals, color, lbl, ls in lst_of_plts:
     plt.plot(vals, color=color, label=lbl, linestyle=ls)
     plt.legend()
+  if title is not None:
+    plt.title(title)
   plt.show()
 
 
@@ -139,7 +141,6 @@ def test_sslf_toy():
     te_alpha = alpha[:, inds[1]]
     alpha = alpha[:, inds[0]]
 
-
   regularizer = "L1_inf"
   reduce_dict_every_iter = False
   D_init_var_frac = 1.0 # 0.95
@@ -167,7 +168,7 @@ def test_sslf_toy():
       (model._loss_history["D"], 'b', 'D loss', '-'),
       (model._reg_loss_history["D"], 'b', 'D reg', '--'),
       ]
-  simple_plot(loss_plots)
+  simple_plot(loss_plots, title="Sparse Structured Latent Factorization -- Loss")
 
 if __name__=="__main__":
   test_sslf_toy()

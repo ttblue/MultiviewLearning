@@ -51,3 +51,49 @@ def mm_rbf_fourierfeatures(d_in, d_out, a, file_name=None):
 def get_index_p_in_ordered_pdf(pdf, p):
   cdf = np.cumsum(pdf) / pdf.sum()
   return np.searchsorted(cdf, p, side="right")
+
+
+def convert_zeros_to_num(mat, num=1.0, eps=1e-6):
+  return np.where(np.abs(mat) > eps, mat, 1.0)
+
+
+def shift_and_scale(Xs, scale=True):
+  if not isinstance(Xs, list):
+    Xs = [Xs]
+  Xs = [np.array(X) for X in Xs]
+
+  Xs_means = [X.mean(axis=0) for X in Xs]
+  Xs_output = [(X - Xm) for X, Xm in zip(Xs, Xs_means)]
+  if scale:
+    Xs_std = [convert_zeros_to_num(X.std(axis=0, ddof=1)) for X in Xs_output]
+    Xs_output = [(X / X_std) for X, X_std in zip(Xs_output, Xs_std)]
+  else:
+    Xs_std = [np.ones(X.shape[1]) for X in Xs_output]
+
+  if len(Xs) == 1:
+    Xs_output, Xs_means, Xs_std = Xs_output[0], Xs_means[0], Xs_std[0]
+
+  return Xs_output, Xs_means, Xs_std
+
+
+def sym_matrix_power(mat, exps=-1, eps=1e-6):
+  if not np.allclose(mat, mat.T):
+    raise ValueError("Matrix is not symmetric.")
+
+  if notisinstance(exps, list):
+    exps = [exps]
+  exps = np.array(exps)
+
+  evals, evecs = np.linalg.eigh(mat)
+  evals = np.where(np.abs(evals) < eps, 0, evals)
+  if np.any(evals < 0.) and np.any((exp - (exp).astype(int)) > eps):
+    raise ValueError("Matrix has negative eigenvalues for root power.")
+  elif np.any(np.abs(evals) < eps) and np.any(exps < 0):
+    raise ValueError("Matrix has zero eigenvalues for inversion.")
+
+  mat_exps = []
+  for exp in exps:
+    evals_exp = np.power(evals, exp)
+    mat_exps.append(evals.T.dot(np.diag(evals_exp).dot(evals)))
+
+  return mat_exps[0] if len(mat_exps) == 1 else mat_exps
