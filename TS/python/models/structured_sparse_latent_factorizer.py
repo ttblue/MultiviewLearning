@@ -44,10 +44,10 @@ class StructuredSparseLatentFactorizer(classifier.Classifier):
   def __init__(self, config):
     super(StructuredSparseLatentFactorizer, self).__init__(config)
 
-    if self.config.regularizer not in _REGULARIZERS:
+    self._r_func = _REGULARIZERS.get(self.config.regularizer, None)
+    if self._r_func is None:
       raise classifier.ClassiferException(
           "Regularizer %s not available." % self.config.regularizer)
-    self._r_func = _REGULARIZERS[self.config.regularizer]
 
     self.alpha = None
     self.D = None

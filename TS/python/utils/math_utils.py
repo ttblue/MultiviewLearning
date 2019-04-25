@@ -76,11 +76,11 @@ def shift_and_scale(Xs, scale=True):
   return Xs_output, Xs_means, Xs_std
 
 
-def sym_matrix_power(mat, exps=-1, eps=1e-6):
+def sym_matrix_power(mat, exps=-1, eps=1e-6, pinv=True):
   if not np.allclose(mat, mat.T):
     raise ValueError("Matrix is not symmetric.")
 
-  if notisinstance(exps, list):
+  if not isinstance(exps, list):
     exps = [exps]
   exps = np.array(exps)
 
@@ -88,12 +88,18 @@ def sym_matrix_power(mat, exps=-1, eps=1e-6):
   evals = np.where(np.abs(evals) < eps, 0, evals)
   if np.any(evals < 0.) and np.any((exp - (exp).astype(int)) > eps):
     raise ValueError("Matrix has negative eigenvalues for root power.")
-  elif np.any(np.abs(evals) < eps) and np.any(exps < 0):
+  elif not pinv and np.any(np.abs(evals) < eps) and np.any(exps < 0):
     raise ValueError("Matrix has zero eigenvalues for inversion.")
 
   mat_exps = []
+  valid_inds = None
   for exp in exps:
-    evals_exp = np.power(evals, exp)
-    mat_exps.append(evals.T.dot(np.diag(evals_exp).dot(evals)))
+    if pinv and exp < 0 and valid_inds is None:
+      valid_inds = np.abs(evals) > eps
+      evals_exp = evals
+      evals_exp[valid_inds] = np.power(evals_exp[valid_inds], exp)
+    else:
+      evals_exp = np.power(evals, exp)
+    mat_exps.append(evecs.T.dot(np.diag(evals_exp).dot(evecs)))
 
   return mat_exps[0] if len(mat_exps) == 1 else mat_exps

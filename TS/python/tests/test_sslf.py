@@ -3,76 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from models import structured_sparse_latent_factorizer as sslf
+from synthetic import multimodal_systems as ms
 
 import IPython
-
-
-def flatten(list_of_lists):
-  return [a for b in list_of_lists for a in b]
-
-
-def padded_identity(n, m, idx):
-  # Helper function -- 
-  # Create an n x m block column matrix:
-  # [0_{idx x m};
-  #  I_{m x m};
-  #  0_{(n-idx-m) x m}]
-  return np.r_[np.zeros((idx, m)), np.identity(m), np.zeros(((n - idx - m), m))]
-
-def generate_data(
-      npts, nviews=3, ndim=15, scale=2, centered=True, overlap=True,
-      gen_D_alpha=True):
-  data = np.random.uniform(high=scale, size=(npts, ndim))
-
-  if centered:
-    data -= data.mean(axis=0)
-
-  n_per_view = ndim // nviews
-  n_remainder = ndim - n_per_view * nviews
-  view_groups = [
-      (i * n_per_view + np.arange(n_per_view)).astype(int)
-      for i in range(nviews)]
-  remaining_data = (
-      data[:, -n_remainder:] if n_remainder > 0 else np.empty((npts, 0)))
-
-  view_data = {}
-  for vi, vg in enumerate(view_groups):
-    view_inds = (
-        # Exclude one view-group and give the rest
-        flatten([vg for i, vg in enumerate(view_groups) if i != vi])
-        # Or only use that one group.
-        if overlap else view_groups[vi])
-    view_data[vi] = np.c_[data[:, view_inds], remaining_data]
-
-  # Trivial solution to check
-  if gen_D_alpha:
-    dim_per_view = n_per_view * (nviews - 1 if overlap else 1) + n_remainder
-    alpha = data.T
-
-    I_rem = padded_identity(
-        dim_per_view, n_remainder, dim_per_view - n_remainder)
-    D = {}
-    for vi in range(nviews):
-      if overlap:
-        cols = []
-        cidx = 0
-        for i in range(nviews):
-          v_col = (
-              np.zeros((dim_per_view, n_per_view)) if i == vi else
-              padded_identity(dim_per_view, n_per_view, cidx * n_per_view))
-          if i != vi:
-            cidx += 1
-          cols.append(v_col)
-      else:
-        cols = [
-            (padded_identity(dim_per_view, n_per_view, 0) if i == vi else
-             np.zeros((dim_per_view, n_per_view)))
-            for i in range(nviews)]
-      cols.append(I_rem)
-      D[vi] = np.concatenate(cols, axis=1)
-    return view_data, D, alpha
-
-  return view_data
 
 
 class BasicDataset(object):
@@ -124,7 +57,7 @@ def test_sslf_toy():
   overlap = True
   gen_D_alpha = False
 
-  data = generate_data(
+  data = ms.generate_redundant_multiview_data(
       npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
       overlap=overlap, gen_D_alpha=gen_D_alpha)
 

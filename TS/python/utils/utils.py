@@ -314,6 +314,11 @@ def get_size(obj, seen=None):
     return size
 
 
+# Some simple list comprehension tricks
+
+def flatten(list_of_lists):
+  return [a for b in list_of_lists for a in b]
+
 # if __name__ == '__main__':
 #   import IPython
 #   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
