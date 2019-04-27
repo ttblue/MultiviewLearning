@@ -319,6 +319,24 @@ def get_size(obj, seen=None):
 def flatten(list_of_lists):
   return [a for b in list_of_lists for a in b]
 
+
+# Misc. useful utilities
+
+def is_valid_partitioning(G, dim):
+  if np.sum([len(g) for g in G]) != dim:
+    return False
+
+  flat_G = utils.flatten(G)
+  if len(flat_G) != dim:
+    return False
+
+  d_range = list(range(dim))
+  for g in flat_G:
+    if g not in d_range:
+      return False
+  return True
+
+
 # if __name__ == '__main__':
 #   import IPython
 #   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')

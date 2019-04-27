@@ -5,8 +5,8 @@ import numpy as np
 import scipy as sp
 import sklearn.cross_decomposition as scd
 
+from models import embeddings
 from utils import math_utils as mu
-from synthetic import multimodal_systems as ms
 
 import IPython
 
@@ -28,20 +28,3 @@ def PCA_embedding(Xs, ndim=None, info_frac=0.8):
   Xs_p = Xs.dot(proj)
 
   return Xs_p, (S_proj, proj)
-
-
-
-if __name__ == "__main__":
-  npts = 1000 
-  nviews = 3
-  ndim = 9
-  scale = 1
-  centered = True
-  overlap = True
-  gen_D_alpha = False
-
-  data = ms.generate_redundant_multiview_data(
-      npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
-      overlap=overlap, gen_D_alpha=gen_D_alpha)
-
-  cca_info = correlation_info(data)

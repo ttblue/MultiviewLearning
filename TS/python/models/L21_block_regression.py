@@ -12,9 +12,6 @@ from numpy.linalg import solve
 from scipy.sparse import diags
 
 
-
-
-
 def L21_block_regression(Y, X, lam,tol=1e-6,max_iterations=100,verbose=0):
   # input: Y - list of output vectors
   #        X - list of feature matrices

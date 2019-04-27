@@ -99,7 +99,7 @@ class CCA(object):
     return self
 
 
-def _is_valid_partitioning(G, dim):
+def is_valid_partitioning(G, dim):
   if np.sum([len(g) for g in G]) != dim:
     return False
 
@@ -121,7 +121,7 @@ def _is_valid_partitioning(G, dim):
 class GroupSparseCCA(CCA):
 
   def __init__(self, config):
-    super(CCA, self).__init__(config)
+    super(GroupSparseCCA, self).__init__(config)
 
   def _load_funcs(self):
     self._r_func = _REGULARIZERS.get(self.config.regularizer, None)
@@ -139,10 +139,15 @@ class GroupSparseCCA(CCA):
           self.config.opt_algorithm)
 
   def _initialize_uv (self, X, Y):
-    _, S, VT = np.linalg.svd(X, full_matrices=False)
-    ux_init = VT[:self.config.ndim].T / S[:self.config.ndim]
-    _, S, VT = np.linalg.svd(Y, full_matrices=False)
-    vy_init = VT[:self.config.ndim].T / S[:self.config.ndim]
+    _, Sx, VxT = np.linalg.svd(X, full_matrices=False)
+    ux_init = VxT[:self.config.ndim].T
+    _, Sy, VyT = np.linalg.svd(Y, full_matrices=False)
+    vy_init = VyT[:self.config.ndim].T
+
+    if not self.config.use_diag_cov:
+      ux_init /= Sx[:self.config.ndim]
+      vy_init /= Sy[:self.config.ndim]
+
     return ux_init, vy_init
 
   def _admm(self):
@@ -154,10 +159,10 @@ class GroupSparseCCA(CCA):
     # keeping the other one fixed.
 
     X_centered, Y_centered = self._X_centered, self._Y_centered
-    dx, dy = X_centered.shape[0], Y_centerd.shape[0]
+    dx, dy = X_centered.shape[1], Y_centered.shape[1]
 
     if self.config.init == "auto":
-      ux_init, vy_init = self._initialize_uv(X_centered, Y_centerd)
+      ux_init, vy_init = self._initialize_uv(X_centered, Y_centered)
     else:
       raise classifier.ClassificationException(
           "Initialization method %s unavailable." % self.config.init)
@@ -167,43 +172,48 @@ class GroupSparseCCA(CCA):
     vy = cvx.Variable((dy, self.config.ndim))
     ux_fixed = cvx.Parameter((dx, self.config.ndim))
     vy_fixed = cvx.Parameter((dy, self.config.ndim))
+    # Using Identity for diagonal covariance
+    x_cov = 1 if self.config.use_diag_cov else (X_centered.T).dot(X_centered)
+    y_cov = 1 if self.config.use_diag_cov else (Y_centered.T).dot(Y_centered)
 
-    ux_cov_loss = -cvx.trace((Xs_centered * ux).T * (Ys_centered * vy_fixed))
+    ux_cov_loss = -cvx.trace((X_centered * ux).T * (Y_centered * vy_fixed))
     ux_reg = np.sum([self._r_func(ux[g].T) for g in self._Gx])
     ux_obj = ux_cov_loss + self.config.lmbda * ux_reg
-    ux_cnstrs = [
-        ux.T * (X_centered.T).dot(X_centered) * ux == np.eye(self.config.ndim)]
-    ux_prob = cvx.Problem(cvx.Minimize(ux_obj), ux_cnstrs)
+    ux_constraints = [] # [ux.T * x_cov * ux <= np.eye(self.config.ndim)]
+    ux_prob = cvx.Problem(cvx.Minimize(ux_obj), ux_constraints)
 
-    vy_cov_loss = -cvx.trace((Xs_centered * ux_fixed).T * (Ys_centered * vy))
+    vy_cov_loss = -cvx.trace((X_centered * ux_fixed).T * (Y_centered * vy))
     vy_reg = np.sum([self._r_func(vy[g].T) for g in self._Gy])
     vy_obj = vy_cov_loss + self.config.gamma * vy_reg
-    vy_cnstrs = [
-        vy.T * (Y_centered.T).dot(Y_centered) * vy == np.eye(self.config.ndim)]
-    vy_prob = cvx.Problem(cvx.Minimize(vy_obj), vy_cnstrs)
+    vy_constraints = [] # [vy.T * y_cov * vy <= np.eye(self.config.ndim)]
+    vy_prob = cvx.Problem(cvx.Minimize(vy_obj), vy_constraints)
 
     ux_opt, vy_opt = ux_init, vy_init
     for itr in range(self.config.max_iter):
 
       # Solve for u.
       if self.config.verbose:
-        print("Iter %i: Solving for ux..." % (itr + 1))
+        print("\nIter %i: Solving for ux..." % (itr + 1))
       ux.value = ux_opt
       vy_fixed.value = vy_opt
-      ux_prob.solve(solve=_SOLVER, warm_start=True)
+      ux_prob.solve(solver=_SOLVER, warm_start=True)
       ux_opt = ux.value
       if self.config.verbose:
-        print("Current objective value: %.3f\n" % ux_prob.value)
+        print("Current objective value: %.3f" % ux_prob.value)
+        print("Covariance maximization loss: %.3f" % ux_cov_loss.value)
+        print("Regularization loss: %.3f" % ux_reg.value)
 
       # Solve for u.
       if self.config.verbose:
-        print("Iter %i: Solving for vy..." % (itr + 1))
+        print("\nIter %i: Solving for vy..." % (itr + 1))
       vy.value = vy_opt
       ux_fixed.value = ux_opt
-      vy_prob.solve(solve=_SOLVER, warm_start=True)
+      vy_prob.solve(solver=_SOLVER, warm_start=True)
       vy_opt = vy.value
       if self.config.verbose:
         print("Current objective value: %.3f" % vy_prob.value)
+        print("Covariance maximization loss: %.3f" % vy_cov_loss.value)
+        print("Regularization loss: %.3f" % vy_reg.value)
 
       if np.abs(ux_prob.value - vy_prob) < self.config.tol:
         if self.config.verbose:
@@ -224,7 +234,8 @@ class GroupSparseCCA(CCA):
       raise ModelException(
           "Xs and Ys don't have the same number of data points.")
 
-    if not _is_valid_partitioning(Gx, dx) or not _is_valid_partitioning(Gy, dy):
+    if (not utils.is_valid_partitioning(Gx, dx) or
+        not utils.is_valid_partitioning(Gy, dy)):
       raise ModelException(
           "Index groupings not valid partition of feature dimension.")
 
