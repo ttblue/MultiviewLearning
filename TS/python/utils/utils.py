@@ -326,7 +326,7 @@ def is_valid_partitioning(G, dim):
   if np.sum([len(g) for g in G]) != dim:
     return False
 
-  flat_G = utils.flatten(G)
+  flat_G = flatten(G)
   if len(flat_G) != dim:
     return False
 

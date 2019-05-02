@@ -1,9 +1,21 @@
+# Some approaches to learn CCA/PCA/CAA embeddings
+# Some of the resources used for this:
+# Structured sparse CCA: https://arxiv.org/pdf/1705.10865.pdf
+# Prox algorithms: https://web.stanford.edu/~boyd/papers/pdf/prox_algs.pdf
+
 import cvxpy as cvx
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
+import sys
+import time
 
-from utils import math_utils as mu
+from models import classifier
+from utils import cvx_utils
+from utils import math_utils
 from utils import utils
+
+import IPython
 
 
 _SOLVER = cvx.GUROBI
@@ -22,8 +34,9 @@ class CCAConfig(object):
   # General config for all CCA classes.
   def __init__(
       self, ndim=None, info_frac=0.8, scale=True, use_diag_cov=True,
-      regularizer="L_inf", lmbda=1.0, gamma=1.0, opt_algorithm="alt_proj",
-      init="auto", max_iter=100, tol=1e-3, verbose=True):
+      regularizer="Linf", tau_u=1.0, tau_v=1.0, lmbda=1., mu=1.,
+      opt_algorithm="alt_proj", init="auto", max_inner_iter=1000, max_iter=100,
+      tol=1e-6, verbose=True):
     self.ndim = ndim
     self.info_frac = info_frac
     self.scale = scale
@@ -32,13 +45,19 @@ class CCAConfig(object):
     self.use_diag_cov = use_diag_cov
 
     self.regularizer = regularizer
+    self.tau_u = tau_u
+    self.tau_v = tau_v
+
+    # Misc. optimization hyperparameters
+    # Right now required for linearized ADMM
     self.lmbda = lmbda
-    self.gamma = gamma
+    self.mu = mu
 
     self.opt_algorithm = opt_algorithm
     self.init = init
 
     self.tol = tol
+    self.max_inner_iter = max_inner_iter
     self.max_iter = max_iter
 
     self.verbose = verbose
@@ -65,8 +84,8 @@ class CCA(object):
     #   X_proj, Y_proj = cca_model.transform(Xs, Ys)
     #   Xw, Yw = cca_model.x_weights_, cca_model.y_weights_
     # else:
-    Xs_data = mu.shift_and_scale(Xs, scale=self.config.scale)
-    Ys_data = mu.shift_and_scale(Ys, scale=self.config.scale)
+    Xs_data = math_utils.shift_and_scale(Xs, scale=self.config.scale)
+    Ys_data = math_utils.shift_and_scale(Ys, scale=self.config.scale)
 
     X_centered = Xs_data[0]
     Y_centered = Ys_data[0]
@@ -76,8 +95,8 @@ class CCA(object):
 
     # IPython.embed()
 
-    X_cov_sqrt_inv = mu.sym_matrix_power(X_cov, -0.5)
-    Y_cov_sqrt_inv = mu.sym_matrix_power(Y_cov, -0.5)
+    X_cov_sqrt_inv = math_utils.sym_matrix_power(X_cov, -0.5)
+    Y_cov_sqrt_inv = math_utils.sym_matrix_power(Y_cov, -0.5)
 
     cov = X_centered.T.dot(Y_centered) / n
     normalized_cov = X_cov_sqrt_inv.dot(cov.dot(Y_cov_sqrt_inv))
@@ -85,7 +104,7 @@ class CCA(object):
 
     ndim = self.config.ndim
     if ndim is None:
-      ndim = mu.get_index_p_in_ordered_pdf(S, self.config.info_frac)
+      ndim = math_utils.get_index_p_in_ordered_pdf(S, self.config.info_frac)
     self.Wx = X_cov_sqrt_inv.dot(U[:, :ndim])
     self.Wy = Y_cov_sqrt_inv.dot(VT[:ndim].T)
     self.X_proj = X_centered.dot(Wx)
@@ -118,25 +137,26 @@ def is_valid_partitioning(G, dim):
 #             \gamma \sum_{h \in G_y} R(v_h)
 # where R is some regularizer (like L_inf) to encourage group sparsity.
 # Index-set subscript indicates sub-matrix with the corresponding rows.
-class GroupSparseCCA(CCA):
+class GroupRegularizedCCA(CCA):
 
   def __init__(self, config):
-    super(GroupSparseCCA, self).__init__(config)
+    super(GroupRegularizedCCA, self).__init__(config)
+    if self.config.use_diag_cov:
+      raise NotImplementedError(
+          "Using diagonal covariance not implemented.")
+    self._training = True
 
-  def _load_funcs(self):
-    self._r_func = _REGULARIZERS.get(self.config.regularizer, None)
-    if self._r_func is None:
-      raise classifier.ClassiferException(
-          "Regularizer %s not available." % self.config.regularizer)
+  # def _load_funcs(self):
+    # self._r_func = _REGULARIZERS.get(self.config.regularizer, None)
+    # if self._r_func is None:
+    #   raise classifier.ClassifierException(
+    #       "Regularizer %s not available." % self.config.regularizer)
 
-    _opt_func_map = {
-        "alt_proj": self._alternating_projections,
-    }
-    self._opt_func  = _opt_func_map.get(self.config.opt_algorithm)
-    if self._opt_func is None:
-      raise classifier.ClassiferException(
-          "Optimization algorithm %s not available." %
-          self.config.opt_algorithm)
+    # self._opt_func  = _opt_func_map.get(self.config.opt_algorithm)
+    # if self._opt_func is None:
+    #   raise classifier.ClassifierException(
+    #       "Optimization algorithm %s not available." %
+    #       self.config.opt_algorithm)
 
   def _initialize_uv (self, X, Y):
     _, Sx, VxT = np.linalg.svd(X, full_matrices=False)
@@ -150,81 +170,201 @@ class GroupSparseCCA(CCA):
 
     return ux_init, vy_init
 
-  def _admm(self):
+  def _linearized_admm_single_var (
+      self, prox_f, prox_g, X, U, lmbda=1., mu=1., init_u=None, init_z=None,
+      init_p=None):
     # Solve using linearized ADMM
-    pass
+    # Details: https://arxiv.org/pdf/1705.10865.pdf
+    # Slight change: Solving for --
+    # min_{x, z} f(x) + g(z)
+    # s.t. [A1; A2] x - [I; 0]z = 0
+    # -- The paper is precise about solving for the canonical vectors 2 onwards.
 
-  def _alternating_projections(self):
+    n, dim = X.shape
+    nvec = self._cvec_id
+    u = np.zeros(dim) if init_u is None else init_u
+    z = np.zeros(n) if init_z is None else init_z
+    p = np.zeros(n + nvec) if init_p is None else init_p
+
+    I = np.eye(dim)
+    zpad = np.zeros(nvec)
+
+    A = X if U.shape[1] == 0 else np.r_[X, U.T.dot(X.T.dot(X))]
+    B = lambda z: np.r_[z, zpad]
+
+    lmbda = lmbda * np.sqrt(n)
+    primal_residual = []
+    dual_residual = []
+    # IPython.embed()
+    # uns, zns, pns = [], [], []
+    def obj(u, z, p):
+      return (
+          u.dot(self._c) +
+          self._tau * cvx_utils.group_norm(u, self._G)
+    for itr in range(self.config.max_inner_iter):
+      u0, z0, p0 = u, z, p
+      if self.config.verbose:
+        print("      Inner iter %i out of %i" %
+              (itr + 1, self.config.max_inner_iter), end='\r')
+        sys.stdout.flush()
+      u = prox_f(u - mu / lmbda * A.T.dot(A.dot(u) + B(z) + p), mu)
+      z = prox_g(X.dot(u) + p[:n], lmbda)
+      p += A.dot(u) + B(z)
+      # Old updates. They work for only first canonical vector.
+      # u = prox_f(u - mu / lmbda * X.T.dot(X.dot(u) - z + p), mu)
+      # z = prox_g(X.dot(u) + p, lmbda)
+      # p += X.dot(u) - z
+      # uns.append(np.linalg.norm(u-u0))
+      # zns.append(np.linalg.norm(z-z0))
+      # pns.append(np.linalg.norm(p-p0))
+      primal_residual.append(np.linalg.norm(X.dot(u) - z))
+      dual_residual.append(np.linalg.norm(A.T.dot(B(z - z0) / lmbda)))#(A.dot(u) + B(z)).dot(p))
+      # if np.linalg.norm(X.dot(u) - z) < self.config.tol:
+      #   break
+      dvecs = [np.linalg.norm(dvec) for dvec in [u - u0, z - z0, p - p0]]
+      if np.all(np.array(dvecs) < self.config.tol):
+        break
+    # IPython.embed()
+    plt.plot(primal_residual, color='r', label='primal residual')
+    plt.plot(dual_residual, color='b', label='dual residual') 
+    plt.legend()
+    plt.show(block=False)
+    plt.pause(1.5)
+    plt.close()
+    print("      Inner iter %i out of %i" %
+          (itr + 1, self.config.max_inner_iter))
+
+    return u, z, p
+
+  def _hand_off_to_solver(self, var_name):
+    self._var_name = var_name
+    if var_name == "u":
+      X = self._X
+      U = self._ux
+
+      c = -X.T.dot(self._Y.dot(self._v))
+      G = self._Gx
+      tau = self.config.tau_u
+
+      init_u = self._u
+      init_z = X.dot(init_u)
+      init_p = self._pu
+    else:
+      X = self._Y
+      U = self._vy
+
+      c = -X.T.dot(self._X.dot(self._u))
+      G = self._Gy
+      tau = self.config.tau_v
+
+      init_u = self._v
+      init_z = X.dot(init_u)
+      init_p = self._pv
+
+    # Temp stuff
+    self._c = c
+    self._tau = tau
+    self._G = G
+    ###
+
+    prox_group_norm = (
+        lambda u, lmbda: cvx_utils.prox_group_norm(
+            u, G, lmbda * tau, norm=self.config.regularizer))
+    prox_f = (
+        lambda u, lmbda: cvx_utils.prox_affine_addition(
+            u, prox_group_norm, c, lmbda))
+    prox_g = cvx_utils.prox_proj_L2_norm_ball
+
+    u, z, p = self._linearized_admm_single_var(
+        prox_f=prox_f, prox_g=prox_g, X=X, U=U, lmbda=self.config.lmbda,
+        mu=self.config.mu, init_u=init_u, init_z=init_z, init_p=init_p)
+    if var_name == "u":
+      self._u, self._pu = u, p
+    else:
+      self._v, self._pv = u, p
+
+  def _objective_value(self):
+    obj = -(self._u.T.dot(self._X.T)).dot(self._Y.dot(self._v))
+    order = self.config.regularizer
+    obj += self.config.tau_u * cvx_utils.group_norm(self._u, self._Gx, order)
+    obj += self.config.tau_v * cvx_utils.group_norm(self._v, self._Gy, order)
+
+    return obj
+
+  def _alternating_projections_single_canonical_vector_pair(self):
+    # Alternate between u and v to solve for next pair of canonical vectors.
+    self._u = self._ux_init[:, self._cvec_id]
+    self._v = self._vy_init[:, self._cvec_id]
+    self._pu, self._pv = None, None
+
+    for itr in range(self.config.max_iter):
+      if self.config.verbose:
+        u_start_time = time.time()
+        print("  Canonical vector %i: Iter %i of %i." % (
+            self._cvec_id + 1, itr + 1, self.config.max_iter))
+        print("    Solving for u...")
+
+      self._hand_off_to_solver("u")
+      if np.isnan(self._objective_value()):
+        # if self.config.verbose:
+        print("NaN value for objective. Cannot continue.")
+        self._training = False
+        break
+
+      if self.config.verbose:
+        v_start_time = time.time()
+        print("    Solving for u... Done in %.2fs" %
+              (v_start_time - u_start_time))
+        print("      Objective value: %.3f" % self._objective_value())
+        print("    Solving for v...")
+
+      self._hand_off_to_solver("v")
+      if np.isnan(self._objective_value()):
+        # if self.config.verbose:
+        print("NaN value for objective. Cannot continue.")
+        self._training = False
+        break
+
+      if self.config.verbose:
+        print("    Solving for v... Done in %.2fs" %
+              (time.time() - v_start_time))
+        print("      Objective value: %.3f" % self._objective_value())
+    # Add learned projection vectors to bases
+    self._ux = np.c_[self._ux, self._u.reshape(-1, 1)]
+    self._vy = np.c_[self._vy, self._v.reshape(-1, 1)]
+
+  def _optimize(self):
     # Similar to ADMM but simply alternating between solving for each variable
     # keeping the other one fixed.
-
-    X_centered, Y_centered = self._X_centered, self._Y_centered
-    dx, dy = X_centered.shape[1], Y_centered.shape[1]
+    # X_centered, Y_centered = self._X_centered, self._Y_centered
+    # dx, dy = X_centered.shape[1], Y_centered.shape[1]
 
     if self.config.init == "auto":
-      ux_init, vy_init = self._initialize_uv(X_centered, Y_centered)
+      self._ux_init, self._vy_init = self._initialize_uv(self._X, self._Y)
     else:
       raise classifier.ClassificationException(
           "Initialization method %s unavailable." % self.config.init)
 
-    # We can initialize the problem outside
-    ux = cvx.Variable((dx, self.config.ndim))
-    vy = cvx.Variable((dy, self.config.ndim))
-    ux_fixed = cvx.Parameter((dx, self.config.ndim))
-    vy_fixed = cvx.Parameter((dy, self.config.ndim))
-    # Using Identity for diagonal covariance
-    x_cov = 1 if self.config.use_diag_cov else (X_centered.T).dot(X_centered)
-    y_cov = 1 if self.config.use_diag_cov else (Y_centered.T).dot(Y_centered)
-
-    ux_cov_loss = -cvx.trace((X_centered * ux).T * (Y_centered * vy_fixed))
-    ux_reg = np.sum([self._r_func(ux[g].T) for g in self._Gx])
-    ux_obj = ux_cov_loss + self.config.lmbda * ux_reg
-    ux_constraints = [] # [ux.T * x_cov * ux <= np.eye(self.config.ndim)]
-    ux_prob = cvx.Problem(cvx.Minimize(ux_obj), ux_constraints)
-
-    vy_cov_loss = -cvx.trace((X_centered * ux_fixed).T * (Y_centered * vy))
-    vy_reg = np.sum([self._r_func(vy[g].T) for g in self._Gy])
-    vy_obj = vy_cov_loss + self.config.gamma * vy_reg
-    vy_constraints = [] # [vy.T * y_cov * vy <= np.eye(self.config.ndim)]
-    vy_prob = cvx.Problem(cvx.Minimize(vy_obj), vy_constraints)
-
-    ux_opt, vy_opt = ux_init, vy_init
-    for itr in range(self.config.max_iter):
-
-      # Solve for u.
+    self._ux = np.empty((self._X.shape[1], 0))
+    self._vy = np.empty((self._Y.shape[1], 0))
+    for self._cvec_id in range(self.config.ndim):
       if self.config.verbose:
-        print("\nIter %i: Solving for ux..." % (itr + 1))
-      ux.value = ux_opt
-      vy_fixed.value = vy_opt
-      ux_prob.solve(solver=_SOLVER, warm_start=True)
-      ux_opt = ux.value
-      if self.config.verbose:
-        print("Current objective value: %.3f" % ux_prob.value)
-        print("Covariance maximization loss: %.3f" % ux_cov_loss.value)
-        print("Regularization loss: %.3f" % ux_reg.value)
+        cvec_start_time = time.time()
+        print("\nSolving for canonical vector %i out of %i." % 
+              (self._cvec_id + 1, self.config.ndim))
 
-      # Solve for u.
-      if self.config.verbose:
-        print("\nIter %i: Solving for vy..." % (itr + 1))
-      vy.value = vy_opt
-      ux_fixed.value = ux_opt
-      vy_prob.solve(solver=_SOLVER, warm_start=True)
-      vy_opt = vy.value
-      if self.config.verbose:
-        print("Current objective value: %.3f" % vy_prob.value)
-        print("Covariance maximization loss: %.3f" % vy_cov_loss.value)
-        print("Regularization loss: %.3f" % vy_reg.value)
-
-      if np.abs(ux_prob.value - vy_prob) < self.config.tol:
-        if self.config.verbose:
-          print("Change in objective below tolerance. Done.")
+      self._alternating_projections_single_canonical_vector_pair()
+      if not self._training:
+        print("Breaking out of training.")
         break
-    return ux_opt, vy_opt
+
+      if self.config.verbose:
+        print("Solved for canonical vector %i in %.2fs " % 
+              (self._cvec_id + 1, time.time() - cvec_start_time))
 
   def fit(self, Xs, Ys, Gx, Gy):
-
-    self._load_funcs()
-
+    self._training = True
+    # self._load_funcs()
     Xs = np.array(Xs)
     Ys = np.array(Ys)
     n = Xs.shape[0]
@@ -239,13 +379,22 @@ class GroupSparseCCA(CCA):
       raise ModelException(
           "Index groupings not valid partition of feature dimension.")
 
-    Xs_data = mu.shift_and_scale(Xs, scale=self.config.scale)
-    Ys_data = mu.shift_and_scale(Ys, scale=self.config.scale)
-    self._X_centered, self._Y_centered = Xs_data[0], Ys_data[0]
+    Xs_data = math_utils.shift_and_scale(Xs, scale=self.config.scale)
+    Ys_data = math_utils.shift_and_scale(Ys, scale=self.config.scale)
+    self._X, self._Y = Xs_data[0], Ys_data[0]
     self._Gx, self._Gy = Gx, Gy
 
     # Optimization function
-    self._ux, self._vy = self._opt_func()
+    if self.config.verbose:
+      train_start_time = time.time()
+    try:
+      self._optimize()
+    except KeyboardInterrupt:
+      print("Training interrupted. Exiting...")
+    self._training = False
+    if self.config.verbose:
+      print("Finished training in %.2fs." % (time.time() - train_start_time))
+
     # ux = cvx.Variable((dx, self.config.ndim))
     # vy = cvx.Variable((dy, self.config.ndim))
 
@@ -280,8 +429,60 @@ def correlation_info(v_Xs):
         [v_Xs[v_map[i]] for i in views if i != vi], axis=1)
     cca_info[vi] = CCA(X, X_all_other, info_frac=1.0)
 
-  IPython.embed()
   return cca_info
 
 
+### Old, incorrect code for alternating projections:
+    # # We can initialize the problem outside
+    # ux = cvx.Variable((dx, self.config.ndim))
+    # vy = cvx.Variable((dy, self.config.ndim))
+    # ux_fixed = cvx.Parameter((dx, self.config.ndim))
+    # vy_fixed = cvx.Parameter((dy, self.config.ndim))
+    # # Using Identity for diagonal covariance
+    # x_cov = 1 if self.config.use_diag_cov else (X_centered.T).dot(X_centered)
+    # y_cov = 1 if self.config.use_diag_cov else (Y_centered.T).dot(Y_centered)
 
+    # ux_cov_loss = -cvx.trace((X_centered * ux).T * (Y_centered * vy_fixed))
+    # ux_reg = np.sum([self._r_func(ux[g].T) for g in self._Gx])
+    # ux_obj = ux_cov_loss + self.config.lmbda * ux_reg
+    # ux_constraints = [] # [ux.T * x_cov * ux <= np.eye(self.config.ndim)]
+    # ux_prob = cvx.Problem(cvx.Minimize(ux_obj), ux_constraints)
+
+    # vy_cov_loss = -cvx.trace((X_centered * ux_fixed).T * (Y_centered * vy))
+    # vy_reg = np.sum([self._r_func(vy[g].T) for g in self._Gy])
+    # vy_obj = vy_cov_loss + self.config.gamma * vy_reg
+    # vy_constraints = [] # [vy.T * y_cov * vy <= np.eye(self.config.ndim)]
+    # vy_prob = cvx.Problem(cvx.Minimize(vy_obj), vy_constraints)
+
+    # ux_opt, vy_opt = ux_init, vy_init
+    # for itr in range(self.config.max_iter):
+
+    #   # Solve for u.
+    #   if self.config.verbose:
+    #     print("\nIter %i: Solving for ux..." % (itr + 1))
+    #   ux.value = ux_opt
+    #   vy_fixed.value = vy_opt
+    #   ux_prob.solve(solver=_SOLVER, warm_start=True)
+    #   ux_opt = ux.value
+    #   if self.config.verbose:
+    #     print("Current objective value: %.3f" % ux_prob.value)
+    #     print("Covariance maximization loss: %.3f" % ux_cov_loss.value)
+    #     print("Regularization loss: %.3f" % ux_reg.value)
+
+    #   # Solve for u.
+    #   if self.config.verbose:
+    #     print("\nIter %i: Solving for vy..." % (itr + 1))
+    #   vy.value = vy_opt
+    #   ux_fixed.value = ux_opt
+    #   vy_prob.solve(solver=_SOLVER, warm_start=True)
+    #   vy_opt = vy.value
+    #   if self.config.verbose:
+    #     print("Current objective value: %.3f" % vy_prob.value)
+    #     print("Covariance maximization loss: %.3f" % vy_cov_loss.value)
+    #     print("Regularization loss: %.3f" % vy_reg.value)
+
+    #   if np.abs(ux_prob.value - vy_prob) < self.config.tol:
+    #     if self.config.verbose:
+    #       print("Change in objective below tolerance. Done.")
+    #     break
+    # return ux_opt, vy_opt

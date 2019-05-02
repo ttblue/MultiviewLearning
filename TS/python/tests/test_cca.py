@@ -8,7 +8,7 @@ import IPython
 
 
 def default_data():
-  npts = 1000 
+  npts = 1000
   nviews = 3
   ndim = 9
   scale = 1
@@ -35,25 +35,30 @@ def default_config():
   ndim = 3
   info_frac = 0.8
   scale = True
+
   use_diag_cov = False
 
-  regularizer = "L1_inf"
-  lmbda = 1.0
-  gamma = 1.0
+  regularizer = "L1"
+  tau_u = 4.165
+  tau_v = 4.165
+
+  lmbda = 1.
+  mu = 1.0
 
   opt_algorithm = "alt_proj"
   init = "auto"
 
-  tol = 1e-6
-  max_iter = 10
+  tol = 1e-3
+  max_inner_iter = 1000
+  max_iter = 30
 
   verbose = True
 
   return embeddings.CCAConfig(
       ndim=ndim, info_frac=info_frac, scale=scale, use_diag_cov=use_diag_cov,
-      regularizer=regularizer, lmbda=lmbda, gamma=gamma,
-      opt_algorithm=opt_algorithm, init=init, max_iter=max_iter, tol=tol,
-      verbose=verbose)
+      regularizer=regularizer, tau_u=tau_u, tau_v=tau_v, lmbda=lmbda, mu=mu,
+      opt_algorithm=opt_algorithm, init=init, max_inner_iter=max_inner_iter,
+      max_iter=max_iter, tol=tol, verbose=verbose)
 
 
 def test_GSCCA():
@@ -62,7 +67,7 @@ def test_GSCCA():
   # Can change config values here.
   config.ndim = 1
 
-  model = embeddings.GroupSparseCCA(config)
+  model = embeddings.GroupRegularizedCCA(config)
   model.fit(X, Y, Gx, Gy)
 
   IPython.embed()
@@ -70,3 +75,9 @@ def test_GSCCA():
 
 if __name__=="__main__":
   test_GSCCA()
+
+# import matplotlib.pyplot as plt
+# plt.plot(primal_residual, color='r', label='primal residual')
+# plt.plot(dual_residual, color='b', label='dual residual') 
+# plt.legend()
+# plt.show()
