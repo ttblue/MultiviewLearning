@@ -24,11 +24,12 @@ _ORDER_MAP = {
     "2": 2,
 }
 # Group norm:
-def group_norm(x, G, order="inf"):
+def group_norm(x, G, order="inf", use_cvx=False):
   if not isinstance(order, int) and order[0] == "L":
     order = order[1:]
   order = _ORDER_MAP[order]
-  return np.sum([np.linalg.norm(x[g], order) for g in G])
+  norm_func = cvx.norm if use_cvx else np.linalg.norm
+  return np.sum([norm_func(x[g], order) for g in G])
 
 
 # Prox operators:
@@ -67,7 +68,6 @@ def bisection_solver(f, lb, ub, tol=1e-6):
   func = (lambda x: -f(x)) if f(lb) > f(ub) else f
   # lb, ub = ub, lb
   lbr, ubr = lb, ub
-
 
   x = (lb + ub) / 2.
   idx = 0
