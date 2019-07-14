@@ -175,3 +175,15 @@ def gram_schmidt(B):
     Bgs = np.c_[Bgs, get_independent_component(B[:, i], Bgs, normalize=True)]
 
   return Bgs
+
+
+# Function to perturn matrix by an angle theta about vector v
+def perturb_matrix(X, eps=1e-2):
+  M = np.eye(X.shape[1])
+
+  # Uniformly perturb first col of transformation
+  M[:, 0] += (np.random.rand(X.shape[1]) - 0.5) * eps
+  M = gram_schmidt(M)
+
+  return X.dot(M.T), M
+  

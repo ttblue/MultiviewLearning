@@ -33,10 +33,10 @@ _OPT_ALGORITHMS = ["alt_proj", "admm", "tfocs"]
 class CCAConfig(object):
   # General config for all CCA classes.
   def __init__(
-      self, ndim=None, info_frac=0.8, scale=True, use_diag_cov=True,
-      regularizer="Linf", tau_u=1.0, tau_v=1.0, lmbda=1., mu=1.,
+      self, ndim=None, info_frac=0.8, scale=True, use_diag_cov=False,
+      regularizer="Linf", tau_u=1.0, tau_v=1.0, tau_all=1.0, lmbda=1., mu=1.,
       opt_algorithm="alt_proj", init="auto", max_inner_iter=1000, max_iter=100,
-      tol=1e-6, sp_tol=1e-5, plot=True, verbose=True):
+      tol=1e-6, sp_tol=1e-5, name=None, plot=True, verbose=True):
     self.ndim = ndim
     self.info_frac = info_frac
     self.scale = scale
@@ -47,6 +47,7 @@ class CCAConfig(object):
     self.regularizer = regularizer
     self.tau_u = tau_u
     self.tau_v = tau_v
+    self.tau_all = tau_all
 
     # Misc. optimization hyperparameters
     # Right now required for linearized ADMM
@@ -61,6 +62,7 @@ class CCAConfig(object):
     self.max_inner_iter = max_inner_iter
     self.max_iter = max_iter
 
+    self.name = name
     self.plot = plot
     self.verbose = verbose
 
@@ -71,6 +73,7 @@ class CCA(object):
     # self.ndim = ndim
     # self.info_frac = info_frac
     # self.scale = scale
+    self._last_update_idx = -1
 
   def fit(self, Xs, Ys):
     Xs = np.array(Xs)
@@ -140,13 +143,14 @@ def is_valid_partitioning(G, dim):
 # where R is some regularizer (like L_inf) to encourage group sparsity.
 # Index-set subscript indicates sub-matrix with the corresponding rows.
 class GroupRegularizedCCA(CCA):
-
   def __init__(self, config):
     super(GroupRegularizedCCA, self).__init__(config)
     if self.config.use_diag_cov:
       raise NotImplementedError(
           "Using diagonal covariance not implemented.")
     self._training = True
+    self._name_str = (
+        "" if self.config.name is None else " for %s" % self.config.name)
 
   # def _load_funcs(self):
     # self._r_func = _REGULARIZERS.get(self.config.regularizer, None)
@@ -212,6 +216,7 @@ class GroupRegularizedCCA(CCA):
         self._c * u_var +
         self._tau * cvx_utils.group_norm(
             u_var, self._G, order=self.config.regularizer, use_cvx=True) +
+        self.config.tau_all * cvx.norm1(u_var) +
         0.5 / lmbda * cvx.norm(A * u_var + z_fixed + p_fixed) ** 2)
     prob = cvx.Problem(cvx.Minimize(f_obj))
     def temp_min_u(zf, pf):
@@ -237,6 +242,7 @@ class GroupRegularizedCCA(CCA):
       fval1 = u.dot(self._c)
       fval2 = (
           self._tau * cvx_utils.group_norm(u, self._G, self.config.regularizer))
+      fval3 = self.config.tau_all * np.linalg.norm(u, ord=1)
       pval = (1 / lmbda * A.T.dot(A.dot(u0) + B(z)).dot(u) if lin else 
               0.5 / lmbda * np.linalg.norm(A.dot(u) + B(z) + p))
       cval = mu / 2 * np.linalg.norm(u - u0) ** 2 if lin else 0
@@ -244,19 +250,23 @@ class GroupRegularizedCCA(CCA):
       #         p.T.dot(A.dot(u) + B(z)))
       # cval = (1 / (2 * mu) * np.linalg.norm(u - u0)**2 if lin else
       #         1 / (2 * lmbda) * np.linalg.norm(A.dot(u) + B(z))**2)
-      return fval1, fval2, pval, cval
+      return fval1, fval2, fval3, pval, cval
 
     # IPython.embed()
     for itr in range(self.config.max_inner_iter):
       u0, z0, p0 = u, z, p
-      # u = prox_f(u - mu / lmbda * A.T.dot(A.dot(u) + B(z) + p), mu)
-      # u = temp_prox(u - mu / lmbda * A.T.dot(A.dot(u) + B(z) + p), mu)
+      # u1 = prox_f(u - mu / lmbda * A.T.dot(A.dot(u) + B(z) + p), mu)
+      # u3 = temp_prox(u - mu / lmbda * A.T.dot(A.dot(u) + B(z) + p), mu)
       # Solving original problem for u
-      u = temp_min_u(B(z), p)
+      u2 = temp_min_u(B(z), p)
+      # if np.linalg.norm(u - u2) > 1e-4:
+      #   IPython.embed()
       z = prox_g(X.dot(u) + p[:n], lmbda)
       p += A.dot(u) + B(z)
       # Old updates. They work for only first canonical vector.
-      # u = prox_f(u - mu / lmbda * X.T.dot(X.dot(u) - z + p), mu)
+      # u4 = prox_f(u - mu / lmbda * X.T.dot(X.dot(u) - z + p), mu)
+      u = u2
+
       # z = prox_g(X.dot(u) + p, lmbda)
       # p += X.dot(u) - z
       # uns.append(np.linalg.norm(u-u0))
@@ -271,13 +281,14 @@ class GroupRegularizedCCA(CCA):
       if np.all(np.array(dvecs) < self.config.tol):
         break
       if self.config.verbose:
-        fval1, fval2, pval, cval = obj_vals[-1]
+        fval1, fval2, fval3, pval, cval = obj_vals[-1]
         print("      Inner iter %i out of %i."
-              "      Obj. val: %.6f, %.6f, %.6f, %.6f"
-              "      Cnt. val: %.6f" %
+              "        Obj. val: (cr) %.6f, (gnr) %.6f, (nr) %.6f, (lg) %.6f,"
+              " (prx) %.6f"
+              "        Cnt. val: %.6f" %
               (itr + 1, self.config.max_inner_iter,
-               fval1, fval2 / self._tau, pval, cval,
-               primal_residual[-1]), end='\r')
+               fval1, fval2 / self._tau, fval3 / self.config.tau_all,
+               pval, cval, primal_residual[-1]), end='\r\r\r')
         sys.stdout.flush()
     # IPython.embed()
     # plt.plot(primal_residual, color='r', label='primal residual')
@@ -289,16 +300,17 @@ class GroupRegularizedCCA(CCA):
       plt.show(block=False)
       plt.pause(1.5)
       plt.close()
-    if np.any(np.array(obj_vals[-2:]) > 1e5):
-      IPython.embed()
+    # if np.any(np.array(obj_vals[-2:]) > 1e5):
+    #   IPython.embed()
     if self.config.verbose:
-      fval1, fval2, pval, cval = obj_vals[-1]
+      fval1, fval2, fval3, pval, cval = obj_vals[-1]
       print("      Inner iter %i out of %i."
-            "      Obj. val: %.6f, %.6f, %.6f, %.6f"
-            "      Cnt. val: %.6f" %
+            "        Obj. val: (cr) %.6f, (gnr) %.6f, (nr) %.6f, (lg) %.6f,"
+            " (prx) %.6f"
+            "        Cnt. val: %.6f" %
             (itr + 1, self.config.max_inner_iter,
-             fval1, fval2 / self._tau, pval, cval,
-             primal_residual[-1]))
+             fval1, fval2 / self._tau, fval3 / self.config.tau_all,
+             pval, cval, primal_residual[-1]))
       sys.stdout.flush()
 
     return u, z, p
@@ -350,8 +362,13 @@ class GroupRegularizedCCA(CCA):
         prox_f=prox_f, prox_g=prox_g, X=X, U=U, lmbda=lmbda, mu=self.config.mu,
         init_u=init_u, init_z=init_z, init_p=init_p)
     if var_name == "u":
+      # TODO: maybe have different tolerance for this?
+      if np.linalg.norm(self._u - u) < self.config.tol:
+        self._u_converged = True
       self._u, self._zu, self._pu = u, z, p
     else:
+      if np.linalg.norm(self._v - u) < self.config.tol:
+        self._v_converged = True
       self._v, self._zv, self._pv = u, z, p
 
   def _objective_value(self):
@@ -359,6 +376,8 @@ class GroupRegularizedCCA(CCA):
     order = self.config.regularizer
     obj += self.config.tau_u * cvx_utils.group_norm(self._u, self._Gx, order)
     obj += self.config.tau_v * cvx_utils.group_norm(self._v, self._Gy, order)
+    obj += self.config.tau_all * (
+        np.linalg.norm(self._u, ord=1) + np.linalg.norm(self._v, ord=1))
 
     return obj
 
@@ -371,23 +390,39 @@ class GroupRegularizedCCA(CCA):
 
     return np.linalg.norm(A.dot(u) - z)
 
+  def _update_ux_vy(self):
+    # Check if update has already been done (for keyboard interrupt)
+    if self._last_update_idx == self._cvec_id:
+      return
+    # Add learned projection vectors to bases
+    u = np.where(np.abs(self._u) >= self.config.sp_tol, self._u, 0)
+    v = np.where(np.abs(self._v) >= self.config.sp_tol, self._v, 0)
+    self._ux = np.c_[self._ux, u.reshape(-1, 1)]
+    self._vy = np.c_[self._vy, v.reshape(-1, 1)]
+    self._last_update_idx = self._cvec_id
+
   def _alternating_projections_single_canonical_vector_pair(self):
     # Alternate between u and v to solve for next pair of canonical vectors.
     self._u = self._ux_init[:, self._cvec_id]
     self._v = self._vy_init[:, self._cvec_id]
     self._pu, self._pv = None, None
 
+    self._u_converged = False
+    self._v_converged = False
+
     for itr in range(self.config.max_iter):
-      if self.config.verbose:
+      if self.config.verbose or self.config.name is not None:
         u_start_time = time.time()
-        print("  Canonical vector %i: Iter %i of %i." % (
-            self._cvec_id + 1, itr + 1, self.config.max_iter))
-        print("    Solving for u...")
+        print("  Canonical vector %i/%i for %s: Iter %i/%i." % (
+            self._cvec_id + 1, self.config.ndim, self._name_str, itr + 1,
+            self.config.max_iter))
+        if self.config.verbose:
+          print("    Solving for u...")
 
       self._hand_off_to_solver("u")
       if np.isnan(self._objective_value()):
         # if self.config.verbose:
-        print("NaN value for objective. Cannot continue.")
+        print("NaN value for objective%s. Cannot continue." % self._name_str)
         self._training = False
         break
 
@@ -403,7 +438,7 @@ class GroupRegularizedCCA(CCA):
       self._hand_off_to_solver("v")
       if np.isnan(self._objective_value()):
         # if self.config.verbose:
-        print("NaN value for objective. Cannot continue.")
+        print("NaN value for objective%s. Cannot continue." % self._name_str)
         self._training = False
         break
 
@@ -413,11 +448,13 @@ class GroupRegularizedCCA(CCA):
         print("      Objective value: %.6f" % self._objective_value())
         print("      Constraint satisfaction: %.6f" %
               self._constraint_value("v"))
-    # Add learned projection vectors to bases
-    u = np.where(np.abs(self._u) >= self.config.sp_tol, self._u, 0)
-    v = np.where(np.abs(self._v) >= self.config.sp_tol, self._v, 0)
-    self._ux = np.c_[self._ux, u.reshape(-1, 1)]
-    self._vy = np.c_[self._vy, v.reshape(-1, 1)]
+
+      if self._u_converged and self._v_converged:
+        if self.config.verbose:
+          print("    u and v have converged.")
+        break
+
+    self._update_ux_vy()
 
   def _optimize(self):
     # Similar to ADMM but simply alternating between solving for each variable
@@ -442,19 +479,21 @@ class GroupRegularizedCCA(CCA):
             "Initial U/V projection values do not have matching dimensions.")
 
     for self._cvec_id in range(init_dim, self.config.ndim):
-      if self.config.verbose:
+      if self.config.verbose or self.config.name is not None:
         cvec_start_time = time.time()
-        print("\nSolving for canonical vector %i out of %i." % 
-              (self._cvec_id + 1, self.config.ndim))
+        print("\nLearning canonical vector %i/%i%s." % 
+              (self._cvec_id + 1, self.config.ndim, self._name_str))
 
       self._alternating_projections_single_canonical_vector_pair()
       if not self._training:
         print("Breaking out of training.")
         break
 
-      if self.config.verbose:
-        print("Solved for canonical vector %i in %.2fs " % 
-              (self._cvec_id + 1, time.time() - cvec_start_time))
+      if self.config.verbose or self.config.name is not None:
+          cvec_start_time = time.time()
+          print("Finished learning canonical vector %i/%i%s in %.2fs." % (
+              self._cvec_id + 1, self.config.ndim, self._name_str,
+              time.time() - cvec_start_time))
 
   def fit(self, Xs, Ys, Gx, Gy, ux_init=None, vy_init=None):
     self._training = True
@@ -486,6 +525,8 @@ class GroupRegularizedCCA(CCA):
       self._optimize()
     except KeyboardInterrupt:
       print("Training interrupted. Exiting...")
+
+    self._update_ux_vy()
     self._training = False
     if self.config.verbose:
       print("Finished training in %.2fs." % (time.time() - train_start_time))
@@ -510,7 +551,7 @@ class GroupRegularizedCCA(CCA):
     return self
 
 
-def correlation_info(v_Xs):
+def correlation_info(self, v_Xs):
   # This is just for assuming that the views are not0 indexed from 0 to K-1. 
   n_views = len(v_Xs)
   views = list(range(n_views))

@@ -2,6 +2,8 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
+from utils import tfm_utils
+
 
 def flatten(list_of_lists):
   return [a for b in list_of_lists for a in b]
@@ -117,7 +119,7 @@ def generate_LDS_data_with_two_observation_models_train_test(
 
 def generate_redundant_multiview_data(
       npts, nviews=3, ndim=15, scale=2, centered=True, overlap=True,
-      gen_D_alpha=True):
+      gen_D_alpha=True, perturb_eps=1e-2):
   data = np.random.uniform(high=scale, size=(npts, ndim))
 
   if centered:
@@ -139,6 +141,14 @@ def generate_redundant_multiview_data(
         # Or only use that one group.
         if overlap else view_groups[vi])
     view_data[vi] = np.c_[data[:, view_inds], remaining_data]
+
+  perturb_tfms = None
+  if perturb_eps > 0:
+    perturb_tfms = {}
+    perturb_tfms[0] = np.eye(view_data[0].shape[1])
+    for vi in range(1, nviews):
+      view_data[vi], perturb_tfms[vi] = tfm_utils.perturb_matrix(
+          view_data[vi], perturb_eps)
 
   # Trivial solution to check
   if gen_D_alpha:
@@ -168,7 +178,7 @@ def generate_redundant_multiview_data(
       D[vi] = np.concatenate(cols, axis=1)
     return view_data, D, alpha
 
-  return view_data
+  return view_data, perturb_tfms
 
 
 if __name__ == "__main__":
