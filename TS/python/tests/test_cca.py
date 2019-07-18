@@ -2,7 +2,7 @@
 import numpy as np
 import os
 
-from models import embeddings, multi_cca
+from models import embeddings, ovr_mcca_embeddings
 from synthetic import multimodal_systems as ms
 
 import IPython
@@ -79,7 +79,7 @@ def default_mcca_config(as_dict=False):
   save_file = None
   verbose = True
 
-  config = multi_cca.OVRCCAConfig(
+  config = ovr_mcca_embeddings.OVRCCAConfig(
       cca_config_dict=cca_config_dict, parallel=parallel,
       n_processes=n_processes,save_file=save_file, verbose=verbose)
 
@@ -167,9 +167,10 @@ def test_mv_GSCCA():
   config.cca_config_dict["max_iter"] = 10
   config.cca_config_dict["max_inner_iter"] = 1500
   config.cca_config_dict["verbose"] = False
+  config.cca_config_dict["tau_all"] = 1e-1
   config.parallel = True
   config.verbose = False
-  mcca_model = multi_cca.OneVsRestCCA(config)
+  mcca_model = ovr_mcca_embeddings.OneVsRestMCCA(config)
 
   mcca_model.fit(data)
 

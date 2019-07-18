@@ -10,6 +10,7 @@ import scipy as sp
 import sys
 import time
 
+from models.model_base import ModelException 
 from models import classifier
 from utils import cvx_utils
 from utils import math_utils
@@ -490,7 +491,6 @@ class GroupRegularizedCCA(CCA):
         break
 
       if self.config.verbose or self.config.name is not None:
-          cvec_start_time = time.time()
           print("Finished learning canonical vector %i/%i%s in %.2fs." % (
               self._cvec_id + 1, self.config.ndim, self._name_str,
               time.time() - cvec_start_time))

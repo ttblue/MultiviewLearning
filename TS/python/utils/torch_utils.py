@@ -12,10 +12,6 @@ _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 
 
-class MVModelException(Exception):
-  pass
-
-
 def generate_layer_types_args(input_size, layer_units, output_size):
   all_sizes = [input_size] + layer_units + [output_size]
   ltypes = [torch.nn.Linear] * (len(all_sizes) - 1)

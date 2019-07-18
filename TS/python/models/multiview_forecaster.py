@@ -7,13 +7,18 @@ from torch import autograd
 from torch import nn
 from torch import optim
 
-import multi_rnn_ae as mrae
-import seq_star_gan as ssg
-import torch_utils as tu
-from torch_utils import MVModelException, _DTYPE, _TENSOR_FUNC
-import utils
+from models.model_base import ModelException
+from models import multi_rnn_ae as mrae
+from models import seq_star_gan as ssg
+from utils import torch_utils as tu
+from utils.torch_utils import _DTYPE, _TENSOR_FUNC
+from utils import utils
 
 import IPython
+
+
+class MVModelException(ModelException):
+  pass
 
 
 # Learning a two-step forecaster which first learns latent space and then learns

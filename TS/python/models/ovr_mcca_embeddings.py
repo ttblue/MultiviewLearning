@@ -3,6 +3,7 @@ import multiprocessing as mp
 import numpy as np
 
 from models import embeddings
+from models.model_base import ModelException
 
 
 class OVRCCAConfig(object):
@@ -36,9 +37,10 @@ def learn_ovr_embedding(view_data, vi, cca_config):
   return vi, model.fit(X, Y, Gx, Gy)
 
 
-class OneVsRestCCA(object):
+class OneVsRestMCCA(object):
   def __init__(self, config):
     self.config = config
+    self._training = True
 
   def _initialize(self):
     self._view_configs = {}
@@ -84,5 +86,59 @@ class OneVsRestCCA(object):
     if self.config.verbose:
       print("Starting one-vs-rest training for all views.")
     self._learn_all_embeddings()
+    self._training = False
 
     return self
+
+
+class OMLSLConfig(object):
+  def __init__(self, sv_thresh=1e-6):
+    self.sv_thresh = sv_thresh
+
+
+class OVRMCCALatentSpaceLearner(object):
+  def __init__(self, config, mcca_learner=None):
+    self.config = config
+    self.mcca_learner = mcca_learner
+    self._training = True if mcca_learner is None else mcca_learner._training
+
+  def set_mcca_learner(self, learner, mcca_config=None):
+    if learner is None:
+      learner = OneVsRestMCCA(mcca_config)
+
+    self.mcca_learner = learner
+    self._training = learner._training
+
+  def extract_latent_space(self):
+    if self.mcca_learner is None or self._training is True:
+      raise ModelException(
+          "Model has not been trained or OVRMCCA learner has not been set.")
+
+    # To simplify variables and code
+    learner = mcca_learner
+    data = learner._view_data
+    models = learner.view_models
+    nviews = len(data)
+
+    # For computing padding and such when all projections are put together.
+    view_dims = [data[i].shape[1] for i in range(nviews)]
+    dims_cs = [0] + np.cumsum(view_dims).tolist()
+    all_dim = dims_cs[-1]
+
+    # Here, for each view's "rest" projection from the OVR CCA computation,
+    # we're padding 0's for the view's position, since it is not included in
+    # the "rest." This is so that the "rest" projections from all the views
+    # can be concatenated together.
+    padded_Pis = []
+    for vi in range(nviews):
+      Pi = models[i]._vy
+      Pi_start, Pi_end = Pi[:dims_cs[vi]], Pi[dims_cs[vi]:]
+      zero_pad = np.zeros((view_dims[vi], Pi.shape[1]))
+      padded_Pis.append(np.concatenate([Pi_start, zero_pad, Pi_end], axis=0))
+
+    all_P = np.concatenate(padded_Pis, axis=1)
+    U, S, VT = np.linalg.svd(all_P.T, full_matrices=True)
+    true_dim = np.sum(S > self.config.sv_thresh)
+
+    # Combination of all the padded "rest" projections from each view's OVR CCA
+    # computation. Columns of all_P are the individual projections

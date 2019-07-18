@@ -5,14 +5,10 @@ import numpy as np
 import scipy as sp
 import sklearn.cross_decomposition as scd
 
-from models import embeddings
+from models import embeddings#, ovr_mcca_embeddings as ome
 from utils import math_utils as mu
 
 import IPython
-
-
-class ModelException(Exception):
-  pass
 
 
 def PCA_embedding(Xs, ndim=None, info_frac=0.8):
