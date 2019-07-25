@@ -164,11 +164,11 @@ def test_mv_GSCCA():
   data, ptfms = np.load("tmp.npy")
   config = default_mcca_config()
 
+  config.parallel = True  # True
   config.cca_config_dict["max_iter"] = 10
-  config.cca_config_dict["max_inner_iter"] = 1500
-  config.cca_config_dict["verbose"] = False
-  config.cca_config_dict["tau_all"] = 1e-1
-  config.parallel = True
+  config.cca_config_dict["max_inner_iter"] = 500
+  config.cca_config_dict["verbose"] = not config.parallel
+  config.cca_config_dict["tau_all"] = 0
   config.verbose = False
   mcca_model = ovr_mcca_embeddings.OneVsRestMCCA(config)
 

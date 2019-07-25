@@ -23,6 +23,14 @@ _ORDER_MAP = {
     "1": 1,
     "2": 2,
 }
+
+
+def cvx_norm_wrapper(x, order):
+  if not isinstance(order, int) and order[0] == "L":
+    order = order[1:]
+  order = _ORDER_MAP[order]
+  return cvx.norm(x, order)
+
 # Group norm:
 def group_norm(x, G, order="inf", use_cvx=False):
   if not isinstance(order, int) and order[0] == "L":

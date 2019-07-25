@@ -90,6 +90,15 @@ class OneVsRestMCCA(object):
 
     return self
 
+  def save_to_file(self, fname, misc=None):
+    data = {}
+    for vi, model in self.view_models.items():
+      data[vi] = {
+          'x':model._X, 'ux':model._ux, 'vy':model._vy, 'y':model._Y,
+          'Gx':model._Gx, 'Gy':model._Gy, 'config':model.config
+      }
+    data = data if misc is None else [data, misc]
+    np.save(fname, data)
 
 class OMLSLConfig(object):
   def __init__(self, sv_thresh=1e-6):
