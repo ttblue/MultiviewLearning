@@ -100,6 +100,7 @@ class OneVsRestMCCA(object):
     data = data if misc is None else [data, misc]
     np.save(fname, data)
 
+
 class OMLSLConfig(object):
   def __init__(self, sv_thresh=1e-6):
     self.sv_thresh = sv_thresh

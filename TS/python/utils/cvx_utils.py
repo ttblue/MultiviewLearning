@@ -31,6 +31,7 @@ def cvx_norm_wrapper(x, order):
   order = _ORDER_MAP[order]
   return cvx.norm(x, order)
 
+
 # Group norm:
 def group_norm(x, G, order="inf", use_cvx=False):
   if not isinstance(order, int) and order[0] == "L":

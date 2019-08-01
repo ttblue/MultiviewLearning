@@ -2,8 +2,16 @@
 import numpy as np
 import os
 
-from models import embeddings, ovr_mcca_embeddings
+from models import embeddings, ovr_mcca_embeddings, naive_block_sparse_mvrl
 from synthetic import multimodal_systems as ms
+
+
+try:
+  import matplotlib.pyplot as plt
+  MPL_AVAILABLE = True
+except ImportError:
+  MPL_AVAILABLE = False
+
 
 import IPython
 
@@ -11,15 +19,13 @@ import IPython
 np.set_printoptions(precision=5, suppress=True)
 
 
-def default_data():
+def default_data(nviews=3, ndim=9):
   npts = 1000
-  nviews = 3
-  ndim = 9
   scale = 1
   centered = True
   overlap = True
   gen_D_alpha = False
-  perturb_eps = 0.5
+  perturb_eps = 0# 0.5
 
   data, ptfms = ms.generate_redundant_multiview_data(
       npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
@@ -84,6 +90,18 @@ def default_mcca_config(as_dict=False):
       n_processes=n_processes,save_file=save_file, verbose=verbose)
 
   return config.__dict__ if as_dict else config
+
+
+def plot_heatmap(mat, msplit_inds):
+  fig = plt.figure()
+  hm = plt.imshow(mat)
+  plt.title("Redundancy Matrix")
+  cbar = plt.colorbar(hm)
+  for mind in msplit_inds:
+    mind -= 0.5
+    plt.axvline(x=mind, ls="--")
+    plt.axhline(y=mind, ls="--")
+  plt.show()
 
 
 def test_GSCCA():
@@ -176,10 +194,57 @@ def test_mv_GSCCA():
 
   IPython.embed()
 
+
+def default_NGSRL_config(as_dict=False):
+  group_regularizer = "inf"
+  global_regularizer = "L1"
+  lambda_group = 1e-1
+  lambda_global = 1e-1
+
+  sp_eps = 1e-5
+
+  verbose = True
+
+  config = naive_block_sparse_mvrl.NBSMVRLConfig(
+    group_regularizer=group_regularizer, global_regularizer=global_regularizer,
+    lambda_group=lambda_group, lambda_global=lambda_global, sp_eps=sp_eps,
+    verbose=verbose)
+
+  return config.__dict__ if as_dict else config
+
+
+def test_mv_NGSRL(nviews=4, dim=12, npts=1000):
+  # fname = "./data/mv_dim_%i_data.npy" % nviews
+  # if not os.path.exists(fname):
+  #   data, ptfms = default_data(nviews=nviews, ndim=dim)
+  #   np.save(fname, [data, ptfms])
+  # else:
+  #   data, ptfms = np.load(fname)
+  data, ptfms = default_data(nviews=nviews, ndim=dim)
+  config = default_NGSRL_config()
+
+  if npts > 0:
+    data = {vi: d[:npts] for vi, d in data.items()}
+
+  config.lambda_global = 0  #1e-1
+  config.lambda_group = 0.5  #1e-1
+  config.sp_eps = 5e-5
+
+  model = naive_block_sparse_mvrl.NaiveBlockSparseMVRL(config)
+  model.fit(data)
+
+  vlens = [data[vi].shape[1] for vi in range(len(data))]
+  msplit_inds = np.cumsum(vlens)[1:-1]
+  IPython.embed()
+
+
 if __name__=="__main__":
   # test_GSCCA()
   # test_GSCCA_loaded()
-  test_mv_GSCCA()
+  # test_mv_GSCCA()
+  nviews = 4
+  dim = 12
+  test_mv_NGSRL(nviews, dim, -1)
 
 # import matplotlib.pyplot as plt
 # plt.plot(primal_residual, color='r', label='primal residual')
