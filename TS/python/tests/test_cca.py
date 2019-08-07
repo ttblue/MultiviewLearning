@@ -25,11 +25,25 @@ def default_data(nviews=3, ndim=9):
   centered = True
   overlap = True
   gen_D_alpha = False
-  perturb_eps = 0# 0.5
+  perturb_eps = 1.2# 0.5
 
   data, ptfms = ms.generate_redundant_multiview_data(
       npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
       overlap=overlap, gen_D_alpha=gen_D_alpha, perturb_eps=perturb_eps)
+
+  return data, ptfms
+
+
+def default_data2(nviews=4, ndim=12):
+  npts = 1000
+  scale = 1
+  centered = True
+  overlap = True
+  perturb_eps = 0#0.5
+
+  data, ptfms = ms.generate_local_overlap_multiview_data(
+      npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
+      perturb_eps=perturb_eps)
 
   return data, ptfms
 
@@ -203,11 +217,23 @@ def default_NGSRL_config(as_dict=False):
 
   sp_eps = 1e-5
 
+  n_solves = 5
+  lambda_group_init = 1e-5
+  lambda_group_beta = 10
+
+  solve_joint = True
+  parallel = True
+  n_jobs = None
+
+  verbose_interval = 10.
   verbose = True
 
   config = naive_block_sparse_mvrl.NBSMVRLConfig(
     group_regularizer=group_regularizer, global_regularizer=global_regularizer,
     lambda_group=lambda_group, lambda_global=lambda_global, sp_eps=sp_eps,
+    n_solves=n_solves, lambda_group_init=lambda_group_init,
+    lambda_group_beta=lambda_group_beta, solve_joint=solve_joint,
+    parallel=parallel, n_jobs=n_jobs, verbose_interval=verbose_interval,
     verbose=verbose)
 
   return config.__dict__ if as_dict else config
@@ -227,15 +253,44 @@ def test_mv_NGSRL(nviews=4, dim=12, npts=1000):
     data = {vi: d[:npts] for vi, d in data.items()}
 
   config.lambda_global = 0  #1e-1
-  config.lambda_group = 0.5  #1e-1
+  config.lambda_group = 0 #0.5  #1e-1
   config.sp_eps = 5e-5
+  config.n_solves = 1
 
   model = naive_block_sparse_mvrl.NaiveBlockSparseMVRL(config)
   model.fit(data)
 
   vlens = [data[vi].shape[1] for vi in range(len(data))]
-  msplit_inds = np.cumsum(vlens)[1:-1]
+  msplit_inds = np.cumsum(vlens)[:-1]
   IPython.embed()
+  plot_heatmap(model.nullspace_matrix(), msplit_inds)
+
+
+def test_mv_NGSRL2(nviews=4, dim=12, npts=1000):
+  # fname = "./data/mv_dim_%i_data.npy" % nviews
+  # if not os.path.exists(fname):
+  #   data, ptfms = default_data(nviews=nviews, ndim=dim)
+  #   np.save(fname, [data, ptfms])
+  # else:
+  #   data, ptfms = np.load(fname)
+  data, ptfms = default_data2(nviews=nviews, ndim=dim)
+  config = default_NGSRL_config()
+
+  if npts > 0:
+    data = {vi: d[:npts] for vi, d in data.items()}
+
+  config.lambda_global = 1e-3
+  config.lambda_group = 1e-1
+  config.sp_eps = 5e-5
+  config.n_solves = 6
+
+  model = naive_block_sparse_mvrl.NaiveBlockSparseMVRL(config)
+  model.fit(data)
+
+  vlens = [data[vi].shape[1] for vi in range(len(data))]
+  msplit_inds = np.cumsum(vlens)[:-1]
+  IPython.embed()
+  plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
 
 if __name__=="__main__":
@@ -244,8 +299,8 @@ if __name__=="__main__":
   # test_mv_GSCCA()
   nviews = 4
   dim = 12
-  test_mv_NGSRL(nviews, dim, -1)
-
+  # test_mv_NGSRL(nviews, dim, -1)
+  test_mv_NGSRL2(nviews, dim, 200)
 # import matplotlib.pyplot as plt
 # plt.plot(primal_residual, color='r', label='primal residual')
 # plt.plot(dual_residual, color='b', label='dual residual') 

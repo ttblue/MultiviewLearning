@@ -181,6 +181,40 @@ def generate_redundant_multiview_data(
   return view_data, perturb_tfms
 
 
+def generate_local_overlap_multiview_data(
+      npts, nviews=4, ndim=16, scale=2, centered=True, perturb_eps=1e-2):
+  data = np.random.uniform(high=scale, size=(npts, ndim))
+
+  if centered:
+    data -= data.mean(axis=0)
+
+  n_per_view = ndim // nviews
+  n_remainder = ndim - n_per_view * nviews
+  view_groups = [
+      (i * n_per_view + np.arange(n_per_view)).astype(int)
+      for i in range(nviews)]
+  split_inds = [i * n_per_view for i in range(1, nviews)]
+  split_data = np.split(data, split_inds, axis=1)
+  remaining_data = (
+      data[:, -n_remainder:] if n_remainder > 0 else np.empty((npts, 0)))
+
+  view_data = {}
+  for vi in range(nviews):
+    vj = vi + 1
+    if vj >= nviews: vj = 0
+    view_data[vi] = np.c_[split_data[vi], split_data[vj], remaining_data]
+
+  perturb_tfms = None
+  if perturb_eps > 0:
+    perturb_tfms = {}
+    perturb_tfms[0] = np.eye(view_data[0].shape[1])
+    for vi in range(1, nviews):
+      view_data[vi], perturb_tfms[vi] = tfm_utils.perturb_matrix(
+          view_data[vi], perturb_eps)
+
+  return view_data, perturb_tfms
+
+
 if __name__ == "__main__":
   n = 100
   T = 100
