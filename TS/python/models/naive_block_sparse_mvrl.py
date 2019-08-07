@@ -17,8 +17,9 @@ class NBSMVRLConfig(object):
   def __init__(
       self, group_regularizer="inf", global_regularizer="L1", lambda_group=1.0,
       lambda_global=1.0, sp_eps=1e-5, n_solves=1, lambda_group_init=1e-5,
-      lambda_group_beta=10, resolve_change_thresh=0.05, solve_joint=False,
-      parallel=True, n_jobs=None, verbose_interval=10., verbose=True):
+      lambda_group_beta=10, resolve_change_thresh=0.05, n_resolve_attempts=3,
+      solve_joint=False, parallel=True, n_jobs=None, verbose_interval=10.,
+      verbose=True):
     self.group_regularizer = group_regularizer
     self.global_regularizer = global_regularizer
     self.lambda_group = lambda_group
@@ -30,6 +31,9 @@ class NBSMVRLConfig(object):
     self.lambda_group_init = lambda_group_init
     self.lambda_group_beta = lambda_group_beta
     # self.global_reg_beta = global_reg_beta
+
+    self.resolve_change_thresh = resolve_change_thresh
+    self.n_resolve_attempts = n_resolve_attempts
 
     self.solve_joint = solve_joint
     self.parallel = parallel
@@ -44,9 +48,10 @@ def safe_solve(prob, parallel=False, verbose=False):
     prob.solve(
         solver=_SOLVER, warm_start=True, parallel=parallel, verbose=verbose)
   except (KeyError, cvx.SolverError) as e:
-    print("        Error using solver %s: %s.\n"
-          "        Using default solver." %
-          (_SOLVER, e))
+    # pass
+    # print("        Error using solver %s: %s.\n"
+    #       "        Using default solver." %
+    #       (_SOLVER, e))
     try:
       # prob.solve(warm_sart=True, parallel=parallel, verbose=verbose)
       prob.solve(parallel=parallel, verbose=verbose)
@@ -186,7 +191,7 @@ class NaiveBlockSparseMVRL(object):
 
   def _solve_joint(self):
     if self.config.verbose:
-      print("  Solving joint problem...")
+      # print("  Solving joint problem...")
       start_time = time.time()
     # IPython.embed()
     safe_solve(
@@ -214,7 +219,7 @@ class NaiveBlockSparseMVRL(object):
 
   def _compute_all_objs(self):
     obj_struct = {}
-    for vi in range(self._views):
+    for vi in range(self._nviews):
       obj_struct[vi] = self._get_current_obj(vi=vi, obj_type="all")
     obj_struct["total"] = self._get_current_obj(vi=None, obj_type="all")
     return obj_struct
@@ -226,7 +231,7 @@ class NaiveBlockSparseMVRL(object):
       return False
     prev_error = self._prev_objs["total"][0]
     curr_error = curr_objs["total"][0]
-    return (prev_error < self.config.resolve_frac * curr_error)
+    return (curr_error - prev_error > self.config.resolve_change_thresh)
 
   def _optimize(self):
     # Add individual view objectives together
@@ -266,19 +271,29 @@ class NaiveBlockSparseMVRL(object):
     # Just to keep track of past solves.
     self._nmat_history = []
     self._objs_history = []
+    self._lambda_group_history = []
     self._prev_objs = None
     # self._training = True
-
-    for solve_idx in range(self.config.n_solves):
-      if group_lambda_iter > self.config.lambda_group:
+    
+    solve_idx = 0
+    reset_objs = None
+    curr_n_resolves = 0
+    while solve_idx < self.config.n_solves:
+      if group_lambda_iter > self.config.lambda_group and curr_n_resolves == 0:
         if self.config.verbose:
           print("  Current group-regularizer coefficient > threshold. Done.")
         break
 
       self._lambda_group.value = group_lambda_iter
       if self.config.verbose:
-        print("  Solver iteration %i/%i. Current lambda_group: %.5f" % (
-            solve_idx + 1, self.config.n_solves, group_lambda_iter))
+        if curr_n_resolves > 0:
+          print("    Resolve iteration (%i/%i)). Current lambda_group: %.5f" %
+                    (curr_n_resolves, self.config.n_resolve_attempts,
+                     group_lambda_iter))
+        else:
+          print("  Solver iteration %i/%i. Current lambda_group: %.5f" % (
+              solve_idx + 1, self.config.n_solves, group_lambda_iter))
+
         itr_start_time = time.time()
 
       solve_func()
@@ -287,7 +302,8 @@ class NaiveBlockSparseMVRL(object):
 
       curr_objs = self._compute_all_objs()
       self._objs_history.append(curr_objs)
-      needs_resolve = self._check_if_resolve(self, curr_objs)
+      needs_resolve = self._check_if_resolve(curr_objs)
+      self._lambda_group_history.append(group_lambda_iter)
 
       if self.config.verbose:
         print(
@@ -309,14 +325,32 @@ class NaiveBlockSparseMVRL(object):
                 self._total_reg_obj.value))
 
       if needs_resolve:
-        if self.config.verbose:
-          print("    Recon. error change too large."
-                " Resolving with smaller reg. penalty.")
-        solve_idx -= 1
-        prev_lambda = group_lambda_iter / self.config.lambda_group_beta
-        group_lambda_iter = (prev_lambda + group_lambda_iter) / 2.
-        continue
+        if curr_n_resolves >= self.config.n_resolve_attempts:
+          if self.config.verbose:
+            print("    Max resolve attempts reached. Moving on.")
+          curr_objs = reset_objs
+          group_lambda_iter = reset_group_lambda
+        else:
+          # Some bookkeeping for when resetting:
+          if curr_n_resolves == 0:
+            reset_objs = curr_objs
+            reset_group_lambda = group_lambda_iter
+          group_lambda_iter = (prev_lambda_iter + group_lambda_iter) / 2.
+          curr_n_resolves += 1
+          if self.config.verbose:
+            print("    Recon. error change too large. Re-solving.")
+          continue
+      # Reset when, after some resolve iters, we no longer need to resolve.
+      elif curr_n_resolves > 0:
+        curr_objs = reset_objs
+        group_lambda_iter = reset_group_lambda
 
+      # Some bookkeeping for resolving:
+      curr_n_resolves = 0
+      prev_lambda_iter = group_lambda_iter
+      # needs_resolve = False  # Don't need this.
+      self._prev_objs = curr_objs
+      solve_idx += 1
       if group_lambda_iter == 0:
         group_lambda_iter = self.config.lambda_group_init
       else:

@@ -106,16 +106,16 @@ def default_mcca_config(as_dict=False):
   return config.__dict__ if as_dict else config
 
 
-def plot_heatmap(mat, msplit_inds):
+def plot_heatmap(mat, msplit_inds, misc_title=""):
   fig = plt.figure()
   hm = plt.imshow(mat)
-  plt.title("Redundancy Matrix")
+  plt.title("Redundancy Matrix: %s" % misc_title)
   cbar = plt.colorbar(hm)
   for mind in msplit_inds:
     mind -= 0.5
     plt.axvline(x=mind, ls="--")
     plt.axhline(y=mind, ls="--")
-  plt.show()
+  plt.show(block=True)
 
 
 def test_GSCCA():
@@ -221,6 +221,9 @@ def default_NGSRL_config(as_dict=False):
   lambda_group_init = 1e-5
   lambda_group_beta = 10
 
+  resolve_change_thresh = 0.05
+  n_resolve_attempts = 3
+
   solve_joint = True
   parallel = True
   n_jobs = None
@@ -232,7 +235,9 @@ def default_NGSRL_config(as_dict=False):
     group_regularizer=group_regularizer, global_regularizer=global_regularizer,
     lambda_group=lambda_group, lambda_global=lambda_global, sp_eps=sp_eps,
     n_solves=n_solves, lambda_group_init=lambda_group_init,
-    lambda_group_beta=lambda_group_beta, solve_joint=solve_joint,
+    lambda_group_beta=lambda_group_beta,
+    resolve_change_thresh=resolve_change_thresh,
+    n_resolve_attempts=n_resolve_attempts, solve_joint=solve_joint,
     parallel=parallel, n_jobs=n_jobs, verbose_interval=verbose_interval,
     verbose=verbose)
 
@@ -282,7 +287,13 @@ def test_mv_NGSRL2(nviews=4, dim=12, npts=1000):
   config.lambda_global = 1e-3
   config.lambda_group = 1e-1
   config.sp_eps = 5e-5
-  config.n_solves = 6
+
+  config.n_solves = 30
+  config.lambda_group_init = 1e-5
+  config.lambda_group_beta = 3
+
+  config.resolve_change_thresh = 0.05
+  config.n_resolve_attempts = 15
 
   model = naive_block_sparse_mvrl.NaiveBlockSparseMVRL(config)
   model.fit(data)
@@ -300,7 +311,7 @@ if __name__=="__main__":
   nviews = 4
   dim = 12
   # test_mv_NGSRL(nviews, dim, -1)
-  test_mv_NGSRL2(nviews, dim, 200)
+  test_mv_NGSRL2(nviews, dim, 100)
 # import matplotlib.pyplot as plt
 # plt.plot(primal_residual, color='r', label='primal residual')
 # plt.plot(dual_residual, color='b', label='dual residual') 
