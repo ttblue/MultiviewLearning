@@ -60,6 +60,47 @@ def safe_solve(prob, parallel=False, verbose=False):
   return prob
 
 
+# class NaiveSingleViewBSRL(object):
+#   def _initialize_cvx(self):
+#     self._p_var = None
+#     self._group = None
+
+#     self._error = None
+#     self._gs_reg = None
+#     self._global_reg = None
+#     self._prob = {}
+
+#     vi_data = self._view_data[vi]
+#     vi_dim = vi_data.shape[1]
+#     rest_data_list = [
+#         self._view_data[i] for  i in range(self._nviews) if i != vi]
+#     rest_data = np.concatenate(rest_data_list, axis=1)
+#     rest_dims = [vd.shape[1] for vd in rest_data_list]
+#     group_inds = [0] + np.cumsum(rest_dims).tolist()
+#     G = [np.arange(sidx, eidx) for sidx, eidx in 
+#          zip(group_inds[:-1], group_inds[1:])]
+
+#     p_var = cvx.Variable((group_inds[-1], vi_dim))
+#     # IPython.embed()
+#     error_obj = cvx.norm(rest_data * p_var - vi_data) / self._npts
+#     group_sparse_obj = cvx_utils.group_norm(
+#         p_var, G, order=self.config.group_regularizer, use_cvx=True)
+#     reg_obj = cvx_utils.cvx_norm_wrapper(p_var, self.config.global_regularizer)
+#     total_obj = (error_obj + cvx.abs(self._lambda_group) * group_sparse_obj +
+#           cvx.abs(self._lambda_global) * reg_obj)
+
+#     prob = cvx.Problem(cvx.Minimize(total_obj))
+#     objs = (error_obj, group_sparse_obj, reg_obj, total_obj)
+
+#   def set_data()
+
+#   def set_lambda_group(self, val):
+#     self._lambda_group.value = val
+
+#   def solve(self):
+#     pass
+
+
 class NaiveBlockSparseMVRL(object):
   def __init__(self, config):
     self.config = config
@@ -70,7 +111,7 @@ class NaiveBlockSparseMVRL(object):
     vi_data = self._view_data[vi]
     vi_dim = vi_data.shape[1]
     rest_data_list = [
-        self._view_data[i] for i in range(self._nviews) if i != vi]
+        self._view_data[i] for  i in range(self._nviews) if i != vi]
     rest_data = np.concatenate(rest_data_list, axis=1)
     rest_dims = [vd.shape[1] for vd in rest_data_list]
     group_inds = [0] + np.cumsum(rest_dims).tolist()
@@ -141,33 +182,33 @@ class NaiveBlockSparseMVRL(object):
     return objs.get(obj_type, self._final_obj).value
 
   def _solve_parallel(self):
-    raise NotImplementedError("Non-joint parallel solver not working.")
-  #   if self.config.verbose:
-  #     print("  Solving problems in parallel...")
-  #     start_time = time.time()
-  #   pool = mp.Pool(processes=self._n_jobs)
+    # raise NotImplementedError("Non-joint parallel solver not working.")
+    if self.config.verbose:
+      print("  Solving problems in parallel...")
+      start_time = time.time()
+    pool = mp.Pool(processes=self._n_jobs)
 
-  #   probs = [self._view_probs[vi] for vi in range(self._nviews)]
-  #   result = pool.map_async(safe_solve, probs)
-  #   if self.config.verbose:
-  #     while not result.ready():
-  #       objs = self._get_current_obj(vi=None, obj_type="all")
-  #       if not any([obj is None for obj in objs]):
-  #         diff_time = time.time() - start_time
-  #         print("    Error: %.3f, GS: %.3f, Reg: %.3f, Tot: %.3f (in %.2fs)" %
-  #               tuple(objs + [diff_time]), end='\r')
-  #       # IPython.embed()
-  #       time.sleep(self.config.verbose_interval)
+    probs = [self._view_probs[vi] for vi in range(self._nviews)]
+    result = pool.map_async(safe_solve, probs)
+    if self.config.verbose:
+      while not result.ready():
+        objs = self._get_current_obj(vi=None, obj_type="all")
+        if not any([obj is None for obj in objs]):
+          diff_time = time.time() - start_time
+          print("    Error: %.3f, GS: %.3f, Reg: %.3f, Tot: %.3f (in %.2fs)" %
+                tuple(objs + [diff_time]), end='\r')
+        # IPython.embed()
+        time.sleep(self.config.verbose_interval)
 
-  #     # IPython.embed()
-  #     objs = self._get_current_obj(vi=None, obj_type="all")
-  #     diff_time = time.time() - start_time
-  #     print("    Error: %.3f, GS: %.3f, Reg: %.3f, Tot: %.3f (in %.2fs)" %
-  #           tuple(objs + [diff_time]))
-  #     print("Parallel optimizers have finished.")
-  #   else:
-  #     pool.join()
-  #   # return result.get()
+      # IPython.embed()
+      objs = self._get_current_obj(vi=None, obj_type="all")
+      diff_time = time.time() - start_time
+      print("    Error: %.3f, GS: %.3f, Reg: %.3f, Tot: %.3f (in %.2fs)" %
+            tuple(objs + [diff_time]))
+      print("Parallel optimizers have finished.")
+    else:
+      pool.join()
+    # return result.get()
 
   def _solve_sequential(self):
     if self.config.verbose:
@@ -278,11 +319,16 @@ class NaiveBlockSparseMVRL(object):
     solve_idx = 0
     reset_objs = None
     curr_n_resolves = 0
+    last_solve_iter = False
     while solve_idx < self.config.n_solves:
       if group_lambda_iter > self.config.lambda_group and curr_n_resolves == 0:
-        if self.config.verbose:
-          print("  Current group-regularizer coefficient > threshold. Done.")
-        break
+        if last_solve_iter:
+          if self.config.verbose:
+            print("  Current group-regularizer coefficient > threshold. Done.")
+          break
+        else:
+          group_lambda_iter = self.config.lambda_group
+          last_solve_iter = True
 
       self._lambda_group.value = group_lambda_iter
       if self.config.verbose:
@@ -345,11 +391,11 @@ class NaiveBlockSparseMVRL(object):
         curr_objs = reset_objs
         group_lambda_iter = reset_group_lambda
 
+      self._prev_objs = curr_objs
       # Some bookkeeping for resolving:
       curr_n_resolves = 0
       prev_lambda_iter = group_lambda_iter
       # needs_resolve = False  # Don't need this.
-      self._prev_objs = curr_objs
       solve_idx += 1
       if group_lambda_iter == 0:
         group_lambda_iter = self.config.lambda_group_init
