@@ -167,7 +167,7 @@ def split_data(xvs, n=10, split_inds=None):
   return split_xvs, split_inds
 
 
-def make_subset_list(nviews)
+def make_subset_list(nviews):
     view_subsets = []
     view_range = list(range(nviews))
     for nv in view_range:
@@ -186,7 +186,7 @@ def all_subset_accuracy(model, data):
     s_error = []
     for subset in itertools.combinations(view_range, nv + 1):
       input_data = {vi:data[vi] for vi in subset}
-      pred = predict(model, input_data)
+      pred = model.predict(input_data)
       err = error_func(data, pred)
       s_error.append(err)
       all_errors[subset] = err
@@ -202,7 +202,7 @@ def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
   #   np.save(fname, [data, ptfms])
   # else:
   #   data, ptfms = np.load(fname)
-  data, ptfms = default_data2(npts=npts, nviews=nviews, ndim=dim, peps=peps)
+  data, ptfms = default_data(npts=npts, nviews=nviews, ndim=dim, peps=peps)
   v_sizes = [data[vi].shape[1] for vi in range(len(data))]
   config = default_RMAE_config(v_sizes)
 
@@ -211,6 +211,9 @@ def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
   tr_frac = 0.8
   split_inds = [0, int(tr_frac * npts), npts]
   (tr_data, te_data), _ = split_data(data, split_inds=split_inds)
+
+  config.drop_scale = False
+  config.zero_at_input = True
   config.max_iters = 10000
 
   # IPython.embed()
@@ -223,8 +226,8 @@ def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
 
 
 if __name__ == "__main__":
-  nviews = 4
-  dim = 12
+  nviews = 3
+  dim = 9
   npts = 100
   peps = 0.
   test_RMAE(nviews, dim, npts, peps)
