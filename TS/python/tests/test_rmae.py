@@ -1,4 +1,5 @@
 # Testing multi-view autoencoder
+import itertools
 import numpy as np
 import torch
 from torch import nn
@@ -6,6 +7,7 @@ from torch import nn
 from models import robust_multi_ae
 from synthetic import multimodal_systems as ms
 from utils import torch_utils as tu
+from utils import utils
 
 try:
   import matplotlib.pyplot as plt
@@ -54,24 +56,24 @@ def default_RMAE_config(v_sizes):
 
   # Default Encoder config:
   output_size = hidden_size
-  layer_units = [32, 64]
+  layer_units = [32] # [32, 64]
   use_vae = False
-  activation = nn.functional.relu
-  last_activation = nn.functional.sigmoid
+  activation = nn.ReLU  # nn.functional.relu
+  last_activation = nn.Sigmoid  # functional.sigmoid
   encoder_params = {}
   for i in range(n_views):
     input_size = v_sizes[i]
     layer_types, layer_args = tu.generate_linear_types_args(
         input_size, layer_units, output_size)
-    encoder_params[i]: tu.MNNConfig(
+    encoder_params[i] = tu.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
         last_activation=last_activation, use_vae=use_vae)
 
   input_size = joint_code_size
-  layer_units = [64, 32]
+  layer_units = [32]  #[64, 32]
   use_vae = False
-  last_activation = None
+  last_activation = tu.Identity
   decoder_params = {}
   for i in range(n_views):
     output_size = v_sizes[i]
@@ -82,10 +84,9 @@ def default_RMAE_config(v_sizes):
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, use_vae=use_vae)
 
-
   input_size = hidden_size * len(v_sizes)
   output_size = joint_code_size
-  layer_units = [64, 64]
+  layer_units = [64]  #[64, 64]
   layer_types, layer_args = tu.generate_linear_types_args(
       input_size, layer_units, output_size)
   use_vae = False
@@ -151,7 +152,7 @@ def plot_heatmap(mat, msplit_inds, misc_title=""):
 
 def split_data(xvs, n=10, split_inds=None):
   xvs = {vi:np.array(xv) for vi, xv in xvs.items()}
-  npts = xvs[kvs.keys()[0]].shape[0]
+  npts = xvs[utils.get_any_key(xvs)].shape[0]
   if split_inds is None:
     split_inds = np.linspace(0, npts, n + 1).astype(int)
   else:
@@ -164,6 +165,34 @@ def split_data(xvs, n=10, split_inds=None):
       for idx in zip(start, end)
   ]
   return split_xvs, split_inds
+
+
+def make_subset_list(nviews)
+    view_subsets = []
+    view_range = list(range(nviews))
+    for nv in view_range:
+      view_subsets.extend(list(itertools.combinations(view_range, nv + 1)))
+
+
+def error_func(true_data, pred):
+  return np.sum([np.linalg.norm(true_data[vi] - pred[vi]) for vi in pred])
+
+
+def all_subset_accuracy(model, data):
+  view_range = list(range(len(data)))
+  all_errors = {}
+  subset_errors = {}
+  for nv in view_range:
+    s_error = []
+    for subset in itertools.combinations(view_range, nv + 1):
+      input_data = {vi:data[vi] for vi in subset}
+      pred = predict(model, input_data)
+      err = error_func(data, pred)
+      s_error.append(err)
+      all_errors[subset] = err
+    subset_errors[nv] = np.mean(s_error)
+
+  return subset_errors, all_errors
 
 
 def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
@@ -181,9 +210,10 @@ def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
   #   data = {vi: d[:npts] for vi, d in data.items()}
   tr_frac = 0.8
   split_inds = [0, int(tr_frac * npts), npts]
-  tr_data, te_data = split_data(data, split_inds=split_inds)
-  config.max_iters = 1
+  (tr_data, te_data), _ = split_data(data, split_inds=split_inds)
+  config.max_iters = 10000
 
+  # IPython.embed()
   model = robust_multi_ae.RobustMultiAutoEncoder(config)
   model.fit(tr_data)
   # vlens = [data[vi].shape[1] for vi in range(len(data))]

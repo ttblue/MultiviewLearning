@@ -337,6 +337,9 @@ def is_valid_partitioning(G, dim):
   return True
 
 
+def get_any_key(dict_var):
+  return list(dict_var.keys())[0]
+
 # if __name__ == '__main__':
 #   import IPython
 #   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')

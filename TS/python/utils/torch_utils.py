@@ -77,6 +77,9 @@ class MultiLayerNN(nn.Module):
         # Interleave linear operations with activations
         all_ops.append(ltype(*largs))
         # If last layer, use "last_activation". Else, use "activation."
+        # all_ops.append(
+        #     self._activation() if i < num_layers - 1 else
+        #     self._last_activation())
         all_ops.append(
             self._activation() if i < num_layers - 1 else
             self._last_activation())

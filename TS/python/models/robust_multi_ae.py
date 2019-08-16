@@ -8,6 +8,7 @@ import time
 
 from models import multi_ae
 from models.model_base import ModelException
+from utils import utils
 import utils.torch_utils as tu
 from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 
@@ -27,8 +28,8 @@ class RMAEConfig(multi_ae.MAEConfig):
 class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
   def __init__(self, config):
     # TODO:
-    if self.config.use_vae:
-      raise NotImplementedError("Variational MAE not yet implemented.")
+    # if config.use_vae:
+    #   raise NotImplementedError("Variational MAE not yet implemented.")
     super(RobustMultiAutoEncoder, self).__init__(config)
     self._setup_joint_layer()
   #   self._initialize_dims_for_dropout()
@@ -57,30 +58,29 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
   def _encode_missing_view(self, vi, npts):
     if self.config.zero_at_input:
       vi_zeros = torch.zeros(npts, self.config.v_sizes[vi])
-      vi_code = self._encode_view(vi_zeros)
+      vi_code = self._encode_view(vi_zeros, vi)
     else:
       vi_code = torch.zeros(npts, self.config.encoder_params[vi].output_size)
     return vi_code
 
   def _encode_joint(self, view_codes):
-    npts = view_codes[view_codes.keys()[0]].shape[0]
+    npts = view_codes[utils.get_any_key(view_codes)].shape[0]
     view_codes = [
         (view_codes[vi] if vi in view_codes else
          self._encode_missing_view(vi, npts))
         for vi in range(self._nviews)
     ]
-    joint_code_input = torch.cat(view_codes, axis=1)
+    joint_code_input = torch.cat(view_codes, dim=1)
     joint_code = self._joint_coder(joint_code_input)
     return joint_code
 
   def encode(self, xvs, include_missing=True, return_joint=True):
     view_codes = {}
-    npts = xvs[xvs.keys()[0]].shape[0]
+    npts = xvs[utils.get_any_key(xvs)].shape[0]
     scaling = (self._nviews / len(xvs)) if self.config.drop_scale else 1.0
     for vi in range(self._nviews):
       if vi in xvs:
         view_codes[vi] = self._encode_view(xvs[vi], vi) * scaling
-        n_available_views += 1
       elif include_missing:
         view_codes[vi] = self._encode_missing_view(vi, npts)
 
@@ -116,9 +116,14 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
 
   def loss(self, xvs, recons, zs):
     obj = 0.
+    if not isinstance(xvs[utils.get_any_key(xvs)], torch.Tensor):
+      xvs = {
+          vi:torch.from_numpy(xv).type(_DTYPE).requires_grad_(False)
+          for vi, xv in xvs.items()
+      }
     common_views = [vi for vi in recons if vi in xvs]
     for vi in common_views:
-      obj += self.recon_criterion(xv[vi], recons[vi])
+      obj += self.recon_criterion(xvs[vi], recons[vi])
 
     # Additional loss based on the encoding:
     # Maybe explicitly force the encodings to be similar
@@ -130,7 +135,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     view_subsets = []
     view_range = list(range(self._nviews))
     for nv in view_range:
-      view_subsets.extend(list(itertools.combination(view_range, nv + 1)))
+      view_subsets.extend(list(itertools.combinations(view_range, nv + 1)))
 
     n_subsets = len(view_subsets)
     while True:
@@ -139,7 +144,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
         yield view_subsets[sidx]
 
   def _shuffle(self, xvs):
-    npts = xvs[xvs.keys()[0]].shape[0]
+    npts = xvs[utils.get_any_key(xvs)].shape[0]
     r_inds = np.random.permutation(npts)
     return {vi:xv[r_inds] for vi, xv in xvs.items()}
 
@@ -167,7 +172,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
       print("Starting training loop.")
 
     self._view_data = view_data
-    self._npts = view_data[view_data.keys()[0]].shape[0]
+    self._npts = view_data[utils.get_any_key(view_data)].shape[0]
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
     self._view_subset_shuffler = self._make_view_subset_shuffler()
 
@@ -193,7 +198,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     if vi_out is not None and not isinstance(vi_out, list):
       vi_out = [vi_out]
 
-    if not isinstance(xv, torch.Tensor):
+    if not isinstance(xvs[utils.get_any_key(xvs)], torch.Tensor):
       xvs = {
           vi: torch.from_numpy(xv).type(_DTYPE).requires_grad_(False)
           for vi, xv in xvs.items()
