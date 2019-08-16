@@ -12,7 +12,7 @@ _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 
 
-def generate_layer_types_args(input_size, layer_units, output_size):
+def generate_linear_types_args(input_size, layer_units, output_size):
   all_sizes = [input_size] + layer_units + [output_size]
   ltypes = [torch.nn.Linear] * (len(all_sizes) - 1)
   largs = [(l1, l2) for l1, l2 in zip(all_sizes[:-1], all_sizes[1:])]

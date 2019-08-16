@@ -7,14 +7,13 @@ from torch import nn
 from torch import optim
 import time
 
-import torch_utils as tu
-from torch_utils import _DTYPE, _TENSOR_FUNC
+from utils import torch_utils as tu
+from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 
 import IPython
 
 
 class MAEConfig(object):
-
   def __init__(
       self, v_sizes, code_size, encoder_params, decoder_params,
       code_sample_noise_var, max_iters, batch_size, lr, verbose):
@@ -31,7 +30,7 @@ class MAEConfig(object):
     self.verbose = verbose
 
 
-def default_MAE_Config(v_sizes):
+def default_RMAE_config(v_sizes):
   n_views = len(v_sizes)
   code_size = 10
 
