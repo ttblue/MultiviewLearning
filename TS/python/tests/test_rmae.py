@@ -195,7 +195,8 @@ def all_subset_accuracy(model, data):
   return subset_errors, all_errors
 
 
-def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
+def test_RMAE(
+    nviews=4, dim=12, npts=1000, peps=0., drop_scale=True, zero_at_input=True):
   # fname = "./data/mv_dim_%i_data.npy" % nviews
   # if not os.path.exists(fname):
   #   data, ptfms = default_data(nviews=nviews, ndim=dim)
@@ -212,8 +213,8 @@ def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
   split_inds = [0, int(tr_frac * npts), npts]
   (tr_data, te_data), _ = split_data(data, split_inds=split_inds)
 
-  config.drop_scale = False
-  config.zero_at_input = True
+  config.drop_scale = drop_scale
+  config.zero_at_input = zero_at_input
   config.max_iters = 10000
 
   # IPython.embed()
@@ -226,6 +227,17 @@ def test_RMAE(nviews=4, dim=12, npts=1000, peps=0.):
 
 
 if __name__ == "__main__":
+  import sys
+  drop_scale = True
+  zero_at_input = True
+  try:
+    drop_scale = bool(sys.argv[1])
+    zero_at_input = bool(sys.argv[1])
+  except:
+    pass
+  print("Drop scale: %s"%drop_scale)
+  print("Zero at input: %s"%zero_at_input)
+
   nviews = 3
   dim = 9
   npts = 100
