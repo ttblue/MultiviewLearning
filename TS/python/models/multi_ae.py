@@ -16,12 +16,13 @@ import IPython
 class MAEConfig(object):
 
   def __init__(
-      self, v_sizes, code_size, encoder_params, decoder_params, max_iters,
-      batch_size, lr, verbose):
+      self, v_sizes, code_size, encoder_params, decoder_params,
+      code_sample_noise_var, max_iters, batch_size, lr, verbose):
     self.code_size = code_size
     self.v_sizes = v_sizes
     self.encoder_params = encoder_params
     self.decoder_params = decoder_params
+    self.code_sample_noise_var = code_sample_noise_var
 
     self.max_iters = max_iters
     self.batch_size = batch_size
@@ -88,13 +89,15 @@ class MultiAutoEncoder(nn.Module):
     super(MultiAutoEncoder, self).__init__()
     self.config = config
 
-    self._n_views = len(config.v_sizes)
+    self._nviews = len(config.v_sizes)
     self._v_inds = np.cumsum(config.v_sizes)[:-1]
 
     self._initialize_layers()
     self._setup_optimizer()
 
     self.recon_criterion = nn.MSELoss(reduction="elementwise_mean")
+
+    self._trained = False
 
   def _initialize_layers(self):
     # Encoder and decoder params
@@ -106,7 +109,7 @@ class MultiAutoEncoder(nn.Module):
       self.add_module(name, value)
       vdict[key] = value
 
-    for vi in range(self._n_views):
+    for vi in range(self._nviews):
       set_value(self._en_layers, vi, "en_%i" % vi,
                 tu.MultiLayerNN(self.config.encoder_params[vi]))
       set_value(self._de_layers, vi, "de_%i" % vi,
@@ -133,8 +136,14 @@ class MultiAutoEncoder(nn.Module):
     codes = [self._encode_view(xv, vi) for vi, xv in enumerate(xvs)]
     return codes
 
-  def _sample_codes(self, mu, logvar, noise_coeff=0.5):
+  def _sample_codes(self, mu, logvar=None, noise_coeff=None):
+    if logvar is None:
+      return mu
     # Add noise to code formed for robustness of reconstruction
+    noise_coeff = (
+        self.config.code_sample_noise_var if noise_coeff is None else
+        noise_coeff
+    )
     err = _TENSOR_FUNC(logvar.size()).normal_()
     codes = torch.autograd.Variable(err)
     var = (noise_coeff * logvar).exp_()
@@ -145,7 +154,7 @@ class MultiAutoEncoder(nn.Module):
 
   def decode(self, z, vi_out=None):
     # Not assuming tied weights yet
-    vi_out = range(self._n_views) if vi_out is None else vi_out
+    vi_out = range(self._nviews) if vi_out is None else vi_out
     # Check if it's a single view 
     if isinstance(vi_out, int):
       return self._decode_view(z, vi_out)
@@ -164,7 +173,7 @@ class MultiAutoEncoder(nn.Module):
 
     # This is, for every encoded view, the reconstruction of every view
     recons = {}
-    for vi in range(self._n_views):
+    for vi in range(self._nviews):
       recons[vi] = self.decode(sampled_zs[vi])
 
     return zs, recons
@@ -174,7 +183,7 @@ class MultiAutoEncoder(nn.Module):
 
     obj = 0.
     for vi in recons:
-      for ridx in range(self._n_views):
+      for ridx in range(self._nviews):
         obj += self.recon_criterion(xv[ridx], recons[vi][ridx])
 
     # Additional loss based on the encoding:
@@ -228,7 +237,7 @@ class MultiAutoEncoder(nn.Module):
 
   def predict(self, xv, vi_in, vi_out=None, rtn_torch=False):
     if vi_out is None:
-      vi_out = np.arange(self._n_views).tolist()
+      vi_out = np.arange(self._nviews).tolist()
 
     if not isinstance(vi_in, list):
       vi_in = [vi_in]

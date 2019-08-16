@@ -268,6 +268,7 @@ def test_mv_NGSRL(nviews=4, dim=12, npts=1000, peps=0.):
   config.resolve_change_thresh = 0.05
   config.n_resolve_attempts = 15
 
+  config.parallel = False
   # config.lambda_global = 0  #1e-1
   # config.lambda_group = 0 #0.5  #1e-1
   # config.sp_eps = 5e-5

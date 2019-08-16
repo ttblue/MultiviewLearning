@@ -107,6 +107,7 @@ def test_lorenz_MAE():
     last_activation=last_activation, use_vae=use_vae)
   dec_params = {i:dec_config for i in range(n_views)}
 
+  code_sample_noise_var = 0.5
   max_iters = 5000
   batch_size = 50
   lr = 1e-3
@@ -116,6 +117,7 @@ def test_lorenz_MAE():
       code_size=hidden_size,
       encoder_params=enc_params,
       decoder_params=dec_params,
+      code_sample_noise_var=code_sample_noise_var,
       max_iters=max_iters,
       batch_size=batch_size,
       lr=lr,
