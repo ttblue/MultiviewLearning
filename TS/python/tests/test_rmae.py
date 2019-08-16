@@ -190,7 +190,7 @@ def all_subset_accuracy(model, data):
       err = error_func(data, pred)
       s_error.append(err)
       all_errors[subset] = err
-    subset_errors[nv] = np.mean(s_error)
+    subset_errors[(nv + 1)] = np.mean(s_error)
 
   return subset_errors, all_errors
 
