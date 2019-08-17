@@ -2,7 +2,7 @@
 import numpy as np
 import os
 
-from models import embeddings, ovr_mcca_embeddings, naive_block_sparse_mvrl\
+from models import embeddings, ovr_mcca_embeddings, naive_multi_view_rl, \
                    naive_single_view_rl
 from synthetic import multimodal_systems as ms
 
@@ -208,14 +208,15 @@ def test_mv_GSCCA():
   IPython.embed()
 
 
-def default_NGSRL_config(as_dict=False, sv_type="opt"):
+def default_NGSRL_config(sv_type="opt", as_dict=False):
+  sp_eps = 1e-5
+  verbose = True
+
   if sv_type == "opt":
     group_regularizer = "inf"
     global_regularizer = "L1"
     lambda_group = 1e-1
     lambda_global = 1e-1
-
-    sp_eps = 1e-5
 
     n_solves = 5
     lambda_group_init = 1e-5
@@ -224,58 +225,68 @@ def default_NGSRL_config(as_dict=False, sv_type="opt"):
     resolve_change_thresh = 0.05
     n_resolve_attempts = 3
 
-    solve_joint = True
-    parallel = True
-    n_jobs = None
+    single_view_config = naive_single_view_rl.SVOSConfig(
+        group_regularizer=group_regularizer,
+        global_regularizer=global_regularizer, lambda_group=lambda_group,
+        lambda_global=lambda_global, n_solves=n_solves,
+        lambda_group_init=lambda_group_init,
+        lambda_group_beta=lambda_group_beta,
+        resolve_change_thresh=resolve_change_thresh,
+        n_resolve_attempts=n_resolve_attempts, sp_eps=sp_eps, verbose=verbose)
+    if as_dict: single_view_config = single_view_config.__dict__
+  else:
+    raise ValueError("Single view type %s not implemented." % sv_type)
 
-    verbose = True
+  single_view_solver_type = sv_type
 
-  config = naive_block_sparse_mvrl.NBSMVRLConfig(
-    group_regularizer=group_regularizer, global_regularizer=global_regularizer,
-    lambda_group=lambda_group, lambda_global=lambda_global, sp_eps=sp_eps,
-    n_solves=n_solves, lambda_group_init=lambda_group_init,
-    lambda_group_beta=lambda_group_beta,
-    resolve_change_thresh=resolve_change_thresh,
-    n_resolve_attempts=n_resolve_attempts, solve_joint=solve_joint,
-    parallel=parallel, n_jobs=n_jobs, verbose_interval=verbose_interval,
-    verbose=verbose)
+  # solve_joint = False
+  parallel = True
+  n_jobs = None
+
+  config = naive_multi_view_rl.NBSMVRLConfig(
+      single_view_solver_type=single_view_solver_type,
+      single_view_config=single_view_config, parallel=parallel, n_jobs=n_jobs,
+      verbose=verbose)
 
   return config.__dict__ if as_dict else config
 
 
-def test_mv_NGSRL(nviews=4, dim=12, npts=1000, peps=0.):
+def test_mv_NGSRL_opt(dtype=1, nviews=4, dim=12, npts=1000, peps=0.):
   # fname = "./data/mv_dim_%i_data.npy" % nviews
   # if not os.path.exists(fname):
   #   data, ptfms = default_data(nviews=nviews, ndim=dim)
   #   np.save(fname, [data, ptfms])
   # else:
   #   data, ptfms = np.load(fname)
-  data, ptfms = default_data(npts=npts, nviews=nviews, ndim=dim, peps=peps)
-  config = default_NGSRL_config()
+  default_dfunc = default_data if dtype == 1 else default_data2
+  data, ptfms = default_dfunc(npts=npts, nviews=nviews, ndim=dim, peps=peps)
+
+  config = default_NGSRL_config(sv_type="opt")
 
   # if npts > 0:
   #   data = {vi: d[:npts] for vi, d in data.items()}
 
-  config.lambda_global = 0. #1e-3
-  config.lambda_group = 1e-1
-  config.sp_eps = 5e-5
+  # IPython.embed()
+  config.single_view_config.lambda_global = 1e-3
+  config.single_view_config.lambda_group = 1e-1
+  config.single_view_config.sp_eps = 5e-5
 
-  config.solve_joint = False
+  # config.solve_joint = False
 
-  config.n_solves = 30
-  config.lambda_group_init = 1e-5
-  config.lambda_group_beta = 3
+  config.single_view_config.n_solves = 30
+  config.single_view_config.lambda_group_init = 1e-5
+  config.single_view_config.lambda_group_beta = 3
 
-  config.resolve_change_thresh = 0.05
-  config.n_resolve_attempts = 15
+  config.single_view_config.resolve_change_thresh = 0.05
+  config.single_view_config.n_resolve_attempts = 15
 
-  config.parallel = False
+  config.parallel = True
   # config.lambda_global = 0  #1e-1
   # config.lambda_group = 0 #0.5  #1e-1
   # config.sp_eps = 5e-5
   # config.n_solves = 1
 
-  model = naive_block_sparse_mvrl.NaiveBlockSparseMVRL(config)
+  model = naive_multi_view_rl.NaiveBlockSparseMVRL(config)
   model.fit(data)
 
   vlens = [data[vi].shape[1] for vi in range(len(data))]
@@ -284,48 +295,49 @@ def test_mv_NGSRL(nviews=4, dim=12, npts=1000, peps=0.):
   plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
 
-def test_mv_NGSRL2(nviews=4, dim=12, npts=1000, peps=0.):
-  # fname = "./data/mv_dim_%i_data.npy" % nviews
-  # if not os.path.exists(fname):
-  #   data, ptfms = default_data(nviews=nviews, ndim=dim)
-  #   np.save(fname, [data, ptfms])
-  # else:
-  #   data, ptfms = np.load(fname)
-  data, ptfms = default_data2(npts=npts, nviews=nviews, ndim=dim, peps=peps)
-  config = default_NGSRL_config()
+# def test_mv_NGSRL2(nviews=4, dim=12, npts=1000, peps=0.):
+#   # fname = "./data/mv_dim_%i_data.npy" % nviews
+#   # if not os.path.exists(fname):
+#   #   data, ptfms = default_data(nviews=nviews, ndim=dim)
+#   #   np.save(fname, [data, ptfms])
+#   # else:
+#   #   data, ptfms = np.load(fname)
+#   data, ptfms = default_data2(npts=npts, nviews=nviews, ndim=dim, peps=peps)
+#   config = default_NGSRL_config()
 
-  # if npts > 0:
-  #   data = {vi: d[:npts] for vi, d in data.items()}
+#   # if npts > 0:
+#   #   data = {vi: d[:npts] for vi, d in data.items()}
 
-  config.lambda_global = 1e-3
-  config.lambda_group = 1e-1
-  config.sp_eps = 5e-5
+#   config.lambda_global = 1e-3
+#   config.lambda_group = 1e-1
+#   config.sp_eps = 5e-5
 
-  config.n_solves = 30
-  config.lambda_group_init = 1e-5
-  config.lambda_group_beta = 3
+#   config.n_solves = 30
+#   config.lambda_group_init = 1e-5
+#   config.lambda_group_beta = 3
 
-  config.resolve_change_thresh = 0.05
-  config.n_resolve_attempts = 15
+#   config.resolve_change_thresh = 0.05
+#   config.n_resolve_attempts = 15
 
-  model = naive_block_sparse_mvrl.NaiveBlockSparseMVRL(config)
-  model.fit(data)
+#   model = naive_multi_view_rl.NaiveBlockSparseMVRL(config)
+#   model.fit(data)
 
-  vlens = [data[vi].shape[1] for vi in range(len(data))]
-  msplit_inds = np.cumsum(vlens)[:-1]
-  IPython.embed()
-  plot_heatmap(model.nullspace_matrix(), msplit_inds)
+#   vlens = [data[vi].shape[1] for vi in range(len(data))]
+#   msplit_inds = np.cumsum(vlens)[:-1]
+#   IPython.embed()
+#   plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
 
 if __name__=="__main__":
   # test_GSCCA()
   # test_GSCCA_loaded()
   # test_mv_GSCCA()
+  dtype = 1
   nviews = 4
   dim = 12
   npts = 100
   peps = 0.
-  test_mv_NGSRL(nviews, dim, npts, peps)
+  test_mv_NGSRL_opt(dtype, nviews, dim, npts, peps)
   # test_mv_NGSRL2(nviews, dim, npts, peps)
 # import matplotlib.pyplot as plt
 # plt.plot(primal_residual, color='r', label='primal residual')

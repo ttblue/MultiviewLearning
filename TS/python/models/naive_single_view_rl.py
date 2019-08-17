@@ -1,4 +1,4 @@
-`# Naive single-view solvers defined for naive MV-RL.
+# Naive single-view solvers defined for naive MV-RL.
 import cvxpy as cvx
 import numpy as np
 import time
@@ -16,9 +16,7 @@ _OBJ_ORDER = ["error", "gs", "reg", "total"]
 
 
 class AbstractSVSConfig(object):
-  def __init__(self, sp_eps, verbose, *args, **kwargs):
-    self.sp_eps = sp_eps
-
+  def __init__(self, verbose, *args, **kwargs):
     self.verbose = verbose
 
 
@@ -39,9 +37,9 @@ class AbstractSingleViewSolver(object):
   def set_data(self, data):
     # raise NotImplemented("Abstract class method.")
     self._nviews = len(data)
-    self._view_data = data[self._view_id]
+    self._view_data = data[self.view_id]
     self._npts, self._dim = self._view_data.shape
-    self._rest_data = {vi:data[vi] for vi in data if vi != self._view_id}
+    self._rest_data = {vi:data[vi] for vi in data if vi != self.view_id}
     self._rest_dims = {vi:vd.shape[1] for vi, vd in self._rest_data.items()}
 
     self._has_data = True
@@ -56,16 +54,16 @@ class AbstractSingleViewSolver(object):
     raise NotImplemented("Abstract class method.")
 
 
-###############################################################################
+################################################################################
 # CVX based optimization
-###############################################################################
+################################################################################
 
 
-class SVOSConfig(object):
+class SVOSConfig(AbstractSVSConfig):
   def __init__(
       self, group_regularizer, global_regularizer, lambda_group, lambda_global,
       n_solves, lambda_group_init, lambda_group_beta, resolve_change_thresh,
-      n_resolve_attempts, *args, **kwargs):
+      n_resolve_attempts, sp_eps, *args, **kwargs):
     super(SVOSConfig, self).__init__(*args, **kwargs)
 
     self.group_regularizer = group_regularizer
@@ -81,10 +79,12 @@ class SVOSConfig(object):
     self.resolve_change_thresh = resolve_change_thresh
     self.n_resolve_attempts = n_resolve_attempts
 
+    self.sp_eps = sp_eps
 
-class SingleViewOptimizationSolver(AbstractNaiveSingleViewSolver):
+
+class OptimizationSolver(AbstractSingleViewSolver):
   def __init__(self, view_id, config):
-    super(SingleViewOptimizationSolver, self).__init__(view_id, config)
+    super(OptimizationSolver, self).__init__(view_id, config)
 
     self._p_vars = {}
     # self._G = None
@@ -107,20 +107,14 @@ class SingleViewOptimizationSolver(AbstractNaiveSingleViewSolver):
         for vi in self._rest_dims
     }
     # IPython.embed()
-
-    self._group_norm = (
-        lambda var: cvx_utils.cvx_norm_wrapper(
-            var, self.config.group_regularizer))
-    self._global_norm = (
-        lambda var: cvx_utils.cvx_norm_wrapper(
-            var, self.config.global_regularizer))
-
     self._reconstruction = np.sum(
         [(self._rest_data[vi] * self._p_vars[vi]) for vi in self._p_vars])
     self._error = cvx.norm(self._reconstruction - self._view_data) / self._npts
     self._group_reg = np.sum(
-        [self._group_norm(p_var) for p_var in self._p_vars.values()])
-    self._global_reg = self._global_norm(cvx.vstack(self._p_vars.values()))
+        [cvx_utils.cvx_norm_wrapper(p_var, self.config.group_regularizer)
+         for p_var in self._p_vars.values()])
+    self._global_reg = cvx_utils.cvx_norm_wrapper(
+        cvx.vstack(self._p_vars.values()), self.config.global_regularizer)
     self._final_obj = (
         self._error + cvx.abs(self._lambda_group) * self._group_reg +
         cvx.abs(self._lambda_global) * self._global_reg)
@@ -212,7 +206,7 @@ class SingleViewOptimizationSolver(AbstractNaiveSingleViewSolver):
       self.compute_projections()
       self._proj_history.append(self.projections)
 
-      curr_objs = self.get_obj("all")
+      curr_objs = self.get_objective("all")
       self._objs_history.append(curr_objs)
       needs_resolve = self._check_if_resolve(curr_objs)
       self._lambda_group_history.append(group_lambda_iter)
