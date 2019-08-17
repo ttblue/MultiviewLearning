@@ -2,7 +2,8 @@
 import numpy as np
 import os
 
-from models import embeddings, ovr_mcca_embeddings, naive_block_sparse_mvrl
+from models import embeddings, ovr_mcca_embeddings, naive_block_sparse_mvrl\
+                   naive_single_view_rl
 from synthetic import multimodal_systems as ms
 
 
@@ -207,27 +208,27 @@ def test_mv_GSCCA():
   IPython.embed()
 
 
-def default_NGSRL_config(as_dict=False):
-  group_regularizer = "inf"
-  global_regularizer = "L1"
-  lambda_group = 1e-1
-  lambda_global = 1e-1
+def default_NGSRL_config(as_dict=False, sv_type="opt"):
+  if sv_type == "opt":
+    group_regularizer = "inf"
+    global_regularizer = "L1"
+    lambda_group = 1e-1
+    lambda_global = 1e-1
 
-  sp_eps = 1e-5
+    sp_eps = 1e-5
 
-  n_solves = 5
-  lambda_group_init = 1e-5
-  lambda_group_beta = 10
+    n_solves = 5
+    lambda_group_init = 1e-5
+    lambda_group_beta = 10
 
-  resolve_change_thresh = 0.05
-  n_resolve_attempts = 3
+    resolve_change_thresh = 0.05
+    n_resolve_attempts = 3
 
-  solve_joint = True
-  parallel = True
-  n_jobs = None
+    solve_joint = True
+    parallel = True
+    n_jobs = None
 
-  verbose_interval = 10.
-  verbose = True
+    verbose = True
 
   config = naive_block_sparse_mvrl.NBSMVRLConfig(
     group_regularizer=group_regularizer, global_regularizer=global_regularizer,

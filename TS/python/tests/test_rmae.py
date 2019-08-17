@@ -240,6 +240,6 @@ if __name__ == "__main__":
 
   nviews = 3
   dim = 9
-  npts = 100
+  npts = 1000
   peps = 0.
   test_RMAE(nviews, dim, npts, peps)
