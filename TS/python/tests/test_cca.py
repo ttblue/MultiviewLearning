@@ -1,10 +1,13 @@
 # Tests for some CCA stuff
 import numpy as np
 import os
+import torch
+from torch import nn
 
 from models import embeddings, ovr_mcca_embeddings, naive_multi_view_rl, \
                    naive_single_view_rl
 from synthetic import multimodal_systems as ms
+from utils import torch_utils as tu
 
 
 try:
@@ -212,12 +215,12 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
   sp_eps = 1e-5
   verbose = True
 
-  if sv_type == "opt":
-    group_regularizer = "inf"
-    global_regularizer = "L1"
-    lambda_group = 1e-1
-    lambda_global = 1e-1
+  group_regularizer = "inf"
+  global_regularizer = "L1"
+  lambda_group = 1e-1
+  lambda_global = 1e-1
 
+  if sv_type == "opt":
     n_solves = 5
     lambda_group_init = 1e-5
     lambda_group_beta = 10
@@ -234,6 +237,32 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
         resolve_change_thresh=resolve_change_thresh,
         n_resolve_attempts=n_resolve_attempts, sp_eps=sp_eps, verbose=verbose)
     if as_dict: single_view_config = single_view_config.__dict__
+  elif sv_type == "nn":
+    input_size = 10  # Computed online
+    # Default Encoder config:
+    output_size = 10  # Computed online
+    layer_units = []  #[32] # [32, 64]
+    use_vae = False
+    activation = nn.ReLU  # nn.functional.relu
+    last_activation = tu.Identity  #nn.Sigmoid  # functional.sigmoid
+    # layer_types = None
+    # layer_args = None
+    bias = False
+    layer_types, layer_args = tu.generate_linear_types_args(
+          input_size, layer_units, output_size, bias)
+    nn_config = tu.MNNConfig(
+        input_size=input_size, output_size=output_size, layer_types=layer_types,
+        layer_args=layer_args, activation=activation,
+        last_activation=last_activation, use_vae=use_vae)
+
+    batch_size = 32
+    lr = 1e-3
+    max_iters = 1000
+    single_view_config = naive_single_view_rl.SVNNSConfig(
+      nn_config=nn_config, group_regularizer=group_regularizer,
+        global_regularizer=global_regularizer, lambda_group=lambda_group,
+        lambda_global=lambda_global, batch_size=batch_size, lr=lr,
+        max_iters=max_iters)
   else:
     raise ValueError("Single view type %s not implemented." % sv_type)
 
@@ -295,6 +324,40 @@ def test_mv_NGSRL_opt(dtype=1, nviews=4, dim=12, npts=1000, peps=0.):
   plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
 
+def test_mv_NGSRL_NN(dtype=1, nviews=4, dim=12, npts=1000, peps=0.):
+  # fname = "./data/mv_dim_%i_data.npy" % nviews
+  # if not os.path.exists(fname):
+  #   data, ptfms = default_data(nviews=nviews, ndim=dim)
+  #   np.save(fname, [data, ptfms])
+  # else:
+  #   data, ptfms = np.load(fname)
+  default_dfunc = default_data if dtype == 1 else default_data2
+  data, ptfms = default_dfunc(npts=npts, nviews=nviews, ndim=dim, peps=peps)
+
+  config = default_NGSRL_config(sv_type="nn")
+
+  # if npts > 0:
+  #   data = {vi: d[:npts] for vi, d in data.items()}
+  config.single_view_config.lambda_global = 1e-3
+  config.single_view_config.lambda_group = 0  #1e-2
+
+  config.single_view_config.max_iters = 1000
+
+  # IPython.embed()
+  config.parallel = False
+  # config.lambda_global = 0  #1e-1
+  # config.lambda_group = 0 #0.5  #1e-1
+  # config.sp_eps = 5e-5
+  # config.n_solves = 1
+
+  model = naive_multi_view_rl.NaiveBlockSparseMVRL(config)
+  model.fit(data)
+
+  vlens = [data[vi].shape[1] for vi in range(len(data))]
+  msplit_inds = np.cumsum(vlens)[:-1]
+  IPython.embed()
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds)
+
 # def test_mv_NGSRL2(nviews=4, dim=12, npts=1000, peps=0.):
 #   # fname = "./data/mv_dim_%i_data.npy" % nviews
 #   # if not os.path.exists(fname):
@@ -332,12 +395,13 @@ if __name__=="__main__":
   # test_GSCCA()
   # test_GSCCA_loaded()
   # test_mv_GSCCA()
-  dtype = 1
+  dtype = 2
   nviews = 4
   dim = 12
-  npts = 100
+  npts = 1000
   peps = 0.
-  test_mv_NGSRL_opt(dtype, nviews, dim, npts, peps)
+  # test_mv_NGSRL_opt(dtype, nviews, dim, npts, peps)
+  test_mv_NGSRL_NN(dtype, nviews, dim, npts, peps)
   # test_mv_NGSRL2(nviews, dim, npts, peps)
 # import matplotlib.pyplot as plt
 # plt.plot(primal_residual, color='r', label='primal residual')

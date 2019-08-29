@@ -3,9 +3,10 @@ import cvxpy as cvx
 import numpy as np
 import time
 import torch
+from torch import nn, optim
 
-from models.model_base import ModelException
-from utils import cvx_utils
+from models.model_base import ModelException, BaseConfig
+from utils import cvx_utils, torch_utils, utils
 
 
 import IPython
@@ -15,9 +16,8 @@ _SOLVER = cvx.GUROBI
 _OBJ_ORDER = ["error", "gs", "reg", "total"]
 
 
-class AbstractSVSConfig(object):
-  def __init__(self, verbose, *args, **kwargs):
-    self.verbose = verbose
+class AbstractSVSConfig(BaseConfig):
+  pass
 
 
 # Simple abstract base class 
@@ -31,18 +31,11 @@ class AbstractSingleViewSolver(object):
 
     self.has_history = False
 
-  def initialize(self):
+  def set_data(self, data):
     raise NotImplemented("Abstract class method.")
 
-  def set_data(self, data):
-    # raise NotImplemented("Abstract class method.")
-    self._nviews = len(data)
-    self._view_data = data[self.view_id]
-    self._npts, self._dim = self._view_data.shape
-    self._rest_data = {vi:data[vi] for vi in data if vi != self.view_id}
-    self._rest_dims = {vi:vd.shape[1] for vi, vd in self._rest_data.items()}
-
-    self._has_data = True
+  def initialize(self):
+    raise NotImplemented("Abstract class method.")
 
   def fit(self):
     raise NotImplemented("Abstract class method.")
@@ -92,6 +85,16 @@ class OptimizationSolver(AbstractSingleViewSolver):
     self._gs_reg = None
     self._global_reg = None
     self._prob = None
+
+  def set_data(self, data):
+    # raise NotImplemented("Abstract class method.")
+    self._nviews = len(data)
+    self._view_data = data[self.view_id]
+    self._npts, self._dim = self._view_data.shape
+    self._rest_data = {vi:data[vi] for vi in data if vi != self.view_id}
+    self._rest_dims = {vi:vd.shape[1] for vi, vd in self._rest_data.items()}
+
+    self._has_data = True
 
   def initialize(self):
     if not self._has_data:
@@ -260,7 +263,231 @@ class OptimizationSolver(AbstractSingleViewSolver):
     return self
 
 
+################################################################################
+# Torch based NN model
+################################################################################
+
+class SVNNSConfig(AbstractSVSConfig):
+  def __init__(
+      self, nn_config, group_regularizer, global_regularizer, lambda_group,
+      lambda_global, batch_size, lr, max_iters, *args, **kwargs): 
+      # n_solves, lambda_group_init, lambda_group_beta, resolve_change_thresh,
+      # n_resolve_attempts, sp_eps, *args, **kwargs):
+    super(SVNNSConfig, self).__init__(*args, **kwargs)
+
+    self.nn_config = nn_config
+    self.group_regularizer = group_regularizer
+    self.global_regularizer = global_regularizer
+    self.lambda_group = lambda_group
+    self.lambda_global = lambda_global
+
+    # self.n_solves = n_solves
+    # self.lambda_group_init = lambda_group_init
+    # self.lambda_group_beta = lambda_group_beta
+    # # self.global_reg_beta = global_reg_beta
+
+    self.batch_size = batch_size
+    self.lr = lr
+    self.max_iters = max_iters
+    # self.resolve_change_thresh = resolve_change_thresh
+    # self.n_resolve_attempts = n_resolve_attempts
+
+    # self.sp_eps = sp_eps
+
+
+# Some default options for torch norms
+_TORCH_NORM_MAP = {
+    "inf": np.inf,
+    "Linf": np.inf,
+    "fro": "fro",
+    "L1": 1,
+    "L2": 2,
+}
+
+
+class NNSolver(AbstractSingleViewSolver, nn.Module):
+  def __init__(self, view_id, config):
+    nn.Module.__init__(self)
+    AbstractSingleViewSolver.__init__(self, view_id, config)
+    # super(NNSolver, self).__init__(view_id, config)
+
+    self.recon_criterion = nn.MSELoss(reduction="mean")
+
+    self._obj_map = None
+
+    self._trained = False
+
+  def set_data(self, data):
+    # raise NotImplemented("Abstract class method.")
+    self._nviews = len(data)
+    self._data_torch = torch_utils.dict_numpy_to_torch(data)
+    self._view_data = self._data_torch[self.view_id]
+    self._npts, self._dim = self._view_data.shape
+    self._rest_data = {
+        vi: vd for vi, vd in self._data_torch.items() if vi != self.view_id}
+
+    self._has_data = True
+
+  def initialize(self):
+    if not self._has_data:
+      raise ModelException("Data has not been set. Use set_data function.")
+
+    # self._lambda_global = value=self.config.lambda_global
+    gl_reg = self.config.global_regularizer
+    self._global_norm_p = _TORCH_NORM_MAP.get(gl_reg, gl_reg)
+    self._lambda_global = self.config.lambda_global
+
+    gs_reg = self.config.group_regularizer
+    self._group_norm_p = _TORCH_NORM_MAP.get(gs_reg, gs_reg)
+    self._lambda_group = self.config.lambda_group
+
+    self.config.nn_config.set_sizes(output_size=self._dim)
+    self._p_tfms = {}
+    self._p_last_layers = {}
+    for vi in self._rest_data:
+      vi_config = self.config.nn_config.copy()
+      vi_config.set_sizes(input_size=self._rest_data[vi].shape[1])
+      # IPython.embed()
+      vi_transform = torch_utils.MultiLayerNN(vi_config)
+
+      self.add_module("transform_%i" % vi, vi_transform)
+      self._p_tfms[vi] = vi_transform
+      vi_layer = vi_transform.get_layer_params(-1)
+      # IPython.embed()
+      if vi_layer.bias is None:
+        vi_param = vi_layer.weight
+      else:
+        vi_param = torch.cat(
+            [vi_layer.weight, torch.reshape(vi_layer.bias, (1, -1))], dim=0)
+      self._p_last_layers[vi] = vi_param
+    # IPython.embed()
+      # vi_transform.get_layer_params(-1)  #(vi_layer.weight, vi_layer.bias)
+
+    # self._view_data_torch = torch.from_numpy(self._view_data.astype(np.float32))
+    # self._rest_data_torch = torch_utils.dict_numpy_to_torch(self._rest_data)
+
+    self.opt = optim.Adam(self.parameters(), self.config.lr)
+
+  def _reconstruction(self, data=None):
+    data = self._rest_data if data is None else data
+    p_recons = torch.stack(
+        [self._p_tfms[vi](data[vi]) for vi in self._p_tfms], dim=0)
+    return torch.sum(p_recons, dim=0)
+
+  def _error(self):
+    error = self.recon_criterion(self._reconstruction(), self._view_data)
+    return error.detach().numpy()
+
+  def _group_reg(self):
+    group_reg = torch.sum(torch.Tensor(
+        [torch.norm(l, p=self._group_norm_p)
+        for l in self._p_last_layers.values()]))
+    return group_reg.detach().numpy()
+
+  def _global_reg(self):
+    all_params = torch.cat([l for l in self._p_last_layers.values()])
+    global_reg = torch.norm(all_params, p=self._global_norm_p)
+    return global_reg
+
+  def _total_obj(self):
+    return self._error() + self._lambda_group * self._group_reg()
+
+  def forward(self, data):
+    # reconstruction = np.sum(
+    #     [self._p_tfms[vi](data[vi])
+    #      for vi in self._p_tfms if vi in data])
+    return self._reconstruction(data)
+
+  def loss(self, vi_data, recons):
+    # xv = self._split_views(x, rtn_torch=True)
+    obj = self.recon_criterion(recons, vi_data)
+    # Group sparsity penalty:
+    group_norms = torch.Tensor([
+        torch.norm(l, p=self._group_norm_p)
+        for l in self._p_last_layers.values()])
+    obj += self._lambda_group * torch.sum(group_norms)
+    # Global penalty
+    global_norm = torch.norm(torch.cat(
+        [l for l in self._p_last_layers.values()]), p=self._global_norm_p)
+    obj += self._lambda_global * global_norm
+    return obj
+
+  def _shuffle(self, xvs):
+    npts = xvs[utils.get_any_key(xvs)].shape[0]
+    r_inds = np.random.permutation(npts)
+    return {vi:xv[r_inds] for vi, xv in xvs.items()}
+
+  def _train_loop(self):
+    xvs = self._shuffle(self._data_torch)
+    self.itr_loss = 0.
+    for bidx in range(self._n_batches):
+      b_start = bidx * self.config.batch_size
+      b_end = b_start + self.config.batch_size
+      xvs_batch = {vi:xv[b_start:b_end] for vi, xv in xvs.items()}
+      xvs_batch_view = xvs_batch[self.view_id]
+      xvs_batch_rest = {
+          vi: xv for vi, xv in xvs_batch.items() if vi != self.view_id}
+      # keep_subsets = next(self._view_subset_shuffler)
+      # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
+
+      self.opt.zero_grad()
+      recons = self.forward(xvs_batch_rest)
+      loss_val = self.loss(xvs_batch_view, recons)
+      loss_val.backward()
+      self.opt.step()
+      self.itr_loss += loss_val
+
+  def fit(self):
+    if self.config.verbose:
+      all_start_time = time.time()
+      print("Starting training loop.")
+
+    self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
+
+    try:
+      for itr in range(self.config.max_iters):
+        if self.config.verbose:
+          itr_start_time = time.time()
+          print("\nIteration %i out of %i." % (itr + 1, self.config.max_iters))
+        self._train_loop()
+
+        if self.config.verbose:
+          itr_duration = time.time() - itr_start_time
+          print("Loss: %.5f" % float(self.itr_loss.detach()))
+          print("Iteration %i took %0.2fs." % (itr + 1, itr_duration))
+    except KeyboardInterrupt:
+      print("Training interrupted. Quitting now.")
+    self._trained = True
+    print("Training finished in %0.2f s." % (time.time() - all_start_time))
+
+  def get_objective(self, obj_type="all"):
+    if self._obj_map is None:
+      self._obj_map = {
+        "error": self._error,
+        "gs": self._group_reg,
+        "reg": self._global_reg,
+        "total": self._total_obj
+      }
+
+    if obj_type == "all":
+      return [self._obj_map[otype]() for otype in _OBJ_ORDER]
+    return self._obj_map.get(obj_type, "total")()
+
+  def predict(self, xvs, rtn_torch=False):
+    if not self._trained:
+      raise ModelException("Model not yet trained!")
+
+    xvs = torch_utils.dict_numpy_to_torch(xvs)
+    preds = self.forward(xvs)
+
+    return preds if rtn_torch else preds.detach().numpy()
+    # return preds
+
+
+################################################################################
+################################################################################
+
 _SINGLE_VIEW_SOLVERS = {
     "opt": OptimizationSolver,
-    # "nn": NNSolver,
+    "nn": NNSolver,
 }
