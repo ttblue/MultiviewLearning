@@ -1,14 +1,15 @@
 # Utility functions for processing data and such.
 import csv
 import glob
+import numpy as np
 import os
 import re
+import subprocess
 import sys
 import xlrd
 
-import numpy as np
+import IPython
 
-import subprocess
 
 class UtilsException(Exception):
   pass
@@ -74,7 +75,6 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
     else:
       sh = wb.sheet_by_name("Sheet1")
   except:
-    import IPython
     IPython.embed()
 
   conversion_factor = 86400. if convert_to_s else 1
@@ -84,7 +84,7 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
   ann_time = {}
   ann_text = {}
   # First two rows are not useful.
-  for ridx in xrange(2, sh.nrows):
+  for ridx in range(2, sh.nrows):
     row = sh.row(ridx)
 
     if row[0].ctype != xlrd.XL_CELL_EMPTY:
@@ -98,8 +98,9 @@ def load_xlsx_annotation_file(ann_file, convert_to_s=True):
     k += 1
 
   # Interpolate existing times to get the missing values.
-  xp = ann_time.keys()
+  xp = list(ann_time.keys())
   fp = [ann_time[i] for i in xp]
+  # IPython.embed()
   f = np.interp(missing_inds, xp, fp)
   for i,t in zip(missing_inds, f):
     ann_time[i] = t
@@ -186,9 +187,11 @@ def create_annotation_labels(ann_text, console=False):
   # 0: Stabilization
   # 1: Bleeding
   # 2: Between bleeds
-  # 3: Resuscitation
-  # 4: Between resuscitation events
-  # 5: Post resuscitation
+  # 3: Hextend Resuscitation
+  # 4: Other Resuscitation
+  # 5: After Hextend (between resuscitation events)
+  # 6: After other resuscitation (between resuscitation events)
+  # 7: Post resuscitation
   # -1: None
 
   stabilization_start_re = re.compile("min stabilization period$")
@@ -220,25 +223,24 @@ def create_annotation_labels(ann_text, console=False):
     elif bleed_end_re.search(text) is not None:
       new_lbl = 2
     elif resuscitation_start_re.search(text) is not None:
-      # TODO: Not sure about this. The last "between bleeds" is actually right
-      # before resuscitation. So perhaps it should be "between resuscitation
-      # events."
-      if lbl == 2: lbl = 4
-      new_lbl = 3
+      # Currently treating the time after last bleed and first resuscitation as 
+      # Between bleeds, since it should have the same characteristics.
+      # if lbl == 2: lbl = 4
+      new_lbl = 3 if "hextend" in text else 4
     elif resuscitation_end_re.search(text) is not None:
-      new_lbl = 4
+      # TODO: Don't know about this:
+      # if lbl not in [3, 4]: continue  # If resuscitation stops without start
+      new_lbl = 5 if ("hextend" in text or lbl == 3) else 6
 
     if new_lbl != lbl:
       critical_anns.append(idx)
       ann_labels.append(lbl)
       lbl = new_lbl
 
-  # import IPython
   # IPython.embed()
   # TODO: Currently removing all resuscitation events before bleed.
   # I don't know what the right thing to do here is.
   if 0 not in ann_labels:
-    import IPython
     IPython.embed()
     
   try:
@@ -253,21 +255,19 @@ def create_annotation_labels(ann_text, console=False):
     ann_labels[bidx] = 2
   # critical_anns = np.array(critical_anns)[valid_inds].tolist()
   # if console:
-  #   import IPython
   #   IPython.embed()
   # This next check is unnecessary. If the last label is anything but 3, that's
   # worrisome.
   # The last label should be "post resuscitation".
-  while ann_labels[-1] == 4:
+  while ann_labels[-1] in [5, 6]:
     del ann_labels[-1], critical_anns[-1]
   # if ann_labels[-1] != 3:
-  #   import IPython
   #   IPython.embed()
   #   raise UtilsException("The last label should be 3, not %i"%ann_labels[-1])
 
   if critical_anns[-1] != idx:
     critical_anns.append(idx)
-    ann_labels.append(5)
+    ann_labels.append(7)
 
   return critical_anns, ann_labels
 
@@ -341,7 +341,6 @@ def get_any_key(dict_var):
   return list(dict_var.keys())[0]
 
 # if __name__ == '__main__':
-#   import IPython
 #   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
 #   critical_anns, ann_labels = create_annotation_labels(ann_text)
 #   IPython.embed()

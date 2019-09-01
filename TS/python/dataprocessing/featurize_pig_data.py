@@ -9,11 +9,11 @@ import multiprocessing
 
 import numpy as np
 
-import dataset
+from utils import dataset, math_utils as mu, time_series_utils as tsu, utils
 # import time_series_ml as tsml
-import math_utils as mu
-import time_series_utils as tsu
-import utils
+# import math_utils as mu
+# import time_series_utils as tsu
+# import utils
 
 import IPython
 
@@ -750,7 +750,7 @@ def load_slow_pig_features_and_labels(
 
 
 def load_pig_features_and_labels_numpy(
-      num_pigs=-1, ds=10, ds_factor=5, feature_columns=[0, 7], save_new=False,
+      pig_ids=-1, ds=10, ds_factor=5, feature_columns=[0, 7], save_new=False,
       valid_labels=None, use_derivs=False, pig_type="slow"):
   if use_derivs and save_new:
     print("Save new not implemented for derivs. Not saving.")
@@ -799,10 +799,11 @@ def load_pig_features_and_labels_numpy(
   if VERBOSE:
     print("Not using pigs %s. Either annotations or data missing."%(unused_pigs))
 
-  pig_ids = common_keys
-
-  if num_pigs > 0:
-    np.random.shuffle(pig_ids)
+  if isinstance(pig_ids, list):
+    pig_list = [key for key in pig_ids if key in common_keys]
+  elif pig_ids > 0:
+    pig_list = common_keys
+    np.random.shuffle(pig_list)
 
   # Extract data.
   all_data = {}
@@ -817,7 +818,7 @@ def load_pig_features_and_labels_numpy(
              if using_all else None)
 
   # IPython.embed()
-  for key in pig_ids:
+  for key in pig_list:
     if VERBOSE:
       t_start = time.time()
 
