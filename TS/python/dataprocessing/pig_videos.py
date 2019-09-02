@@ -309,32 +309,45 @@ def load_common_vidfeat_data(pnums=None, ftypes=["feat", "anno"], nfiles=-1):
 # - EndHextend
 # - AfterHextend
 
-# (start label, end label, parts of interval)
-PHASE_MAP = {
-    "EndBaseline": (0, 1, ["end"]),
-    "EndBleed": (1, 2, ["end"]),
-    "AfterBleed": (2, 1, ["start"]),
-    "BeforeResusc": 
-}
+
+def get_idxs_of_continuous_intervals(bin_list):
+  idx_pairs = []
+  nz_inds = bin_list.nonzero()[0]
+  if len(nz_inds) == 0:
+    return idx_pairs
+
+  start_idx = nz_inds[0]
+  while True:
+    # Assuming every bleed phase ends.
+    end_idx = (bin_list[start_idx:] == 0).nonzero()[0][0] + start_idx
+    idx_pairs.append((start_idx, end_idx))
+    nz_inds = bin_list[end_idx:].nonzero()[0]
+    if len(nz_inds) == 0:
+      break
+    start_idx = nz_inds[0] + end_idx
+  return idx_pairs
+
+
 # Given single video and feature data, time-sync and return as views.
 def sync_single_vid_feat_data(vdat, fdat):
-
   phase_data = {}
+  features = fdat["features"]
   labels = fdat["labels"]
-  # Use simple array-change detection method.
-  # Extract "EndBaseline"
-  if "EndBaseline" in vdat:
-    # Interval of 0s ending with 1.
-    z_minus_o = np.where(labels == 0, 1, 0) - np.where(labels == 1, 1, 0)
-    change = z_minus_o[:-1] + z_minus_o[1:]
-    # First 0 is one + index where change == 1
-    start_idx = (change == 1).nonzero()[0][0]
-    end_idx 
-    pass
-  if "EndBleed" in vdat::
-    pass
-  if "AfterBleed" in vdat:
-    pass
+
+  for phase in vdat:  # Stabilization
+    if phase == "EndBaseline":  # Intervals of label 0
+      phase_labels = (labels == 0)
+    elif phase == "EndBleed":  # Intervals of label 1
+      phase_labels = (labels == 1)
+    elif phase == "AfterBleed":  # Intervals of label 2
+      phase_labels = (labels == 2)
+
+    idx_pairs = get_idxs_of_continuous_intervals(phase_labels)
+    if idx_pairs:
+      phase_data[phase] = {
+          "video": vdat[phase]["feat"]["features"],
+          "feat": [features[sidx:eidx] for sidx, eidx in idx_pairs]
+      }
   if "BeforeResusc" in vdat:
     pass
   if "EndHextend" in vdat:
