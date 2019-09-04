@@ -347,7 +347,36 @@ def split_data(xvs, n=10, split_inds=None):
   return split_xvs, split_inds
 
 
-def test_RMAE(drop_scale=True, zero_at_input=True):
+def make_subset_list(nviews):
+    view_subsets = []
+    view_range = list(range(nviews))
+    for nv in view_range:
+      view_subsets.extend(list(itertools.combinations(view_range, nv + 1)))
+
+
+def error_func(true_data, pred):
+  return np.sum([np.linalg.norm(true_data[vi] - pred[vi]) for vi in pred])
+
+
+def all_subset_accuracy(model, data):
+  view_range = list(range(len(data)))
+  all_errors = {}
+  subset_errors = {}
+  for nv in view_range:
+    s_error = []
+    for subset in itertools.combinations(view_range, nv + 1):
+      input_data = {vi:data[vi] for vi in subset}
+      pred = model.predict(input_data)
+      err = error_func(data, pred)
+      s_error.append(err)
+      all_errors[subset] = err
+    subset_errors[(nv + 1)] = np.mean(s_error)
+
+  return subset_errors, all_errors
+
+
+def test_vitals_only_rmae(
+    num_pigs=-1, npts=-1, lnum=0, drop_scale=True, zero_at_input=True):
   pnums = pig_videos.FFILE_PNUMS
   if num_pigs > 0:
     pnums = pnums[:num_pigs]
