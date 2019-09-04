@@ -178,7 +178,8 @@ def aggregate_multipig_data(pig_data, shuffle=True, n=1000):
     shuffle_inds = np.random.permutation(npts)
     data = {i: data[i][shuffle_inds] for i in data}
 
-  data = {i: data[i][:n] for i in data}
+  if n > 0:
+    data = {i: data[i][:n] for i in data}
   #IPython.embed()
 
   return data
@@ -194,8 +195,8 @@ def rescale(data):
   return data
 
 
-def test_vitals_only_opt(num_pigs=-1):
-  pnums = pig_videos.COMMON_PNUMS
+def test_vitals_only_opt(num_pigs=-1, npts=1000):
+  pnums = pig_videos.FFILE_PNUMS
   if num_pigs > 0:
     pnums = pnums[:num_pigs]
 
@@ -203,11 +204,11 @@ def test_vitals_only_opt(num_pigs=-1):
   ws = 30
   nfeats = 3
   view_subset = [5, 6, 10] #None
-  valid_labels = None
+  valid_labels = [0]
   pig_data = pig_videos.load_tdPCA_featurized_slow_pigs(
       pig_list=pnums, ds=ds, ws=ws, nfeats=nfeats, view_subset=view_subset,
       valid_labels=valid_labels)
-  data = aggregate_multipig_data(pig_data, n=1000)
+  data = aggregate_multipig_data(pig_data, n=npts)
   data = rescale(data)
 
   config = default_NGSRL_config(sv_type="opt")
@@ -215,7 +216,7 @@ def test_vitals_only_opt(num_pigs=-1):
   # if npts > 0:
   #   data = {vi: d[:npts] for vi, d in data.items()}
 
-  # IPython.embed()
+  IPython.embed()
   config.single_view_config.lambda_global = 0 #1e-3
   config.single_view_config.lambda_group = 0 # 1e-1
   config.single_view_config.sp_eps = 5e-5
@@ -256,4 +257,5 @@ if __name__ == "__main__":
 
   # IPython.embed()
   num_pigs = -1
-  test_vitals_only_opt(num_pigs=num_pigs)
+  npts = 1000
+  test_vitals_only_opt(num_pigs=num_pigs, npts=npts)

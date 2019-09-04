@@ -27,6 +27,8 @@ ALL_FEAT_FILES = None
 VFILE_MAP = {}
 PNAME_VFILE_MAP = {}
 FFILE_MAP = {}
+VFILE_PNUMS = []
+FFILE_PNUMS = []
 COMMON_PNUMS = []
 
 VERBOSE = True
@@ -47,7 +49,7 @@ def extract_pnum_and_phase(fname):
 
 def load_all_filenames():
   global ALL_VIDEO_FILES, ALL_FEAT_FILES, VFILE_MAP, FFILE_MAP, COMMON_PNUMS,\
-         PNAME_VFILE_MAP
+         PNAME_VFILE_MAP, VFILE_PNUMS, FFILE_PNUMS
   ALL_VIDEO_FILES = sorted([
       fl for fl in os.listdir(VIDEO_DIR)
       if os.path.isfile(os.path.join(VIDEO_DIR, fl))])
@@ -98,6 +100,8 @@ def load_all_filenames():
     pnum = int(fl.split("_")[0])
     FFILE_MAP[pnum] = fl
 
+  VFILE_PNUMS = sorted(list(VFILE_MAP.keys()))
+  FFILE_PNUMS = sorted(list(FFILE_MAP.keys()))
   COMMON_PNUMS = sorted([pnum for pnum in VFILE_MAP if pnum in FFILE_MAP])
 
 load_all_filenames()
@@ -122,7 +126,7 @@ def convert_tstamps_to_labels(
 
 ALL_FEATURE_COLUMNS = [0, 3, 4, 5, 6, 7, 11]
 def load_pig_features_and_labels(
-    pig_list=COMMON_PNUMS, ds=1, ds_factor=10,
+    pig_list=FFILE_PNUMS, ds=1, ds_factor=10,
     feature_columns=ALL_FEATURE_COLUMNS, save_new=False, valid_labels=None):
   # Relevant data directories
   features_dir = FEAT_DIR
@@ -157,8 +161,8 @@ def load_pig_features_and_labels(
   # Find common pigs between annotations and data.
   common_keys = np.intersect1d(list(fdict.keys()), list(adict.keys())).tolist()
   # Create list of unused pigs for bookkeeping.
-  _check_key = lambda key: key in common_keys and key in COMMON_PNUMS
-  pig_list = COMMON_PNUMS if pig_list is None else pig_list
+  _check_key = lambda key: key in common_keys and key in FFILE_PNUMS
+  pig_list = FFILE_PNUMS if pig_list is None else pig_list
   used_pigs = [key for key in pig_list if _check_key(key)]
   np.random.shuffle(used_pigs)
 
@@ -251,7 +255,7 @@ def load_pig_features_and_labels(
 
 
 def load_tdPCA_featurized_slow_pigs(
-    pig_list=COMMON_PNUMS, ds=5, ws=30, nfeats=3, view_subset=None,
+    pig_list=FFILE_PNUMS, ds=5, ws=30, nfeats=3, view_subset=None,
     valid_labels=None):
   # Relevant data directories
   features_dir = WS_FEAT_DIR
@@ -264,8 +268,8 @@ def load_tdPCA_featurized_slow_pigs(
   adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
 
   common_keys = np.intersect1d(list(fdict.keys()), list(adict.keys())).tolist()
-  _check_key = lambda key: key in common_keys and key in COMMON_PNUMS
-  pig_list = COMMON_PNUMS if pig_list is None else pig_list
+  _check_key = lambda key: key in common_keys and key in FFILE_PNUMS
+  pig_list = FFILE_PNUMS if pig_list is None else pig_list
   used_pigs = [key for key in pig_list if _check_key(key)]
   np.random.shuffle(used_pigs)
 
