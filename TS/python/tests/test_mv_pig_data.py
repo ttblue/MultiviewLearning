@@ -161,7 +161,7 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
 
 # Using 3, 4, 5, 6, 7, 11
 
-def aggregate_multipig_data(pig_data, shuffle=True):
+def aggregate_multipig_data(pig_data, shuffle=True, n=1000):
   nviews = len(pig_data[utils.get_any_key(pig_data)]["features"])
   data = {i:[] for i in range(nviews)}
 
@@ -171,17 +171,30 @@ def aggregate_multipig_data(pig_data, shuffle=True):
       data[i].append(vfeats[i])
 
   for i in data:
-    data[i] = np.concatenate(daata[i], axis=0)
+    data[i] = np.concatenate(data[i], axis=0)
 
   if shuffle:
     npts = data[0].shape[0]
-    shuffle_inds = np.permutation(npts)
+    shuffle_inds = np.random.permutation(npts)
     data = {i: data[i][shuffle_inds] for i in data}
+
+  data = {i: data[i][:n] for i in data}
+  #IPython.embed()
 
   return data
 
 
-def test_vitals_only_opt(num_pigs=3):
+def rescale(data):
+  mins = {i: data[i].min(axis=0) for i in data}
+  maxs = {i: data[i].max(axis=0) for i in data}
+  diffs = {i: (maxs[i] - mins[i]) for i in mins}
+
+  data = {i: (data[i] - mins[i]) / diffs[i] for i in mins}
+
+  return data
+
+
+def test_vitals_only_opt(num_pigs=-1):
   pnums = pig_videos.COMMON_PNUMS
   if num_pigs > 0:
     pnums = pnums[:num_pigs]
@@ -189,12 +202,13 @@ def test_vitals_only_opt(num_pigs=3):
   ds = 5
   ws = 30
   nfeats = 3
-  view_subset = None
+  view_subset = [5, 6, 10] #None
   valid_labels = None
   pig_data = pig_videos.load_tdPCA_featurized_slow_pigs(
       pig_list=pnums, ds=ds, ws=ws, nfeats=nfeats, view_subset=view_subset,
       valid_labels=valid_labels)
-  data = aggregate_multipig_data(pig_data)
+  data = aggregate_multipig_data(pig_data, n=1000)
+  data = rescale(data)
 
   config = default_NGSRL_config(sv_type="opt")
 
@@ -208,7 +222,7 @@ def test_vitals_only_opt(num_pigs=3):
 
   # config.solve_joint = False
 
-  config.single_view_config.n_solves = 5
+  config.single_view_config.n_solves = 1#5
   config.single_view_config.lambda_group_init = 1e-5
   config.single_view_config.lambda_group_beta = 3
 
@@ -216,6 +230,7 @@ def test_vitals_only_opt(num_pigs=3):
   config.single_view_config.n_resolve_attempts = 15
 
   config.parallel = True
+  config.n_jobs = 4
   # config.lambda_global = 0  #1e-1
   # config.lambda_group = 0 #0.5  #1e-1
   # config.sp_eps = 5e-5
@@ -240,5 +255,5 @@ if __name__ == "__main__":
 
 
   # IPython.embed()
-  num_pigs = 3
-  test_vitals_only_opt
+  num_pigs = -1
+  test_vitals_only_opt(num_pigs=num_pigs)

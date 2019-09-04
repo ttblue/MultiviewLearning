@@ -281,6 +281,7 @@ def load_tdPCA_featurized_slow_pigs(
     if VERBOSE:
       t_start = time.time()
 
+    ann_time, ann_text = utils.load_xlsx_annotation_file(adict[key])
     critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
     critical_times = [ann_time[idx] for idx in critical_anns]
     if critical_anns is None or ann_labels is None:
@@ -288,9 +289,9 @@ def load_tdPCA_featurized_slow_pigs(
       unused_pigs.append(key)
       continue
 
-    pig_data = np.load(fdict[key]).tolist()
-    tstamps = pig_data["tstamps"]
-    features = pig_data["features"]
+    pig_data = np.load(fdict[key], encoding="bytes").tolist()
+    tstamps = pig_data[b"tstamps"]
+    features = pig_data[b"features"]
 
     critical_times = [ann_time[idx] for idx in critical_anns]
     critical_text = {idx:ann_text[idx] for idx in critical_anns}
