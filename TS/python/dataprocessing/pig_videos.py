@@ -228,6 +228,7 @@ def load_pig_features_and_labels(
       features = features.reshape(-1, 1)
 
     all_data[key] = {
+        "tstamps": tstamps,
         "features": features,
         "labels": labels,
         "ann_text": critical_text
@@ -248,12 +249,31 @@ def load_pig_features_and_labels(
   return all_data#, unused_pigs
 
 
+def load_hdf(fl):
+  dat = h5py.File(fl, 'r')
+  loaded_dat = {
+      k: dat[k][()] for k in dat.keys() if isinstance(dat[k], h5py.Dataset)
+  }
+  return loaded_dat
+
+
+def clean_vdat(vdat, ftype):
+  for key in ["__header__", "__version__", "__globals__"]:
+    if key in vdat:
+      del vdat[key]
+
+  if ftype == "feat":
+    del vdat["labels"]
+
+  return vdat
+
+
 def load_video_data(pnums=None, ftypes=["feat", "anno"]):
   if pnums is None:
     pnums = COMMON_PNUMS
 
-  _loadmat = lambda fl: sio.loadmat(fl)
-  _loadhdf = lambda fl: h5py.File(fl, 'r')
+  _loadmat = lambda fl, ftype: clean_vdat(sio.loadmat(fl), ftype)
+  _loadhdf = lambda fl, ftype: load_hdf(fl)
   _load_func = {
       "feat": _loadmat, "anno": _loadmat, "spf": _loadhdf, "mat": _loadhdf}
 
@@ -267,8 +287,9 @@ def load_video_data(pnums=None, ftypes=["feat", "anno"]):
       vdata[pnum][phase] = {}
       for ftype in ftypes:
         vdata[pnum][phase][ftype] = _load_func[ftype](
-            VFILE_MAP[pnum][phase][ftype])
+            VFILE_MAP[pnum][phase][ftype], ftype)
 
+  IPython.embed()
   return vdata
 
 
@@ -309,62 +330,101 @@ def load_common_vidfeat_data(pnums=None, ftypes=["feat", "anno"], nfiles=-1):
 # - EndHextend
 # - AfterHextend
 
+def detect_change_points(arr):
+  arr = np.array(arr)
+  diff = arr[:-1] - arr[1:]
+  change_inds = np.r_[0, (diff.nonzero()[0] + 1)]
+  change_vals = np.r_[arr[0] + arr[change_inds]]
+  return change_vals, change_inds
 
-def get_idxs_of_continuous_intervals(bin_list):
-  idx_pairs = []
-  nz_inds = bin_list.nonzero()[0]
-  if len(nz_inds) == 0:
-    return idx_pairs
 
-  start_idx = nz_inds[0]
-  while True:
-    # Assuming every bleed phase ends.
-    end_idx = (bin_list[start_idx:] == 0).nonzero()[0][0] + start_idx
-    idx_pairs.append((start_idx, end_idx))
-    nz_inds = bin_list[end_idx:].nonzero()[0]
-    if len(nz_inds) == 0:
-      break
-    start_idx = nz_inds[0] + end_idx
-  return idx_pairs
+# Detect continuous pair of values in array
+# If an element of pair is None, then any value is allowed for element.
+def detect_cts_pairs(arr, pair, rtn_pairs=True):
+  # Hack: assuming last index is never selected.
+  assert (pair[0] is not None or pair[1] is not None)
+  arr = np.array(arr)
+
+  if pair[0] is None:
+    p2_inds = (arr == pair[1]).nonzero()[0]
+    if p2_inds.shape[0] == 0:
+      return []
+
+    if p2_inds[0] == 0:
+      p2_inds = p2_inds[1:]
+    return [[idx - 1, idx] for idx in p2_inds] if rtn_pairs else p2_inds
+
+  p1_inds = (arr == pair[0]).nonzero()[0]
+  if p1_inds.shape[0] == 0:
+    return np.array([])
+
+  if pair[1] != None:
+    pcheck = lambda idx: (
+        (idx + 1 < arr.shape[0]) and (arr[idx + 1] == pair[1]))
+    p1_inds = list(filter(pcheck, p1_inds))
+  return [[idx, idx + 1] for idx in p1_inds] if rtn_pairs else p1_inds
 
 
 # Given single video and feature data, time-sync and return as views.
 def sync_single_vid_feat_data(vdat, fdat):
   phase_data = {}
   features = fdat["features"]
+  tstamps = fdat["tstamps"]
   labels = fdat["labels"]
+
+  change_vals, change_idxs = detect_change_points(labels)
 
   for phase in vdat:  # Stabilization
     if phase == "EndBaseline":  # Intervals of label 0
-      phase_labels = (labels == 0)
+      change_idx_pairs = detect_cts_pairs(change_vals, (0, 1))
+      loc = "end"
     elif phase == "EndBleed":  # Intervals of label 1
-      phase_labels = (labels == 1)
+      change_idx_pairs = detect_cts_pairs(change_vals, (1, 2))
+      loc = "end"
     elif phase == "AfterBleed":  # Intervals of label 2
-      phase_labels = (labels == 2)
+      change_idx_pairs = detect_cts_pairs(change_vals, (2, None))
+      loc = "start"
+    elif phase == "BeforeResusc":
+      # Both correspond to resuscitation:
+      change_idx_pairs = detect_cts_pairs(change_vals, (None, 3))
+      change_idx_pairs.extend(detect_cts_pairs(change_vals, (None, 4)))
+      loc = "end"
+    elif phase == "EndHextend":
+      change_idx_pairs = detect_cts_pairs(change_vals, (3, None))
+      loc = "end"
+    elif phase == "AfterHextend":
+      change_idx_pairs = detect_cts_pairs(change_vals, (5, None))
+      loc = "start"
 
-    idx_pairs = get_idxs_of_continuous_intervals(phase_labels)
-    if idx_pairs:
+    if change_idx_pairs:
+      # IPython.embed()
+      idx_pairs = [change_idxs[pair] for pair in change_idx_pairs]
       phase_data[phase] = {
           "video": vdat[phase]["feat"]["features"],
-          "feat": [features[sidx:eidx] for sidx, eidx in idx_pairs]
+          "feat": {
+              "data": [(tstamps[sidx:eidx], features[sidx:eidx])
+                       for sidx, eidx in idx_pairs],
+              "loc": loc,
+          }
       }
-  if "BeforeResusc" in vdat:
-    pass
-  if "EndHextend" in vdat:
-    pass
-  if "AfterHextend" in vdat:
-    pass
+
+  return phase_data
 
 
+def load_synced_vidfeat_data(pnums=None, ftypes=["feat", "anno"], nfiles=-1):
+  vdata, fdata = load_common_vidfeat_data(pnums, ftypes, nfiles)
 
+  synced_data = {
+      key: sync_single_vid_feat_data(vdata[key], fdata[key])
+      for key in vdata
+  }
 
-
-# def load_synced_vidfeat_data(pnums=None, ftypes=["feat", "anno"], nfiles=-1):
-#   vdata, fdata = load_common_vidfeat_data(pnums, ftypes, nfiles)
-
+  return synced_data
 
 
 
 if __name__ == "__main__":
-  vdata, fdata = load_common_vidfeat_data(nfiles=2)
+  # vdata, fdata = load_common_vidfeat_data(nfiles=2)
+  ftypes = ["feat", "mat"]
+  synced_data = load_synced_vidfeat_data(ftypes=ftypes, nfiles=2)
   IPython.embed()
