@@ -16,6 +16,8 @@ DATA_DIR = os.getenv("DATA_DIR")
 VIDEO_DIR = os.path.join(DATA_DIR, "PigVideos/videos")
 FEAT_DIR = os.path.join(
     DATA_DIR, "PigData/extracted/waveform/slow/numpy_arrays")
+WS_FEAT_DIR = os.path.join(
+    DATA_DIR, "PigData/extracted/waveform/slow/")
 FEAT_ANNO_DIR = os.path.join(DATA_DIR, "PigData/raw/annotation/slow")
 # PIG_DATA_DIR = os.getenv("PIG_DATA_DIR")
 # FEAT_SAVE_DIR = os.getenv("PIG_FEATURES_DIR")
@@ -122,7 +124,6 @@ ALL_FEATURE_COLUMNS = [0, 3, 4, 5, 6, 7, 11]
 def load_pig_features_and_labels(
     pig_list=COMMON_PNUMS, ds=1, ds_factor=10,
     feature_columns=ALL_FEATURE_COLUMNS, save_new=False, valid_labels=None):
-
   # Relevant data directories
   features_dir = FEAT_DIR
   #os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays"%pig_type)
@@ -245,6 +246,103 @@ def load_pig_features_and_labels(
   # if num_pigs > 0:
   #   print("Not using pigs %s. Already have enough."%(pig_ids[num_selected+new_unused_pigs:]))
   # unused_pigs.extend(pig_ids[num_selected+new_unused_pigs:])
+
+  return all_data#, unused_pigs
+
+
+def load_tdPCA_featurized_slow_pigs(
+    pig_list=COMMON_PNUMS, ds=5, ws=30, nfeats=3, view_subset=None,
+    valid_labels=None):
+  # Relevant data directories
+  features_dir = WS_FEAT_DIR
+  #os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays"%pig_type)
+  ann_dir = FEAT_ANNO_DIR
+  #os.path.join(DATA_DIR, "raw/annotation/%s"%pig_type)
+  
+  fdict = utils.create_number_dict_from_files(
+      features_dir, wild_card_str="*_ds_%i_ws_%i.npy"%(ds, ws))
+  adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
+
+  common_keys = np.intersect1d(list(fdict.keys()), list(adict.keys())).tolist()
+  _check_key = lambda key: key in common_keys and key in COMMON_PNUMS
+  pig_list = COMMON_PNUMS if pig_list is None else pig_list
+  used_pigs = [key for key in pig_list if _check_key(key)]
+  np.random.shuffle(used_pigs)
+
+  unused_pigs = [p for p in pig_list if p not in used_pigs]
+  if VERBOSE:
+    print("Not using pigs %s. Either annotations or data missing."%(unused_pigs))
+
+  all_data = {}
+  curr_unused_pigs = len(unused_pigs)
+  num_selected = 0
+
+  for key in used_pigs:
+    if VERBOSE:
+      t_start = time.time()
+
+    critical_anns, ann_labels = utils.create_annotation_labels(ann_text, False)
+    critical_times = [ann_time[idx] for idx in critical_anns]
+    if critical_anns is None or ann_labels is None:
+      print("Something went wrong with pig %i"%key)
+      unused_pigs.append(key)
+      continue
+
+    pig_data = np.load(fdict[key]).tolist()
+    tstamps = pig_data["tstamps"]
+    features = pig_data["features"]
+
+    critical_times = [ann_time[idx] for idx in critical_anns]
+    critical_text = {idx:ann_text[idx] for idx in critical_anns}
+    label_dict = create_label_timeline(ann_labels)
+    labels = convert_tstamps_to_labels(tstamps, critical_times, label_dict, ws)
+
+    if valid_labels is None:
+      valid_inds = (labels != -1)
+    else:
+      valid_inds = np.zeros(labels.shape).astype("bool")
+      for vl in valid_labels:
+        valid_inds = np.logical_or(valid_inds, labels==vl)
+    if view_subset is not None:
+      features = [
+          c_f[valid_inds, :nfeats] for i, c_f in enumerate(features)
+          if i in view_subset]
+    else:
+      features = [c_f[valid_inds, :nfeats] for c_f in features]
+    labels = labels[valid_inds]
+
+    # lvals, counts = np.unique(labels, False, False, True)
+
+    # # Debugging and data-quality checks:
+    # # print(counts, counts.astype(float)/counts.sum())
+    # # if (counts.astype(float)/counts.sum() < 0.05).any(): IPython.embed()
+    # # if (labels == 0).sum() > 70: IPython.embed()
+    # # if len(counts) < 6: IPython.embed()
+    # # if (labels == 0).sum() < 50: IPython.embed()
+    # # if key == 18: IPython.embed()
+
+    # # Something weird happened with the data:
+    # # 1. Too label types are missing
+    # # 2. The stabilization period is too small
+    # if len(lvals) < 5:
+    #   if VERBOSE:
+    #     print("Not using pig %i. Missing data from some phases."%key)
+    #   unused_pigs.append(key)
+    #   continue
+    # if counts[0] < 10:
+    #   if VERBOSE:
+    #     print("Not using pig %i. Stabilization period is too small."%key)
+    #   unused_pigs.append(key)
+    #   continue
+    all_data[key] = {
+        "tstamps": tstamps,
+        "features": features,
+        "labels": labels,
+        "ann_text": critical_text
+    }
+
+    if VERBOSE:
+      print("Time taken to load pig %i: %.2f"%(key, time.time() - t_start))
 
   return all_data#, unused_pigs
 
@@ -420,7 +518,6 @@ def load_synced_vidfeat_data(pnums=None, ftypes=["feat", "anno"], nfiles=-1):
   }
 
   return synced_data
-
 
 
 if __name__ == "__main__":

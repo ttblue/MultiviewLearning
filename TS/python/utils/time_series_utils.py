@@ -254,7 +254,7 @@ def compute_timeseries_windows_only(
 def compute_multichannel_timeseries_window_only(
     mc_ts, tstamps, channel_taus, mm_rff, window_length=5000, num_windows=None,
     d_lag=3, d_features=1000):
-  
+
   if num_windows is None:
     num_windows = int(mc_ts.shape[0] / window_length)
 

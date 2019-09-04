@@ -663,14 +663,14 @@ def convert_tstamps_to_labels(tstamps, critical_times, label_dict, window_length
 
 def load_slow_pig_features_and_labels(
     num_pigs=-1, ds=5, ws=30, category="both", pig_type="slow"):
-  _dir = os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays/"%pig_type)
+  features_dir = os.path.join(SAVE_DIR, "waveform/%s/numpy_arrays/"%pig_type)
   ann_dir = os.path.join(DATA_DIR, "raw/annotation/%s"%pig_type)
   
   fdict = utils.create_number_dict_from_files(
       features_dir, wild_card_str="*_ds_%i_ws_%i.npy"%(ds, ws))
   adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
 
-  common_keys = np.intersect1d(fdict.keys(), adict.keys()).tolist()
+  common_keys = np.intersect1d(list(fdict.keys()), list(adict.keys())).tolist()
 
   unused_pigs = []
   unused_pigs.extend([p for p in fdict if p not in common_keys])
