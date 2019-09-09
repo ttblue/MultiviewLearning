@@ -16,12 +16,12 @@ import IPython
 
 class TSRFConfig(BaseConfig):
   def __init__(
-      self, encoder_params, decoder_params, time_delay_tau=10,
+      self, encoder_config, decoder_config, time_delay_tau=10,
       time_delay_ndim=3, fixed_len=True,
       *args, **kwargs):
 
-    self.encoder_params = encoder_params
-    self.decoder_params = decoder_params
+    self.encoder_config = encoder_config
+    self.decoder_config = decoder_config
 
     self.time_delay_tau = time_delay_tau
     self.time_delay_ndim = time_delay_ndim 
@@ -38,9 +38,12 @@ class TimeSeriesReconFeaturization(nn.Model):
   def _initialize(self):
     # Create RN encoder
     _td_dim = self._dim * max(self.config.time_delay_ndim, 1)
-    self.e
+    self.config.encoder_config.input_size = _td_dim
+    self.encoder = tu.RNNWrapper(self.config.encoder_config)
 
     # Create RN decoder
+    self.config.decoder_config.input_size = _td_dim
+    self.encoder = tu.RNNWrapper(self.config.encoder_config)
 
   def _td_embedding(self, ts):
     # Assume ts is big enough.
