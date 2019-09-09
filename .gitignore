@@ -3,3 +3,6 @@
 
 # Image files
 *.png
+
+# Mac files
+*.DS_Store
