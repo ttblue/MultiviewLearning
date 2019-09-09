@@ -231,12 +231,12 @@ def default_RMAE_config(v_sizes):
 
 # Using 3, 4, 5, 6, 7, 11
 
-def aggregate_multipig_data(pig_data, shuffle=True, n=1000):
-  nviews = len(pig_data[utils.get_any_key(pig_data)]["features"])
+def aggregate_multipig_data(key_data, shuffle=True, n=1000):
+  nviews = len(key_data[utils.get_any_key(key_data)]["features"])
   data = {i:[] for i in range(nviews)}
 
-  for pnum in pig_data:
-    vfeats = pig_data[pnum]["features"]
+  for pnum in key_data:
+    vfeats = key_data[pnum]["features"]
     for i, vf in enumerate(vfeats):
       data[i].append(vfeats[i])
 
@@ -255,13 +255,17 @@ def aggregate_multipig_data(pig_data, shuffle=True, n=1000):
   return data
 
 
-def rescale(data):
+def rescale(data, noise_std=1e-3):
   mins = {i: data[i].min(axis=0) for i in data}
   maxs = {i: data[i].max(axis=0) for i in data}
   diffs = {i: (maxs[i] - mins[i]) for i in mins}
+  diffs = {i: np.where(diff, diff, 1) for i, diff in diffs.items()}
 
-  data = {i: (data[i] - mins[i]) / diffs[i] for i in mins}
-
+  noise = {
+      i: np.random.randn(*dat.shape) * noise_std for i, dat in data.items()
+  }
+  data = {i: ((data[i] - mins[i]) / diffs[i] + noise[i]) for i in data}
+  # IPython.embed()
   return data
 
 
@@ -327,6 +331,15 @@ def test_vitals_only_opt(num_pigs=-1, npts=1000, lnun=0):
   msplit_inds = np.cumsum(vlens)[:-1]
   msplit_names = [VS_MAP[vidx] for vidx in view_subset]
   IPython.embed()
+
+  lnum = valid_labels[0]
+  fl = "nmat_lbl_%i_opt.npy" % lnum 
+  idx = 0 
+  while os.path.exists(fl):
+     fl = "nmat_lbl_%i_opt%i.npy" % (lnum, idx)
+     idx += 1
+  np.save(fl, model.nullspace_matrix()) 
+
   plot_heatmap(model.nullspace_matrix(), msplit_inds, msplit_names)
 
 
@@ -410,11 +423,68 @@ def test_vitals_only_rmae(
   # vlens = [data[vi].shape[1] for vi in range(len(data))]
   # msplit_inds = np.cumsum(vlens)[:-1]
   IPython.embed()
+
   # plot_heatmap(model.nullspace_matrix(), msplit_inds
+
+
+def test_video_vitals_rmae(
+    num_pigs=-1, npts=-1, phase="EndBaseline", vs_ftype="vs_orig",
+    drop_scale=True, zero_at_input=True):
+  pnums = pig_videos.COMMON_PNUMS
+  if num_pigs > 0:
+    pnums = pnums[:num_pigs]
+
+  if vs_ftype == "tdPCA":
+    ds = 5
+    ws = 30
+    nfeats = 6
+    view_subset = [1, 2, 3, 4, 5, 6, 10] #None
+    valid_labels = None
+    f_kwargs = {
+        "ds": ds, "ws": ws, "nfeats": nfeats, "view_subset": view_subset,
+        "valid_labels": valid_labels}
+  elif vs_ftype == "vs_orig":
+      ds=5, ds_factor=10,
+    feature_columns=ALL_FEATURE_COLUMNS, view_feature_sets=None,
+    save_new=False, valid_labels=None
+  phases = [phase]
+  mv_dset = pig_videos.load_synced_vidfeat_data(num_pigs, phases, f_kwargs)
+  all_data = {}
+  for key, dset in mv_dset.items():
+    for i, f in dset.items():
+      if i not in all_data: all_data[i] = []
+      all_data[i].extend(f)
+  all_data = {i: np.array(dset) for i, dset in all_data.items()}
+  IPython.embed()
+  data = rescale(all_data)
+  v_sizes = [data[vi].shape[1] for vi in data]
+  config = default_RMAE_config(v_sizes)
+
+  if npts > 0:
+    data = {vi: d[:npts] for vi, d in data.items()}
+  else: npts = data[0].shape[0]
+
+  tr_frac = 0.8
+  split_inds = [0, int(tr_frac * npts), npts]
+  (tr_data, te_data), _ = split_data(data, split_inds=split_inds)
+
+  config.drop_scale = drop_scale
+  config.zero_at_input = zero_at_input
+  config.max_iters = 10000
+
+  # IPython.embed()
+  model = robust_multi_ae.RobustMultiAutoEncoder(config)
+  model.fit(tr_data)
+  # vlens = [data[vi].shape[1] for vi in range(len(data))]
+  # msplit_inds = np.cumsum(vlens)[:-1]
+  IPython.embed()
+
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds
+
 
 if __name__ == "__main__":
   import sys
-  enum = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+  enum = int(sys.argv[1]) if len(sys.argv) > 1 else 2
   lnum = int(sys.argv[2]) if len(sys.argv) > 2 else 0
   # dirname = "/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/waveform/slow/numpy_arrays"
   # cols = "[0, 3, 4, 5, 6, 7, 11]"
@@ -424,9 +494,12 @@ if __name__ == "__main__":
   # plot_heatmap(sigma)
 
   # IPython.embed()
+  ph_name = pig_videos.PHASE_MAP[lnum]
   num_pigs = -1
-  npts = 1000
+  npts = 5000
   if enum == 0:
     test_vitals_only_opt(num_pigs=num_pigs, npts=npts, lnum=lnum)
-  else:
+  elif enum == 1:
     test_vitals_only_rmae(num_pigs=num_pigs, npts=npts, lnum=lnum)
+  else:
+    test_video_vitals_rmae(num_pigs=num_pigs, npts=npts, phase=ph_name)
