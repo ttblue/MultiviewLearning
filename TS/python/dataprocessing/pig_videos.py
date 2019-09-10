@@ -163,6 +163,7 @@ def load_pig_features_and_labels(
   #os.path.join(DATA_DIR, "raw/annotation/%s"%pig_type)
 
   # Feature columns
+  if feature_columns is None: feature_columns = ALL_FEATURE_COLUMNS 
   feature_columns = sorted(feature_columns)
   if 0 not in feature_columns:
     feature_columns = [0] + feature_columns
@@ -177,8 +178,8 @@ def load_pig_features_and_labels(
 
   # If specific feature columns not found, load the data with all columns
   if not fdict:
-    feature_columns = ALL_FEATURE_COLUMNS
-    str_pattern = str(feature_columns)# [1:-1]
+    all_feature_columns = ALL_FEATURE_COLUMNS
+    str_pattern = str(all_feature_columns)# [1:-1]
     wild_card_str = "*_numpy_ds_%i_columns*%s*"%(ds, str_pattern)
 
     fdict = utils.create_number_dict_from_files(
@@ -187,7 +188,8 @@ def load_pig_features_and_labels(
   adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
 
   if view_feature_sets is not None:
-    view_feature_sets = complete_view_feature_set(view_feature_sets)
+    view_feature_sets = complete_view_feature_set(
+        view_feature_sets, feature_columns)
     view_findex_sets = [
         [nz_feature_cols.index(vi) for vi in vset]
         for vset in view_feature_sets

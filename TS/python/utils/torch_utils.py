@@ -13,6 +13,9 @@ _DTYPE = torch.float32
 _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 
+# For RNNs.
+_BATCH_FIRST = True
+
 
 ################################################################################
 ## Type converters
@@ -47,7 +50,7 @@ def generate_linear_types_args(
 class MNNConfig(BaseConfig):
   def __init__(
       self, input_size, output_size, layer_types, layer_args, activation,
-      last_activation, use_vae, *args, **kwargs):
+      last_activation, dropout_p, use_vae, *args, **kwargs):
     """
     layer_types: List of types of layers. Eg, Linear, Conv1d, etc.
     """
@@ -59,6 +62,7 @@ class MNNConfig(BaseConfig):
     self.layer_args = layer_args
     self.activation = activation
     self.last_activation = last_activation
+    self.dropout_p = dropout_p
     self.use_vae = use_vae
 
   def set_sizes(
@@ -77,14 +81,14 @@ class MNNConfig(BaseConfig):
 
 # Identity singleton
 class Identity(nn.Module):
-  def forward(self, x):
+  def forward(self, x, *args):
     return x
 _IDENTITY = Identity()
 
 
 # Zeros singleton
 class Zeros(nn.Module): 
-  def forward(self, x): 
+  def forward(self, x, *args):
     return x.mul(0.)
 _ZEROS = Zeros()
 
@@ -101,6 +105,7 @@ class MultiLayerNN(nn.Module):
     self._setup_layers()
 
   def _setup_layers(self):
+    self.dropout = nn.Dropout(self.config.dropout_p)
     # Default value of logvars
     self._logvar = _ZEROS
     num_layers = len(self.config.layer_args)
@@ -138,9 +143,12 @@ class MultiLayerNN(nn.Module):
 
   def forward(self, x):
     if not isinstance(x, torch.Tensor):
-      x = torch.from_numpy(x.astype(np.float32))
+      x = torch.from_numpy(x).type(_DTYPE).requires_grad_(False)
+    x = self.dropout(x)
     x = self._layer_op(x)
     mu_x = self._last_activation(self._mu(x))
+    if not self.training:
+      return mu_x
     return (mu_x, self._logvar(x)) if self.config.use_vae else mu_x
 
   def get_layer_params(self, lidx):
@@ -152,16 +160,44 @@ class MultiLayerNN(nn.Module):
     return self._layer_op[lidx]
 
 
-class RNNConfig(object):
+_CELL_TYPES = {
+    "lstm": nn.LSTM,
+    "rnn": nn.RNN,
+    "gru": nn.GRU,
+}
+
+def get_cell_type(cell_type):
+  if isinstance(cell_type, str) and cell_type in _CELL_TYPES:
+    return _CELL_TYPES[cell_type]
+  return cell_type
+
+
+class RNNConfig(BaseConfig):
   def __init__(
-      self, input_size, hidden_size, num_layers, cell_type, return_only_hidden,
-      return_only_final):
+      self, input_size, hidden_size, num_layers, bias, cell_type, output_len,
+      dropout_p, return_only_hidden, return_only_final, *args, **kwargs):
+
+    super(RNNConfig, self).__init__(*args, **kwargs)
+
     self.input_size = input_size
     self.hidden_size = hidden_size
     self.num_layers = num_layers
+    self.bias = bias
     self.cell_type = cell_type
+    self.output_len = output_len
+
+    self.dropout_p = dropout_p
+
     self.return_only_hidden = return_only_hidden
-    self.return_only_final = return_only_final
+    self.return_only_final  = return_only_final
+
+  def set_sizes(self, input_size=None, hidden_size=None, bias=True):
+    if input_size is not None:
+      self.input_size = input_size
+    if hidden_size is not None:
+      self.hidden_size = hidden_size
+    if bias is not None:
+      self.bias = bias
 
 
 class RNNWrapper(nn.Module):
@@ -171,10 +207,11 @@ class RNNWrapper(nn.Module):
     self._setup_cells()
 
   def _setup_cells(self):
-    cell_type = self.config.cell_type
+    cell_type = get_cell_type(self.config.cell_type)
     self.cell = cell_type(
         input_size=self.config.input_size, hidden_size=self.config.hidden_size,
-        num_layers=self.config.num_layers)
+        num_layers=self.config.num_layers, bias=self.config.bias,
+        dropout=self.config.dropout_p, batch_first=_BATCH_FIRST)
 
   # def _init_hidden(self):
   #   # Initialize hidden state and cell state for RNN
@@ -184,21 +221,56 @@ class RNNWrapper(nn.Module):
   #                   self.config.hidden_size),
   #       torch.zeros(self.config.num_layers, self.config.batch_size,
   #                   self.config.hidden_size))
+  def _forecast(self, init_step, hc_0, output_len=None):
+    hstate = hc_0[0]
+    cstate = hc_0[1]
+    output_len = self.config.output_len if output_len is None else output_len
 
-  def forward(self, ts_batch, hc_0=None):
-    # ts_batch: time_steps x batch_size x input_size
-    if not isinstance(ts_batch, torch.Tensor):
-      ts_batch = torch.from_numpy(ts_batch.astype(np.float32))
+    if init_step is None:
+      batch_size = 1 if hstate is None else hstate.shape[0]
+      init_step = torch.zeros(batch_size, 1, self.config.input_size)
+    else:
+      if not isinstance(init_step, torch.Tensor):
+        init_step = (
+            torch.from_numpy(init_step).type(_DTYPE).requires_grad_(False))
+      if len(init_step.shape) < 3:
+        # Make into sequences
+        init_step = init_step.unsqueeze(1)
+
+    output = init_step
+    outputs = [output]
+    hstates = [hstate]
+    cstates = [cstate]
+    for t in range(output_len):
+      output, (hstate, cstate) = self.cell(output, (hstate, cstate))
+      outputs.append(output)
+      hstates.append(hstates)
+      cstates.append(cstates)
+    outputs = torch.cat(outputs, dim=1)
+    hstates = torch.cat(hstates, dim=1)
+    cstates = torch.cat(cstates, dim=1)
+
+    if self.config.return_only_final:
+      return hstate
+    if self.config.return_only_hidden or not self.training:
+      return outputs
+    return outputs, (hstates, cstates)
+
+  def forward(self, ts, hc_0=None, forecast=False, output_len=None):
+    if forecast:
+      return self._forecast(ts, hc_0, output_len)
+    # ts: batch_size x time_steps x input_size
+    if not isinstance(ts, torch.Tensor):
+      ts = torch.from_numpy(ts).type(_DTYPE).requires_grad_(False)
 
     # For now, no attention mechanism
     # IPython.embed()
-    output, (hn, cn) = self.cell(ts_batch, hc_0)
+    output, (hn, cn) = self.cell(ts, hc_0)
     if self.config.return_only_final:
       return hn
-    if self.config.return_only_hidden:
+    if self.config.return_only_hidden or not self.training:
       return output
     return output, (hn, cn)
-
 # Some silly tests for RNN with torch
 # opt1, (hn1, cn1) = ll(ipt)
 # op1, hn1, cn1 = [v.detach().numpy() for v in (opt1, hn1, cn1)]
