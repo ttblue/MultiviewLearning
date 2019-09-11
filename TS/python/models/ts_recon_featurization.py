@@ -44,6 +44,7 @@ class FRFWrapper(nn.Module):
   # Wrapper for an overall network which has a feed-foward NN, followed by a
   # recurrent NN followed by a feed forward NN.
   def __init__(self, config):
+    super(FRFWrapper, self).__init__()
     self.config = config
     self._setup_layers()
 
@@ -79,7 +80,7 @@ class FRFWrapper(nn.Module):
       self._rec_net = tu.RNNWrapper(self.config.rnn_config)
 
   def forward(
-        self, ts, hc_0=None, forecast="state", output_len=None):
+        self, ts, hc_0=None, forecast=False, output_len=None):
     # forecast: Can be "state", "input" or None/False. If not None/False, the
     # pre_ff output is fed in as the initial state or initial input depending
     # on forecast.
@@ -105,15 +106,17 @@ class FRFWrapper(nn.Module):
     )
     # Apply the recurrent net
     if forecast:
-      rnn_input, hc_0 = (
-          (None, (rnn_input, torch.zeros_like(rnn_input)))
-          if forecast == "state" else
-          (rnn_input, hc_0)  # forecast == "input"
-      )
+      if forecast == "state":
+        # The input state/cell need to have batch and seq len flipped
+        h_0 = rnn_input.transpose(0, 1)
+        c_0 = torch.zeros_like(h_0)
+        hc_0 = (h_0, c_0)
+        rnn_input = None
+
       rnn_output = self._rec_net(
           rnn_input, hc_0, forecast=True, output_len=output_len)
     else:
-      rnn_output = self._rec_net(rnn_input, hc_0)
+      rnn_output = self._rec_net(rnn_input, hc_0, forecast=False)
     # Select the appropriate subset of this output for input to the post net
     post_input = (
         rnn_output if (
@@ -139,6 +142,11 @@ class FRFWrapper(nn.Module):
         post_output
     )
 
+    # Hack
+    if not forecast:
+      # Output is final hidden state which has batch and seq switched
+      output = output.transpose(0, 1)
+    # IPython.embed()
     return output
 
 
@@ -163,7 +171,7 @@ class TSRFConfig(BaseConfig):
     super(TSRFConfig, self).__init__(*args, **kwargs)
 
 
-class TimeSeriesReconFeaturization(nn.Model):
+class TimeSeriesReconFeaturization(nn.Module):
   def __init__(self, config):
     super(TimeSeriesReconFeaturization, self).__init__()
     self.config = config
@@ -188,6 +196,7 @@ class TimeSeriesReconFeaturization(nn.Model):
     self.config.decoder_config.rnn_config.return_only_final = False
     self.decoder = FRFWrapper(self.config.decoder_config)
 
+    IPython.embed()
     self.recon_criterion = nn.MSELoss(reduction="elementwise_mean")
     self.opt = optim.Adam(self.parameters(), self.config.lr)
 
@@ -196,17 +205,17 @@ class TimeSeriesReconFeaturization(nn.Model):
     if self.config.time_delay_ndim <= 1:
       return ts
 
-    nts = ts.shape[0]
+    seq_len = ts.shape[1]
     tau = self.config.time_delay_tau
     ndim = self.config.time_delay_ndim
     td_embedding = np.concatenate(
-        [ts[i*tau: nts-(ndim-i-1)*tau] for i in range(ndim)], axis=1)
+        [ts[:, i*tau: seq_len-(ndim-i-1)*tau] for i in range(ndim)], axis=2)
 
     return td_embedding
 
   def encode(self, ts):
     tde = self._td_embedding(ts)
-    encoding = self.encoder(tde)
+    encoding = self.encoder(tde, forecast=False)
     return encoding
 
   def decode(self, encoding, output_len=None):
@@ -215,6 +224,7 @@ class TimeSeriesReconFeaturization(nn.Model):
 
   def forward(self, ts):
     # ts: batch_size x seq length x input_dim
+    # IPython.embed()
     encoding = self.encode(ts)
     output = self.decode(encoding, output_len=self._seq_len)
     return encoding, output
@@ -247,7 +257,6 @@ class TimeSeriesReconFeaturization(nn.Model):
 
   def fit(self, ts_dset):
     # ts_dset: num_ts x seq_len x input_dim
-    self._initialize()
     self.train()
     # Convert to numpy then torch
     ts_dset = np.array(ts_dset)
@@ -258,6 +267,8 @@ class TimeSeriesReconFeaturization(nn.Model):
     self._seq_len = ts_dset.shape[1]
     self._dim = ts_dset.shape[2]
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
+
+    self._initialize()
 
     try:
       for itr in range(self.config.max_iters):

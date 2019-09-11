@@ -152,14 +152,17 @@ def create_number_dict_from_files(data_dir, wild_card_str=None, extension=".npy"
   # Creates a dictionary from first number in filename to name of file.
   if wild_card_str is None:
     if extension[0] != '.': extension = '.' + extension
-    wild_card_str = '*' + extension
+    wild_card_str = extension
 
-  if data_dir[-len(wild_card_str):] != wild_card_str:
-    data_dir = os.path.join(data_dir, wild_card_str)
-  data_files = glob.glob(data_dir)
-
+  # if data_dir[-len(wild_card_str):] != wild_card_str:
+  #   data_dir = os.path.join(data_dir, wild_card_str)
+  # data_files = glob.glob(data_dir)
+  pattern = re.compile(wild_card_str)
   file_dict = {}
-  for fl in data_files:
+  for fl in os.listdir(data_dir):
+    if not re.search(wild_card_str, fl):
+      continue
+
     fname = '.'.join(os.path.basename(fl).split('.')[:-1])
     fnum = None
     
@@ -177,7 +180,7 @@ def create_number_dict_from_files(data_dir, wild_card_str=None, extension=".npy"
 
     if fnum is None:
       continue
-    file_dict[fnum] = fl
+    file_dict[fnum] = os.path.join(data_dir, fl)
 
   return file_dict
 
@@ -242,7 +245,6 @@ def create_annotation_labels(ann_text, console=False):
   # I don't know what the right thing to do here is.
   if 0 not in ann_labels:
     IPython.embed()
-    
   try:
     last_bleed_idx = (np.array(ann_labels) == 1).nonzero()[0][-1]
     between_bleed_inds = (np.array(ann_labels[:last_bleed_idx]) > 2).nonzero()[0]

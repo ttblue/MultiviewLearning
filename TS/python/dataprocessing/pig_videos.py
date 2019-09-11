@@ -169,8 +169,8 @@ def load_pig_features_and_labels(
     feature_columns = [0] + feature_columns
 
   # Finding file names from directories
-  str_pattern = str(feature_columns) # [1:-1]
-  wild_card_str = "*_numpy_ds_%i_columns*%s*"%(ds, str_pattern)
+  str_pattern = "\\" + str(feature_columns)[:-1] + "\\]"  # [1:-1]
+  wild_card_str = "_numpy_ds_%i_columns(.)*%s(.)*"%(ds, str_pattern)
 
   fdict = utils.create_number_dict_from_files(
       features_dir, wild_card_str=wild_card_str)
@@ -180,12 +180,12 @@ def load_pig_features_and_labels(
   if not fdict:
     all_feature_columns = ALL_FEATURE_COLUMNS
     str_pattern = str(all_feature_columns)# [1:-1]
-    wild_card_str = "*_numpy_ds_%i_columns*%s*"%(ds, str_pattern)
+    wild_card_str = "_numpy_ds_%i_columns(.)*%s(.)*"%(ds, str_pattern)
 
     fdict = utils.create_number_dict_from_files(
         features_dir, wild_card_str=wild_card_str)
     using_all = True
-  adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
+  adict = utils.create_number_dict_from_files(ann_dir, wild_card_str=".xlsx")
 
   if view_feature_sets is not None:
     view_feature_sets = complete_view_feature_set(
@@ -213,7 +213,7 @@ def load_pig_features_and_labels(
   curr_unused_pigs = len(unused_pigs)
   num_selected = 0
 
-  finds = ([all_columns.index(idx) for idx in feature_columns]
+  finds = ([all_feature_columns.index(idx) for idx in feature_columns]
             if using_all else None)
 
   for key in used_pigs:
@@ -302,8 +302,8 @@ def load_tdPCA_featurized_slow_pigs(
   #os.path.join(DATA_DIR, "raw/annotation/%s"%pig_type)
   
   fdict = utils.create_number_dict_from_files(
-      features_dir, wild_card_str="*_ds_%i_ws_%i.npy"%(ds, ws))
-  adict = utils.create_number_dict_from_files(ann_dir, wild_card_str="*.xlsx")
+      features_dir, wild_card_str="_ds_%i_ws_%i.npy"%(ds, ws))
+  adict = utils.create_number_dict_from_files(ann_dir, wild_card_str=".xlsx")
 
   common_keys = np.intersect1d(list(fdict.keys()), list(adict.keys())).tolist()
   _check_key = lambda key: key in common_keys and key in FFILE_PNUMS

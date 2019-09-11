@@ -14,7 +14,7 @@ _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 
 # For RNNs.
-_BATCH_FIRST = True
+_BATCH_FIRST = False
 
 
 ################################################################################
@@ -227,28 +227,35 @@ class RNNWrapper(nn.Module):
     output_len = self.config.output_len if output_len is None else output_len
 
     if init_step is None:
-      batch_size = 1 if hstate is None else hstate.shape[0]
-      init_step = torch.zeros(batch_size, 1, self.config.input_size)
+      batch_size = 1 if hstate is None else hstate.shape[1]
+      init_step = torch.zeros(1, batch_size, self.config.input_size)
     else:
       if not isinstance(init_step, torch.Tensor):
         init_step = (
             torch.from_numpy(init_step).type(_DTYPE).requires_grad_(False))
       if len(init_step.shape) < 3:
         # Make into sequences
-        init_step = init_step.unsqueeze(1)
+        init_step = init_step.unsqueeze(0)
+      else:
+        init_step = init_step.transpose(0, 1)
 
     output = init_step
     outputs = [output]
     hstates = [hstate]
     cstates = [cstate]
+    IPython.embed()
     for t in range(output_len):
       output, (hstate, cstate) = self.cell(output, (hstate, cstate))
       outputs.append(output)
       hstates.append(hstates)
       cstates.append(cstates)
-    outputs = torch.cat(outputs, dim=1)
-    hstates = torch.cat(hstates, dim=1)
-    cstates = torch.cat(cstates, dim=1)
+    outputs = torch.cat(outputs, dim=0)  # _BATCH_FIRST is False
+    # These two have batches as the second dim
+    hstates = torch.cat(hstates, dim=0)
+    cstates = torch.cat(cstates, dim=0)
+
+    # Transpose outputs back:
+    outputs = outputs.transpose(0, 1)
 
     if self.config.return_only_final:
       return hstate
@@ -257,15 +264,17 @@ class RNNWrapper(nn.Module):
     return outputs, (hstates, cstates)
 
   def forward(self, ts, hc_0=None, forecast=False, output_len=None):
+    # ts: batch_size x time_steps x input_size
     if forecast:
       return self._forecast(ts, hc_0, output_len)
-    # ts: batch_size x time_steps x input_size
+
     if not isinstance(ts, torch.Tensor):
       ts = torch.from_numpy(ts).type(_DTYPE).requires_grad_(False)
-
+    ts = ts.transpose(0, 1)
     # For now, no attention mechanism
     # IPython.embed()
     output, (hn, cn) = self.cell(ts, hc_0)
+    output = output.transpose(0, 1)
     if self.config.return_only_final:
       return hn
     if self.config.return_only_hidden or not self.training:

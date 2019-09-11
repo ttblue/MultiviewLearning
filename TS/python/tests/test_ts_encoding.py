@@ -75,7 +75,7 @@ def default_FRFW_config(use_pre=False, use_post=False):
   else:
     pre_ff_config = None
     rnn_input_size = model_input_size
-_
+
   if use_post:
     input_size = rnn_hidden_size
     output_size = model_output_size
@@ -100,7 +100,7 @@ _
   return frfw_config
 
 
-def default_TSRF_config(use_pre=[], use_post=[])
+def default_TSRF_config(use_pre=[], use_post=[]):
   use_pre_enc = ("encoder" in use_pre)
   use_post_enc = ("encoder" in use_post)
   latent_size = 8
@@ -111,6 +111,8 @@ def default_TSRF_config(use_pre=[], use_post=[])
   use_post_dec = ("decoder" in use_post)
   decoder_config = default_FRFW_config(use_pre_dec, use_post_dec)
   decoder_config.input_size = latent_size
+
+  hidden_size = latent_size
 
   time_delay_tau = 10
   time_delay_ndim = 3
@@ -168,9 +170,8 @@ def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
   return windows
 
 
-def aggregate_multipig_data(key_data, window_size=100, n=1000):
+def aggregate_multipig_data(key_data, window_size=100, n=1000, shuffle=True):
   ignore_rest = False
-  shuffle = True
 
   nviews = len(key_data[utils.get_any_key(key_data)]["features"])
   data = {i:[] for i in range(nviews)}
@@ -196,6 +197,7 @@ def aggregate_multipig_data(key_data, window_size=100, n=1000):
 
   return data
 
+
 def rescale(data, noise_std=1e-3):
   mins = {i: data[i].min(axis=0) for i in data}
   maxs = {i: data[i].max(axis=0) for i in data}
@@ -210,12 +212,49 @@ def rescale(data, noise_std=1e-3):
   return data
 
 
+def split_data(xvs, n=10, split_inds=None):
+  xvs = {vi:np.array(xv) for vi, xv in xvs.items()}
+  npts = xvs[utils.get_any_key(xvs)].shape[0]
+  if split_inds is None:
+    split_inds = np.linspace(0, npts, n + 1).astype(int)
+  else:
+    split_inds = np.array(split_inds)
+  start = split_inds[:-1]
+  end = split_inds[1:]
+
+  split_xvs = [
+      {vi: xv[idx[0]:idx[1]] for vi, xv in xvs.items()}
+      for idx in zip(start, end)
+  ]
+  return split_xvs, split_inds
+
+
 def test_ts_encoding():
   num_pigs = 1
   channels = None
-  pig_data = load_pig_data()
+  pig_data = load_pig_data(num_pigs, channels)
+
+  window_size = 100
+  n = -1
+  window_data = aggregate_multipig_data(pig_data, window_size=window_size, n=n)
+  npts = window_data[utils.get_any_key(window_data)].shape[0]
+
+  tr_frac = 0.8
+  split_inds = [0, int(tr_frac * npts), npts]
+  (tr_data, te_data), _ = split_data(window_data, split_inds=split_inds)
 
   config = default_TSRF_config()
+  config.max_iters = 1
 
   model = ts_recon_featurization.TimeSeriesReconFeaturization(config)
-  model.fit()
+  tr_data_channel = tr_data[0][:, :, [0]]
+  # IPython.embed()
+  model.fit(tr_data_channel)
+
+
+if __name__ == "__main__":
+  # n = -1
+  # num_pigs = 2
+  # pig_data = load_pig_data()
+  test_ts_encoding()
+  IPython.embed()
