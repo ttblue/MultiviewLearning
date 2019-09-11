@@ -34,6 +34,7 @@ def dict_torch_to_numpy(data):
   return data
 
 ################################################################################
+## Feedforward NN
 
 # NN module wrappers:
 def generate_linear_types_args(
@@ -114,7 +115,7 @@ class MultiLayerNN(nn.Module):
       self._layer_op = _IDENTITY
       self._mu = _IDENTITY
     else:
-      _activation = self.config.activation()
+      _activation = self.config.activation() if num_layers > 1 else None
       all_ops = []
       lidx = 0
       for i, (ltype, largs) in enumerate(
@@ -159,6 +160,9 @@ class MultiLayerNN(nn.Module):
     lidx = self._layer_indices[lidx]
     return self._layer_op[lidx]
 
+
+################################################################################
+## Recurrent nets
 
 _CELL_TYPES = {
     "lstm": nn.LSTM,
@@ -240,15 +244,14 @@ class RNNWrapper(nn.Module):
         init_step = init_step.transpose(0, 1)
 
     output = init_step
-    outputs = [output]
-    hstates = [hstate]
-    cstates = [cstate]
-    IPython.embed()
+    outputs = []
+    hstates = []
+    cstates = []
     for t in range(output_len):
       output, (hstate, cstate) = self.cell(output, (hstate, cstate))
       outputs.append(output)
-      hstates.append(hstates)
-      cstates.append(cstates)
+      hstates.append(hstate)
+      cstates.append(cstate)
     outputs = torch.cat(outputs, dim=0)  # _BATCH_FIRST is False
     # These two have batches as the second dim
     hstates = torch.cat(hstates, dim=0)
@@ -272,7 +275,6 @@ class RNNWrapper(nn.Module):
       ts = torch.from_numpy(ts).type(_DTYPE).requires_grad_(False)
     ts = ts.transpose(0, 1)
     # For now, no attention mechanism
-    # IPython.embed()
     output, (hn, cn) = self.cell(ts, hc_0)
     output = output.transpose(0, 1)
     if self.config.return_only_final:

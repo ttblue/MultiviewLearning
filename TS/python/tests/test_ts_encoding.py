@@ -131,7 +131,7 @@ def default_TSRF_config(use_pre=[], use_post=[]):
   return config
 
 
-def load_pig_data(num_pigs=-1, channels=None):
+def load_pig_data(num_pigs=-1, channels=None, valid_labels=None):
   pig_list = pig_videos.FFILE_PNUMS
   if num_pigs > 0:
     pig_list = pig_list[:num_pigs]
@@ -139,7 +139,6 @@ def load_pig_data(num_pigs=-1, channels=None):
   ds = 1
   ds_factor = 25
   view_feature_sets = None
-  valid_labels = None
   pig_data = pig_videos.load_pig_features_and_labels(
       pig_list=pig_list, ds=ds, ds_factor=ds_factor, feature_columns=channels,
       view_feature_sets=view_feature_sets, save_new=False,
@@ -229,10 +228,9 @@ def split_data(xvs, n=10, split_inds=None):
   return split_xvs, split_inds
 
 
-def test_ts_encoding():
-  num_pigs = 1
+def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   channels = None
-  pig_data = load_pig_data(num_pigs, channels)
+  pig_data = load_pig_data(num_pigs, channels, valid_labels=[phase])
 
   window_size = 100
   n = -1
@@ -244,17 +242,20 @@ def test_ts_encoding():
   (tr_data, te_data), _ = split_data(window_data, split_inds=split_inds)
 
   config = default_TSRF_config()
-  config.max_iters = 1
+  config.max_iters = 5000
+  config.lr = 1e-4
 
   model = ts_recon_featurization.TimeSeriesReconFeaturization(config)
-  tr_data_channel = tr_data[0][:, :, [0]]
+  tr_data_channel = tr_data[0][:, :, [channel]]
   # IPython.embed()
   model.fit(tr_data_channel)
+  IPython.embed()
 
 
 if __name__ == "__main__":
-  # n = -1
-  # num_pigs = 2
-  # pig_data = load_pig_data()
-  test_ts_encoding()
-  IPython.embed()
+  import sys
+  channel = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+  phase = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+  num_pigs = 2
+  test_ts_encoding(num_pigs, channel, phase)
+  # IPython.embed()

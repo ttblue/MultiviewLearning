@@ -64,7 +64,7 @@ class FRFWrapper(nn.Module):
     else:
       input_size = (
           rnn_input_size if self.config.rnn_config is None else
-          self.config.rnn_config.output_size
+          self.config.rnn_config.hidden_size
       )
       output_size = self.config.output_size
       self.config.post_ff_config.set_sizes(
@@ -146,7 +146,6 @@ class FRFWrapper(nn.Module):
     if not forecast:
       # Output is final hidden state which has batch and seq switched
       output = output.transpose(0, 1)
-    # IPython.embed()
     return output
 
 
@@ -188,15 +187,43 @@ class TimeSeriesReconFeaturization(nn.Module):
     self.encoder = FRFWrapper(self.config.encoder_config)
 
     # Create RN decoder
-    self.config.decoder_config.set_sizes(
+    # Need to make sure decoder uses the latent rep as initial state, not input.
+    dconfig = self.config.decoder_config
+    dconfig.set_sizes(
         input_size=self.config.hidden_size, output_size=self._dim)
+    dconfig.return_all_outputs = False
+    rnn_input_size = self._dim  # Not sure what to do here.
+    rnn_hidden_size = (
+        dconfig.input_size if dconfig.pre_ff_config is None else
+        dconfig.pre_ff_config.output_size
+    )
+    dconfig.rnn_config.set_sizes(
+          input_size=rnn_input_size, hidden_size=rnn_hidden_size)
     # Can change these as needed:
-    self.config.decoder_config.return_all_outputs = False
-    self.config.decoder_config.rnn_config.return_only_hidden = True
-    self.config.decoder_config.rnn_config.return_only_final = False
-    self.decoder = FRFWrapper(self.config.decoder_config)
+    dconfig.rnn_config.return_only_hidden = True
+    dconfig.rnn_config.return_only_final = False
 
-    IPython.embed()
+    # If output is different size than latent state (when using td embedding)
+    # then need extra layer to make RNN output be of right dimension.
+    if _td_dim != self._dim:
+      if dconfig.post_ff_config is None:
+        input_size = rnn_hidden_size
+        output_size = dconfig.output_size
+        ltypes, largs = tu.generate_linear_types_args(
+            input_size, [], output_size)
+        activation = tu.Identity
+        last_activation = tu.Identity
+        dropout_p = 0.
+        use_vae = False
+
+        dconfig.post_ff_config = tu.MNNConfig(
+            input_size=input_size, output_size=output_size, layer_types=ltypes,
+            layer_args=largs, activation=activation,
+            last_activation=last_activation, dropout_p=dropout_p,
+            use_vae=use_vae)
+
+    self.decoder = FRFWrapper(dconfig)
+
     self.recon_criterion = nn.MSELoss(reduction="elementwise_mean")
     self.opt = optim.Adam(self.parameters(), self.config.lr)
 
@@ -224,13 +251,15 @@ class TimeSeriesReconFeaturization(nn.Module):
 
   def forward(self, ts):
     # ts: batch_size x seq length x input_dim
-    # IPython.embed()
     encoding = self.encode(ts)
     output = self.decode(encoding, output_len=self._seq_len)
     return encoding, output
 
   def loss(self, ts, encoding, output):
-    obj = self.recon_criterion(ts, output)
+    try:
+      obj = self.recon_criterion(ts, output)
+    except:
+      IPython.embed()
     # Additional loss based on the encoding:
     # KLD penalty? Sparsity?
     return obj
@@ -257,6 +286,8 @@ class TimeSeriesReconFeaturization(nn.Module):
 
   def fit(self, ts_dset):
     # ts_dset: num_ts x seq_len x input_dim
+    if self.config.verbose:
+      all_start_time = time.time()
     self.train()
     # Convert to numpy then torch
     ts_dset = np.array(ts_dset)
