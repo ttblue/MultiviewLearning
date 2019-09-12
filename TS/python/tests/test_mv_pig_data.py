@@ -1,4 +1,5 @@
 # Tests for some CCA stuff on pig data.
+import itertools
 import numpy as np
 import os
 import torch
