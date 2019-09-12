@@ -25,7 +25,7 @@ np.set_printoptions(precision=5, suppress=True)
 
 _PIG_DATA_FREQUENCY = 255.
 _TAU_IN_S = 0.4
-_WINDOW_SIZE_IN_S = 10.
+_WINDOW_SIZE_IN_S = 8.
 
 
 def default_FFNN_config(input_size, output_size):
@@ -203,8 +203,9 @@ def aggregate_multipig_data(key_data, window_size=100, n=1000, shuffle=True):
 
 
 def rescale(data, noise_std=1e-3):
-  mins = {i: data[i].min(axis=0) for i in data}
-  maxs = {i: data[i].max(axis=0) for i in data}
+  unwrapped_data = {i: d.reshape(-1, d.shape[2]) for i, d in data.items()}
+  mins = {i: d.min(axis=0) for i, d in unwrapped_data.items()}
+  maxs = {i: d.max(axis=0) for i, d in unwrapped_data.items()}
   diffs = {i: (maxs[i] - mins[i]) for i in mins}
   diffs = {i: np.where(diff, diff, 1) for i, diff in diffs.items()}
 
@@ -239,17 +240,19 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   pig_data = load_pig_data(
       num_pigs, channels=None, ds_factor=ds_factor, valid_labels=[phase])
 
+  noise_coeff = 0.
   data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
   window_size = int(_WINDOW_SIZE_IN_S * data_frequency)
-  n = 2
+  n = -1
   window_data = aggregate_multipig_data(pig_data, window_size=window_size, n=n)
   npts = window_data[utils.get_any_key(window_data)].shape[0]
+  scaled_data = rescale(window_data, noise_coeff)
 
   tr_frac = 0.8
   split_inds = [0, int(tr_frac * npts), npts]
-  (tr_data, te_data), _ = split_data(window_data, split_inds=split_inds)
+  (tr_data, te_data), _ = split_data(scaled_data, split_inds=split_inds)
 
-  config = default_TSRF_config()
+  config = default_TSRF_config(use_pre=["encoder"], use_post=["encoder"])
   config.time_delay_tau = int(_TAU_IN_S * data_frequency)
   config.max_iters = 5000
   config.lr = 1e-4
@@ -264,7 +267,7 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
 if __name__ == "__main__":
   import sys
   channel = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-  phase = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+  phase = int(sys.argv[2]) if len(sys.argv) > 2 else None
   num_pigs = 2
   test_ts_encoding(num_pigs, channel, phase)
   # IPython.embed()

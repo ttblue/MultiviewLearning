@@ -14,6 +14,39 @@ from utils.torch_utils import _DTYPE, _TENSOR_FUNC, _IDENTITY
 import IPython
 
 
+################################################################################
+# Weight initialization:
+def xavier_init(m):
+  if isinstance(m, nn.Linear):
+    nn.init.xavier_uniform_(m.weight)
+    m.bias.data.fill_(0.01)
+  elif isinstance(m, nn.LSTM):
+    for layer_weights in m.all_weights:
+      for wt in layer_weights:
+        if len(wt.shape) > 1:
+          nn.init.xavier_uniform_(wt)
+        else:
+          wt.data.fill_(0.01)
+
+
+def zero_init(m):
+  if isinstance(m, nn.Linear):
+    m.weight.data.fill_(0.)
+    m.bias.data.fill_(0.)
+  elif isinstance(m, nn.LSTM):
+    for layer_weights in m.all_weights:
+      for wt in layer_weights:
+        wt.data.fill_(0.)
+
+
+def initialize_weights(model, init_type="xavier"):
+  wfunc = xavier_init if init_type == "xavier" else zero_init
+  model.apply(wfunc)
+
+
+_DEFAULT_INIT = "xavier"
+
+################################################################################
 # Encoder/Decoder class
 class FRFWConfig(BaseConfig):
   def __init__(
@@ -301,6 +334,7 @@ class TimeSeriesReconFeaturization(nn.Module):
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
     self._initialize()
+    initialize_weights(self, _DEFAULT_INIT)
     self._loss_history = []
     try:
       for itr in range(self.config.max_iters):
@@ -317,6 +351,13 @@ class TimeSeriesReconFeaturization(nn.Module):
       print("Training interrupted. Quitting now.")
     self.eval()
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
+
+  def reconstruct(self, te_dset, rtn_numpy=True):
+    encoding = self.encode(te_dset)
+    recon = self.decode(encoding, output_len=te_dset.shape[1])
+    if rtn_numpy:
+      return recon.detach().numpy()
+    return recon
 
   def save_to_file(self, fname):
     torch.save(self.state_dict(), fname)
