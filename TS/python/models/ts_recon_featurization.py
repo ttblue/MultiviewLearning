@@ -283,6 +283,7 @@ class TimeSeriesReconFeaturization(nn.Module):
       loss_val.backward()
       self.opt.step()
       self.itr_loss += loss_val
+    self._loss_history.append(float(self.itr_loss.detach()))
 
   def fit(self, ts_dset):
     # ts_dset: num_ts x seq_len x input_dim
@@ -300,7 +301,7 @@ class TimeSeriesReconFeaturization(nn.Module):
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
     self._initialize()
-
+    self._loss_history = []
     try:
       for itr in range(self.config.max_iters):
         if self.config.verbose:

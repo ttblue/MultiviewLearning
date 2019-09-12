@@ -23,6 +23,11 @@ import IPython
 np.set_printoptions(precision=5, suppress=True)
 
 
+_PIG_DATA_FREQUENCY = 255.
+_TAU_IN_S = 0.4
+_WINDOW_SIZE_IN_S = 10.
+
+
 def default_FFNN_config(input_size, output_size):
   layer_units = [16, 16]  #[32] # [32, 64]
   use_vae = False
@@ -63,8 +68,8 @@ def default_RNN_config(input_size, hidden_size):
 def default_FRFW_config(use_pre=False, use_post=False):
   # Encoder config:
   model_input_size = 3   # Temporary -- overwritten by data
-  pre_output_size = 8
-  rnn_hidden_size = 8
+  pre_output_size = 64
+  rnn_hidden_size = 64
   model_output_size = 8
 
   if use_pre:
@@ -103,7 +108,7 @@ def default_FRFW_config(use_pre=False, use_post=False):
 def default_TSRF_config(use_pre=[], use_post=[]):
   use_pre_enc = ("encoder" in use_pre)
   use_post_enc = ("encoder" in use_post)
-  latent_size = 8
+  latent_size = 64
   encoder_config = default_FRFW_config(use_pre_enc, use_post_enc)
   encoder_config.output_size = latent_size
 
@@ -131,7 +136,7 @@ def default_TSRF_config(use_pre=[], use_post=[]):
   return config
 
 
-def load_pig_data(num_pigs=-1, channels=None, valid_labels=None):
+def load_pig_data(num_pigs=-1, channels=None, ds_factor=25, valid_labels=None):
   pig_list = pig_videos.FFILE_PNUMS
   if num_pigs > 0:
     pig_list = pig_list[:num_pigs]
@@ -230,10 +235,13 @@ def split_data(xvs, n=10, split_inds=None):
 
 def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   channels = None
-  pig_data = load_pig_data(num_pigs, channels, valid_labels=[phase])
+  ds_factor = 25
+  pig_data = load_pig_data(
+      num_pigs, channels=None, ds_factor=ds_factor, valid_labels=[phase])
 
-  window_size = 100
-  n = -1
+  data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
+  window_size = int(_WINDOW_SIZE_IN_S * data_frequency)
+  n = 2
   window_data = aggregate_multipig_data(pig_data, window_size=window_size, n=n)
   npts = window_data[utils.get_any_key(window_data)].shape[0]
 
@@ -242,6 +250,7 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   (tr_data, te_data), _ = split_data(window_data, split_inds=split_inds)
 
   config = default_TSRF_config()
+  config.time_delay_tau = int(_TAU_IN_S * data_frequency)
   config.max_iters = 5000
   config.lr = 1e-4
 
