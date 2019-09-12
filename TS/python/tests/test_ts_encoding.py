@@ -237,8 +237,10 @@ def split_data(xvs, n=10, split_inds=None):
 def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   channels = None
   ds_factor = 25
+
+  valid_labels = None if phase is None else [phase]
   pig_data = load_pig_data(
-      num_pigs, channels=None, ds_factor=ds_factor, valid_labels=[phase])
+      num_pigs, channels=None, ds_factor=ds_factor, valid_labels=valid_labels)
 
   noise_coeff = 0.
   data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
@@ -259,7 +261,7 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
 
   model = ts_recon_featurization.TimeSeriesReconFeaturization(config)
   tr_data_channel = tr_data[0][:, :, [channel]]
-  # IPython.embed()
+  IPython.embed()
   model.fit(tr_data_channel)
   IPython.embed()
 
