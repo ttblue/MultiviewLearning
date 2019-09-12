@@ -269,6 +269,7 @@ def load_pig_features_and_labels(
       if len(features[i].shape) == 1:
         features[i] = features[i].reshape(-1, 1)
     labels = labels[valid_inds]
+    tstamps = tstamps[valid_inds]
 
     all_data[key] = {
         "tstamps": tstamps,

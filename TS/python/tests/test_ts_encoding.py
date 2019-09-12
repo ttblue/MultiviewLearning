@@ -26,7 +26,7 @@ np.set_printoptions(precision=5, suppress=True)
 _PIG_DATA_FREQUENCY = 255.
 _TAU_IN_S = 0.4
 _WINDOW_SIZE_IN_S = 8.
-
+_WINDOW_SPLIT_THRESH_S = 5.
 
 def default_FFNN_config(input_size, output_size):
   layer_units = [16, 16]  #[32] # [32, 64]
@@ -174,32 +174,78 @@ def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
   return windows
 
 
-def aggregate_multipig_data(key_data, window_size=100, n=1000, shuffle=True):
-  ignore_rest = False
+def split_discnt_ts_into_windows(
+    ts, tstamps, window_size, ignore_rest=False, shuffle=True):
+  tdiffs = tstamps[1:] - tstamps[:-1]
+  gap_inds = (tdiffs > _WINDOW_SPLIT_THRESH_S).nonzero()[0] + 1
+  if len(gap_inds) == 0:
+    return split_ts_into_windows(ts, window_size, ignore_rest, shuffle=shuffle)
 
-  nviews = len(key_data[utils.get_any_key(key_data)]["features"])
-  data = {i:[] for i in range(nviews)}
+  windows = []
+  cnt_ts = np.split(ts, gap_inds, axis=0)
+  for cts in cnt_ts:
+    wcts = split_ts_into_windows(cts, window_size, ignore_rest, shuffle=False)
+    windows.append(wcts)
 
-  for pnum in key_data:
-    vfeats = key_data[pnum]["features"]
-    for i, vf in enumerate(vfeats):
-      vf_windows = split_ts_into_windows(
-          vf, window_size, ignore_rest, shuffle=False)  # Shuffle at the end
-      data[i].append(vf_windows)
-
-  for i in data:
-    data[i] = np.concatenate(data[i], axis=0)
-
+  windows = np.concatenate(windows, axis=0)
   if shuffle:
-    npts = data[0].shape[0]
-    shuffle_inds = np.random.permutation(npts)
-    data = {i: data[i][shuffle_inds] for i in data}
+    r_inds = np.random.permutation(windows.shape[0])
+    windows = windows[r_inds]
 
-  if n > 0:
-    data = {i: data[i][:n] for i in data}
-  #IPython.embed()
+  return windows
 
-  return data
+
+def wt_avg_smooth(ts, n_neighbors=3):
+  if len(ts.shape) > 1:
+    individual_smooth = [
+        wt_avg_smooth(ts[:, i], n_neighbors).reshape(-1, 1)
+        for i in range(ts.shape[1])]
+    return np.concatenate(individual_smooth, axis=1)
+  box = np.ones(n_neighbors) / n_neighbors
+  ts_smooth = np.convolve(ts, box, mode='same')
+
+  return ts_smooth
+
+
+def smooth_data(ts, tstamps):  #, coeff=0.8):
+  tdiffs = tstamps[1:] - tstamps[:-1]
+  gap_inds = (tdiffs > _WINDOW_SPLIT_THRESH_S).nonzero()[0] + 1
+  if len(gap_inds) == 0:
+    cnts_ts = [ts]
+  else:
+    cnts_ts = np.split(ts, gap_inds, axis=0)
+
+  smooth_ts = []
+  n_neighbors = 3
+  for cts in cnts_ts:
+    smooth_ts.append(wt_avg_smooth(cts, n_neighbors))
+  # Put the ts back into the original shape
+  smooth_ts = np.concatenate(smooth_ts, axis=0)
+  return smooth_ts
+
+
+_STD_OUTLIERS = 10
+def rescale_single_ts(ts, noise_std):
+  unwrapped_ts = ts.reshape(-1, ts.shape[-1]) if len(ts.shape) > 2 else ts
+  valid_inds = (
+      unwrapped_ts - np.mean(unwrapped_ts, axis=0) <
+      _STD_OUTLIERS * np.std(unwrapped_ts, axis=0))
+  mins = []
+  maxs = []
+  for (ch_ts, vidx) in zip(unwrapped_ts.T, valid_inds.T):
+    mins.append(ch_ts[vidx].min())
+    maxs.append(ch_ts[vidx].max())
+
+  mins = np.array(mins)
+  maxs = np.array(maxs)
+  diffs = maxs - mins
+  diffs = np.where(diffs, diffs, 1)
+
+  noise = np.random.randn(*ts.shape) * noise_std
+  scaled_ts = (ts - mins) / diffs + noise
+
+  # IPython.embed()
+  return scaled_ts
 
 
 def rescale(data, noise_std=1e-3):
@@ -214,6 +260,40 @@ def rescale(data, noise_std=1e-3):
   }
   data = {i: ((data[i] - mins[i]) / diffs[i] + noise[i]) for i in data}
   # IPython.embed()
+  return data
+
+
+def convert_data_into_windows(
+    key_data, window_size=100, n=1000, smooth=True, scale=True, noise_std=1e-3,
+    shuffle=True):
+  ignore_rest = False
+
+  nviews = len(key_data[utils.get_any_key(key_data)]["features"])
+  data = {i:[] for i in range(nviews)}
+
+  for pnum in key_data:
+    vfeats = key_data[pnum]["features"]
+    tstamps = key_data[pnum]["tstamps"]
+    for i, vf in enumerate(vfeats):
+      # Shuffle at the end
+      if scale:
+        vf = rescale_single_ts(vf, noise_std)
+      if smooth:
+        vf = smooth_data(vf, tstamps)
+      vf_windows = split_discnt_ts_into_windows(
+          vf, tstamps, window_size, ignore_rest, shuffle=False)
+      data[i].append(vf_windows)
+
+  for i in data:
+    data[i] = np.concatenate(data[i], axis=0)
+
+  if shuffle:
+    npts = data[0].shape[0]
+    shuffle_inds = np.random.permutation(npts)
+    data = {i: data[i][shuffle_inds] for i in data}
+
+  if n > 0:
+    data = {i: data[i][:n] for i in data}
   return data
 
 
@@ -246,13 +326,14 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
   window_size = int(_WINDOW_SIZE_IN_S * data_frequency)
   n = -1
-  window_data = aggregate_multipig_data(pig_data, window_size=window_size, n=n)
+  window_data = convert_data_into_windows(
+      pig_data, window_size=window_size, n=n, smooth=True, scale=True,
+      noise_std=0)
   npts = window_data[utils.get_any_key(window_data)].shape[0]
-  scaled_data = rescale(window_data, noise_coeff)
-
+  # scaled_data = rescale(window_data, noise_coeff)
   tr_frac = 0.8
   split_inds = [0, int(tr_frac * npts), npts]
-  (tr_data, te_data), _ = split_data(scaled_data, split_inds=split_inds)
+  (tr_data, te_data), _ = split_data(window_data, split_inds=split_inds)
 
   config = default_TSRF_config(use_pre=["encoder"], use_post=["encoder"])
   config.time_delay_tau = int(_TAU_IN_S * data_frequency)
@@ -261,7 +342,7 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
 
   model = ts_recon_featurization.TimeSeriesReconFeaturization(config)
   tr_data_channel = tr_data[0][:, :, [channel]]
-  IPython.embed()
+  # IPython.embed()
   model.fit(tr_data_channel)
   IPython.embed()
 
