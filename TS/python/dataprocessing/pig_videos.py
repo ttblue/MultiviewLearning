@@ -332,7 +332,8 @@ def load_tdPCA_featurized_slow_pigs(
       unused_pigs.append(key)
       continue
 
-    pig_data = np.load(fdict[key], encoding="bytes").tolist()
+    pig_data = np.load(fdict[key], encoding="bytes", allow_pickle=True).tolist()
+    # pig_data = np.load(fdict[key], encoding="bytes").tolist()
     tstamps = pig_data[b"tstamps"]
     features = pig_data[b"features"]
 
