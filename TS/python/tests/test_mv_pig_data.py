@@ -270,19 +270,6 @@ def rescale(data, noise_std=1e-3):
   return data
 
 
-VS_MAP = {
-    1: "Art_pressure_MILLAR",
-    2: "Art_pressure_Fluid_Filled",
-    3: "Pulmonary_pressure",
-    4: "CVP",
-    5: "Plethysmograph",
-    6: "CCO",
-    7: "SVO2",
-    8: "SPO2",
-    9: "Airway_pressure",
-    10: "Vigeleo_SVV",
-}
-
 def test_vitals_only_opt(num_pigs=-1, npts=1000, lnun=0):
   pnums = pig_videos.FFILE_PNUMS
   if num_pigs > 0:
@@ -330,7 +317,7 @@ def test_vitals_only_opt(num_pigs=-1, npts=1000, lnun=0):
 
   vlens = [data[vi].shape[1] for vi in range(len(data))]
   msplit_inds = np.cumsum(vlens)[:-1]
-  msplit_names = [VS_MAP[vidx] for vidx in view_subset]
+  msplit_names = [pig_videos.VS_MAP[vidx] for vidx in view_subset]
   IPython.embed()
 
   lnum = valid_labels[0]

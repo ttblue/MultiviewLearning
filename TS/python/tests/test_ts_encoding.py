@@ -7,7 +7,7 @@ from torch import nn
 from dataprocessing import pig_videos
 from models import ts_recon_featurization
 from synthetic import multimodal_systems as ms
-from utils import torch_utils as tu, utils
+from utils import time_series_utils as tsu, torch_utils as tu, utils
 
 
 try:
@@ -24,8 +24,8 @@ np.set_printoptions(precision=5, suppress=True)
 
 
 _PIG_DATA_FREQUENCY = 255.
-_TAU_IN_S = 0.4
-_WINDOW_SIZE_IN_S = 8.
+_TAU_IN_S = 0.2
+_WINDOW_SIZE_IN_S = 3.
 _WINDOW_SPLIT_THRESH_S = 5.
 
 def default_FFNN_config(input_size, output_size):
@@ -152,149 +152,33 @@ def load_pig_data(num_pigs=-1, channels=None, ds_factor=25, valid_labels=None):
   return pig_data
 
 
-def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
-  # round_func = np.floor if ignore_rest else np.ceil
-  n_win = int(np.ceil(ts.shape[0] / window_size))
-  split_inds = np.arange(1, n_win).astype(int) * window_size
-  split_data = np.split(ts, split_inds, axis=0)
-  last_ts = split_data[-1]
-  n_overlap = window_size - last_ts.shape[0]
-  if n_overlap > 0:
-    if ignore_rest:
-      split_data = split_data[:-1]
-    else:
-      last_ts = np.r_[split_data[-2][-n_overlap:], last_ts]
-      split_data[-1] = last_ts
-  windows = np.array(split_data)
+def plot_windows(truevals, output, ndisp, ph_name, ch_name, nwin, wsize):
+  tv_plot = truevals.reshape(-1, truevals.shape[-1])
+  op_plot = output.reshape(-1, truevals.shape[-1])
 
-  if shuffle:
-    r_inds = np.random.permutation(windows.shape[0])
-    windows = windows[r_inds]
+  if nwin is not None and nwin > 0:
+    ndisp = nwin * wsize
+  if ndisp > 0:
+    tv_plot = tv_plot[:ndisp]
+    op_plot = op_plot[:ndisp]
+  ntsteps = tv_plot.shape[0]
 
-  return windows
+  plt.plot(tv_plot, color='b', label="Ground Truth")
+  plt.plot(op_plot, color='r', label="Predicted")
+  plt.legend(fontsize=15)
+  plt.title("Phase: %s -- Vital: %s" % (ph_name, ch_name), fontsize=30)
+  plt.xticks(fontsize=15)
+  plt.yticks(fontsize=15)
+  # if nwin is not None and nwin > 0:
 
+  win_x = wsize
+  while win_x < ntsteps:
+    plt.axvline(x = win_x, ls="--")
+    win_x += wsize
 
-def split_discnt_ts_into_windows(
-    ts, tstamps, window_size, ignore_rest=False, shuffle=True):
-  tdiffs = tstamps[1:] - tstamps[:-1]
-  gap_inds = (tdiffs > _WINDOW_SPLIT_THRESH_S).nonzero()[0] + 1
-  if len(gap_inds) == 0:
-    return split_ts_into_windows(ts, window_size, ignore_rest, shuffle=shuffle)
-
-  windows = []
-  cnt_ts = np.split(ts, gap_inds, axis=0)
-  for cts in cnt_ts:
-    wcts = split_ts_into_windows(cts, window_size, ignore_rest, shuffle=False)
-    windows.append(wcts)
-
-  windows = np.concatenate(windows, axis=0)
-  if shuffle:
-    r_inds = np.random.permutation(windows.shape[0])
-    windows = windows[r_inds]
-
-  return windows
-
-
-def wt_avg_smooth(ts, n_neighbors=3):
-  if len(ts.shape) > 1:
-    individual_smooth = [
-        wt_avg_smooth(ts[:, i], n_neighbors).reshape(-1, 1)
-        for i in range(ts.shape[1])]
-    return np.concatenate(individual_smooth, axis=1)
-  box = np.ones(n_neighbors) / n_neighbors
-  ts_smooth = np.convolve(ts, box, mode='same')
-
-  return ts_smooth
-
-
-def smooth_data(ts, tstamps):  #, coeff=0.8):
-  tdiffs = tstamps[1:] - tstamps[:-1]
-  gap_inds = (tdiffs > _WINDOW_SPLIT_THRESH_S).nonzero()[0] + 1
-  if len(gap_inds) == 0:
-    cnts_ts = [ts]
-  else:
-    cnts_ts = np.split(ts, gap_inds, axis=0)
-
-  smooth_ts = []
-  n_neighbors = 3
-  for cts in cnts_ts:
-    smooth_ts.append(wt_avg_smooth(cts, n_neighbors))
-  # Put the ts back into the original shape
-  smooth_ts = np.concatenate(smooth_ts, axis=0)
-  return smooth_ts
-
-
-_STD_OUTLIERS = 10
-def rescale_single_ts(ts, noise_std):
-  unwrapped_ts = ts.reshape(-1, ts.shape[-1]) if len(ts.shape) > 2 else ts
-  valid_inds = (
-      unwrapped_ts - np.mean(unwrapped_ts, axis=0) <
-      _STD_OUTLIERS * np.std(unwrapped_ts, axis=0))
-  mins = []
-  maxs = []
-  for (ch_ts, vidx) in zip(unwrapped_ts.T, valid_inds.T):
-    mins.append(ch_ts[vidx].min())
-    maxs.append(ch_ts[vidx].max())
-
-  mins = np.array(mins)
-  maxs = np.array(maxs)
-  diffs = maxs - mins
-  diffs = np.where(diffs, diffs, 1)
-
-  noise = np.random.randn(*ts.shape) * noise_std
-  scaled_ts = (ts - mins) / diffs + noise
-
-  # IPython.embed()
-  return scaled_ts
-
-
-def rescale(data, noise_std=1e-3):
-  unwrapped_data = {i: d.reshape(-1, d.shape[2]) for i, d in data.items()}
-  mins = {i: d.min(axis=0) for i, d in unwrapped_data.items()}
-  maxs = {i: d.max(axis=0) for i, d in unwrapped_data.items()}
-  diffs = {i: (maxs[i] - mins[i]) for i in mins}
-  diffs = {i: np.where(diff, diff, 1) for i, diff in diffs.items()}
-
-  noise = {
-      i: np.random.randn(*dat.shape) * noise_std for i, dat in data.items()
-  }
-  data = {i: ((data[i] - mins[i]) / diffs[i] + noise[i]) for i in data}
-  # IPython.embed()
-  return data
-
-
-def convert_data_into_windows(
-    key_data, window_size=100, n=1000, smooth=True, scale=True, noise_std=1e-3,
-    shuffle=True):
-  ignore_rest = False
-
-  nviews = len(key_data[utils.get_any_key(key_data)]["features"])
-  data = {i:[] for i in range(nviews)}
-
-  for pnum in key_data:
-    vfeats = key_data[pnum]["features"]
-    tstamps = key_data[pnum]["tstamps"]
-    for i, vf in enumerate(vfeats):
-      # Shuffle at the end
-      if scale:
-        vf = rescale_single_ts(vf, noise_std)
-      if smooth:
-        vf = smooth_data(vf, tstamps)
-      vf_windows = split_discnt_ts_into_windows(
-          vf, tstamps, window_size, ignore_rest, shuffle=False)
-      data[i].append(vf_windows)
-
-  for i in data:
-    data[i] = np.concatenate(data[i], axis=0)
-
-  if shuffle:
-    npts = data[0].shape[0]
-    shuffle_inds = np.random.permutation(npts)
-    data = {i: data[i][shuffle_inds] for i in data}
-
-  if n > 0:
-    data = {i: data[i][:n] for i in data}
-  return data
+  mng = plt.get_current_fig_manager()
+  mng.window.showMaximized()
+  plt.show()
 
 
 def split_data(xvs, n=10, split_inds=None):
@@ -315,18 +199,19 @@ def split_data(xvs, n=10, split_inds=None):
 
 
 def test_ts_encoding(num_pigs=3, channel=0, phase=None):
-  channels = None
+  channels = pig_videos.ALL_FEATURE_COLUMNS
   ds_factor = 25
 
   valid_labels = None if phase is None else [phase]
   pig_data = load_pig_data(
-      num_pigs, channels=None, ds_factor=ds_factor, valid_labels=valid_labels)
+      num_pigs, channels=channels, ds_factor=ds_factor,
+      valid_labels=valid_labels)
 
   noise_coeff = 0.
   data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
   window_size = int(_WINDOW_SIZE_IN_S * data_frequency)
   n = -1
-  window_data = convert_data_into_windows(
+  window_tstamps, window_data, window_labels = tsu.convert_data_into_windows(
       pig_data, window_size=window_size, n=n, smooth=True, scale=True,
       noise_std=0)
   npts = window_data[utils.get_any_key(window_data)].shape[0]
@@ -345,6 +230,24 @@ def test_ts_encoding(num_pigs=3, channel=0, phase=None):
   # IPython.embed()
   model.fit(tr_data_channel)
   IPython.embed()
+
+  # For plotting:
+  te_data_channel = te_data[0][:, :, [channel]]
+  wsize = te_data_channel.shape[1]
+  output = model.decode(model.encode(te_data_channel), output_len=wsize)
+  output = output.detach().numpy()
+  ndisp = -1
+  nwin = 10
+  ph_name = pig_videos.PHASE_MAP.get(phase, str(phase))
+  ch = channels[channel + 1]  # first channel is tstamp
+  ch_name = pig_videos.VS_MAP.get(ch, str(ch))
+
+  plot_windows(te_data_channel, output, ndisp, ph_name, ch_name, nwin, wsize)
+
+  # On the servers:
+  # encoding = model.encode(te_data[0][:, :, [channel]])
+  # output = model.decode(encoding, te_data[0].shape[1])
+  # np.save("out_ph%i_ch%i.npy" % (phase, channel), (te_data[0][:,:,[channel]], output.detach().numpy()))
 
 
 if __name__ == "__main__":

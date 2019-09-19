@@ -1,13 +1,17 @@
-from __future__ import print_function, division
-
 import multiprocessing
+import numpy as np
 import os
 import sys
 import time
 
-import numpy as np
 from sklearn.cluster import KMeans
-import mutual_info as mi
+
+try:
+  import mutual_info as mi
+  _MI_IMPORTED = True
+except ImportError:
+  print("Mutual information import failed.")
+  _MI_IMPORTED = False
 
 
 try:
@@ -18,11 +22,13 @@ try:
 except ImportError:
   PLOTTING = False
 
-import IPython
-
 import math_utils as mu
 from tvregdiff import TVRegDiff
 import utils
+
+
+import IPython
+
 
 VERBOSE = True
 # ==============================================================================
@@ -47,7 +53,8 @@ def compute_tau(y, M=200, show=True):
   # This time lag is where the shifted function is most dissimilar.
   # y -- time series
   # M -- search iterations
-
+  if not _MI_IMPORTED:
+    raise ImportError("Mutual information import failed.")
   ysmooth = y
   # ysmooth = pd.rolling_window(y, 5, "triang")
   # ysmooth = ysmooth[~np.isnan(ysmooth)]
@@ -411,6 +418,183 @@ def compute_time_delay_embedding(X, dt, tau=None, d=3, tau_s_to_search=2.):
     X_td = np.c_[X_td, X[i * tau: n - (d - i - 1) * tau]]
 
   return X_td
+
+
+################################################################################
+# Data processing stuff
+
+
+def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
+  # round_func = np.floor if ignore_rest else np.ceil
+  n_win = int(np.ceil(ts.shape[0] / window_size))
+  split_inds = np.arange(1, n_win).astype(int) * window_size
+  split_data = np.split(ts, split_inds, axis=0)
+  last_ts = split_data[-1]
+  n_overlap = window_size - last_ts.shape[0]
+  if n_overlap > 0:
+    if ignore_rest:
+      split_data = split_data[:-1]
+    else:
+      last_ts = np.r_[split_data[-2][-n_overlap:], last_ts]
+      split_data[-1] = last_ts
+  windows = np.array(split_data)
+
+  if shuffle:
+    r_inds = np.random.permutation(windows.shape[0])
+    windows = windows[r_inds]
+
+  return windows
+
+
+def split_discnt_ts_into_windows(
+    ts, tstamps, window_size, ignore_rest=False, shuffle=True):
+  if len(ts.shape) < 2:
+    ts = ts.reshape(-1, 1)
+  tstamps_and_ts = np.c_[tstamps.reshape(-1, 1), ts]
+
+  tdiffs = tstamps[1:] - tstamps[:-1]
+  gap_inds = (tdiffs > _WINDOW_SPLIT_THRESH_S).nonzero()[0] + 1
+
+  if len(gap_inds) == 0:
+    windows = split_ts_into_windows(
+        tstamps_and_ts, window_size, ignore_rest, shuffle=shuffle)
+    w_tstamps = windows[:, :, 0]
+    windows = windows[:, :, 1:]
+    return w_tstamps, windows
+
+  windows = []
+  w_tstamps = []
+  cnt_tstamps_and_ts = np.split(tstamps_and_ts, gap_inds, axis=0)
+  for cts in cnt_ts:
+    wcts = split_ts_into_windows(cts, window_size, ignore_rest, shuffle=False)
+    w_tstamps.append(wcts[:, :, 0])
+    windows.append(wcts[:, :, 1:])
+
+  windows = np.concatenate(windows, axis=0)
+  w_tstamps = np.concatenate(w_tstamps, axis=0)
+  if shuffle:
+    r_inds = np.random.permutation(windows.shape[0])
+    windows = windows[r_inds]
+    w_tstamps = w_tstamps[r_inds]
+
+  return w_tstamps, windows
+
+
+def wt_avg_smooth(ts, n_neighbors=3):
+  if len(ts.shape) > 1:
+    individual_smooth = [
+        wt_avg_smooth(ts[:, i], n_neighbors).reshape(-1, 1)
+        for i in range(ts.shape[1])]
+    return np.concatenate(individual_smooth, axis=1)
+  box = np.ones(n_neighbors) / n_neighbors
+  ts_smooth = np.convolve(ts, box, mode="same")
+
+  return ts_smooth
+
+
+def smooth_data(ts, tstamps):  #, coeff=0.8):
+  tdiffs = tstamps[1:] - tstamps[:-1]
+  gap_inds = (tdiffs > _WINDOW_SPLIT_THRESH_S).nonzero()[0] + 1
+  if len(gap_inds) == 0:
+    cnts_ts = [ts]
+  else:
+    cnts_ts = np.split(ts, gap_inds, axis=0)
+
+  smooth_ts = []
+  n_neighbors = 3
+  for cts in cnts_ts:
+    smooth_ts.append(wt_avg_smooth(cts, n_neighbors))
+  # Put the ts back into the original shape
+  smooth_ts = np.concatenate(smooth_ts, axis=0)
+  return smooth_ts
+
+
+_STD_OUTLIERS = 10
+def rescale_single_ts(ts, noise_std):
+  unwrapped_ts = ts.reshape(-1, ts.shape[-1]) if len(ts.shape) > 2 else ts
+  valid_inds = (
+      unwrapped_ts - np.mean(unwrapped_ts, axis=0) <
+      _STD_OUTLIERS * np.std(unwrapped_ts, axis=0))
+  mins = []
+  maxs = []
+  for (ch_ts, vidx) in zip(unwrapped_ts.T, valid_inds.T):
+    mins.append(ch_ts[vidx].min())
+    maxs.append(ch_ts[vidx].max())
+
+  mins = np.array(mins)
+  maxs = np.array(maxs)
+  diffs = maxs - mins
+  diffs = np.where(diffs, diffs, 1)
+
+  noise = np.random.randn(*ts.shape) * noise_std
+  scaled_ts = (ts - mins) / diffs + noise
+
+  # IPython.embed()
+  return scaled_ts
+
+
+def rescale(data, noise_std=1e-3):
+  unwrapped_data = {i: d.reshape(-1, d.shape[2]) for i, d in data.items()}
+  mins = {i: d.min(axis=0) for i, d in unwrapped_data.items()}
+  maxs = {i: d.max(axis=0) for i, d in unwrapped_data.items()}
+  diffs = {i: (maxs[i] - mins[i]) for i in mins}
+  diffs = {i: np.where(diff, diff, 1) for i, diff in diffs.items()}
+
+  noise = {
+      i: np.random.randn(*dat.shape) * noise_std for i, dat in data.items()
+  }
+  data = {i: ((data[i] - mins[i]) / diffs[i] + noise[i]) for i in data}
+  # IPython.embed()
+  return data
+
+
+def convert_data_into_windows(
+    key_data, window_size=100, n=1000, smooth=True, scale=True, noise_std=1e-3,
+    shuffle=True):
+  ignore_rest = False
+
+  nviews = len(key_data[utils.get_any_key(key_data)]["features"])
+  tstamps = {i: [] for i in range(nviews)}
+  labels = {i: [] for i in range(nviews)}
+  data = {i:[] for i in range(nviews)}
+
+  for pnum in key_data:
+    vfeats = key_data[pnum]["features"]
+    vtstamps = key_data[pnum]["tstamps"]
+    vlabels = key_data[pnum]["labels"]
+    for i, vf in enumerate(vfeats):
+      # Shuffle at the end
+      vl = vlabels[i]
+      if scale:
+        vf = rescale_single_ts(vf, noise_std)
+      if smooth:
+        vf = smooth_data(vf, vtstamps)
+      # Appending labels:
+      vf_with_labels = np.c_[vlabels.reshape(-1, 1), vf]
+      vf_tstamps, vf_windows = split_discnt_ts_into_windows(
+          vf, vtstamps, window_size, ignore_rest, shuffle=False)
+      labels[i].append(vf_windows[:, :, 0])
+      data[i].append(vf_windows[:, :, 1:])
+      tstamps[i].append(vf_tstamps)
+
+  for i in data:
+    data[i] = np.concatenate(data[i], axis=0)
+    tstamps[i] = np.concatenate(tstamps[i], axis=0)
+    labels[i] = np.concatenate(labels[i], axis=0)
+
+  if shuffle:
+    npts = data[0].shape[0]
+    shuffle_inds = np.random.permutation(npts)
+    data = {i: data[i][shuffle_inds] for i in data}
+    tstamps = {i: tstamps[i][shuffle_inds] for i in tstamps}
+    labels = {i: labels[i][shuffle_inds] for i in labels}
+
+  if n > 0:
+    data = {i: data[i][:n] for i in data}
+    tstamps = {i: tstamps[i][:n] for i in tstamps}
+    labels = {i: labels[i][:n] for i in labels}
+
+  return tstamps, data, labels
 
 
 if __name__ == "__main__":

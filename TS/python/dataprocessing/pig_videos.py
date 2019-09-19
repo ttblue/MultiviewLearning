@@ -33,6 +33,7 @@ VFILE_PNUMS = []
 FFILE_PNUMS = []
 COMMON_PNUMS = []
 PHASE_MAP = {}
+VS_MAP = {}
 
 VERBOSE = True
 
@@ -52,7 +53,7 @@ def extract_pnum_and_phase(fname):
 
 def load_globals():
   global ALL_VIDEO_FILES, ALL_FEAT_FILES, VFILE_MAP, FFILE_MAP, COMMON_PNUMS,\
-         PNAME_VFILE_MAP, VFILE_PNUMS, FFILE_PNUMS, PHASE_MAP
+         PNAME_VFILE_MAP, VFILE_PNUMS, FFILE_PNUMS, PHASE_MAP, VS_MAP
   ALL_VIDEO_FILES = sorted([
       fl for fl in os.listdir(VIDEO_DIR)
       if os.path.isfile(os.path.join(VIDEO_DIR, fl))])
@@ -108,14 +109,28 @@ def load_globals():
   COMMON_PNUMS = sorted([pnum for pnum in VFILE_MAP if pnum in FFILE_MAP])
 
   PHASE_MAP = {
-    0: "EndBaseline",
-    1: "EndBleed",
-    2: "AfterBleed",
-    # ?: "BeforeResuc",
-    3: "EndHextend",
-    5: "AfterHextend",
+      0: "EndBaseline",
+      1: "EndBleed",
+      2: "AfterBleed",
+      # ?: "BeforeResuc",
+      3: "EndHextend",
+      5: "AfterHextend",
   }
   PHASE_MAP.update({v:k for k, v in PHASE_MAP.items()})
+
+  VS_MAP = {
+      1: "Art_pressure_MILLAR",
+      2: "Art_pressure_Fluid_Filled",
+      3: "Pulmonary_pressure",
+      4: "CVP",
+      5: "Plethysmograph",
+      6: "CCO",
+      7: "SVO2",
+      8: "SPO2",
+      9: "Airway_pressure",
+      10: "Vigeleo_SVV",
+  }
+  VS_MAP.update({v:k for k, v in VS_MAP.items()})
 
 load_globals()
 

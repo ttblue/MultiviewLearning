@@ -80,6 +80,7 @@ class MNNConfig(BaseConfig):
       self.layer_types, self.layer_args = generate_linear_types_args(
           self.input_size, layer_units, self.output_size, bias)
 
+
 # Identity singleton
 class Identity(nn.Module):
   def forward(self, x, *args):
