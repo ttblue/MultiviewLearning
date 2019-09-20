@@ -142,7 +142,7 @@ try:
   import matplotlib.pyplot as plt
 except ImportError:
   _has_matplotlib = False
-  print "Matplotlib is not installed - plotting functionality disabled"
+  print("Matplotlib is not installed - plotting functionality disabled")
 
 import IPython
 import time
@@ -158,7 +158,7 @@ def TVRegDiff( data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None, plot
   # Make sure we have a column vector
   data = np.array(data)
   if (len(data.shape) != 1):
-    print "Error - data is not a column vector"
+    print("Error - data is not a column vector")
     return
   # Get the data size.
   n = len(data)
@@ -212,11 +212,11 @@ def TVRegDiff( data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None, plot
       
       if diagflag:
         [s, info_i] = sparse.linalg.cg( linop, g, None, tol, maxit, None, P )
-        print 'iteration {0:4d}: relative change = {1:.3e}, gradient norm = {2:.3e}\n'.format(ii, np.linalg.norm( s[0] ) / np.linalg.norm( u ), np.linalg.norm( g ) )
+        print('iteration {0:4d}: relative change = {1:.3e}, gradient norm = {2:.3e}\n'.format(ii, np.linalg.norm( s[0] ) / np.linalg.norm( u ), np.linalg.norm( g ) ))
         if (info_i > 0):
-          print "WARNING - convergence to tolerance not achieved!"
+          print("WARNING - convergence to tolerance not achieved!")
         elif (info_i < 0):
-          print "WARNING - illegal input or breakdown"
+          print("WARNING - illegal input or breakdown")
       else:
         [s, info_i] = sparse.linalg.cg( linop, g, None, tol, maxit, None, P )
       # Update solution.
@@ -273,11 +273,11 @@ def TVRegDiff( data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None, plot
       if diagflag:
         # IPython.embed()
         [s, info_i] = sparse.linalg.cg( linop, -g, None, tol, maxit, None, B)#np.dot(R.transpose(), R) )
-        print 'iteration {0:4d}: relative change = {1:.3e}, gradient norm = {2:.3e}\n'.format(ii, np.linalg.norm( s[0] ) / np.linalg.norm( u ), np.linalg.norm( g ) )
+        print('iteration {0:4d}: relative change = {1:.3e}, gradient norm = {2:.3e}\n'.format(ii, np.linalg.norm( s[0] ) / np.linalg.norm( u ), np.linalg.norm( g ) ))
         if (info_i > 0):
-          print "WARNING - convergence to tolerance not achieved!"
+          print("WARNING - convergence to tolerance not achieved!")
         elif (info_i < 0):
-          print "WARNING - illegal input or breakdown"
+          print("WARNING - illegal input or breakdown")
           
       else:
         [s, info_i] = sparse.linalg.cg( linop, -g, None, tol, maxit, None, B)#np.dot(R.transpose(), R) )

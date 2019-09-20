@@ -109,12 +109,12 @@ def load_globals():
   COMMON_PNUMS = sorted([pnum for pnum in VFILE_MAP if pnum in FFILE_MAP])
 
   PHASE_MAP = {
-      0: "EndBaseline",
-      1: "EndBleed",
-      2: "AfterBleed",
-      # ?: "BeforeResuc",
-      3: "EndHextend",
-      5: "AfterHextend",
+    0: "EndBaseline",
+    1: "EndBleed",
+    2: "AfterBleed",
+    # ?: "BeforeResuc",
+    3: "EndHextend",
+    5: "AfterHextend",
   }
   PHASE_MAP.update({v:k for k, v in PHASE_MAP.items()})
 

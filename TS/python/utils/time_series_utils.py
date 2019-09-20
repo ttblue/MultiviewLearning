@@ -22,9 +22,8 @@ try:
 except ImportError:
   PLOTTING = False
 
-import math_utils as mu
-from tvregdiff import TVRegDiff
-import utils
+from utils import math_utils as mu, utils 
+from utils.tvregdiff import TVRegDiff
 
 
 import IPython
@@ -446,6 +445,8 @@ def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
   return windows
 
 
+_WINDOW_SPLIT_THRESH_S = 5.
+
 def split_discnt_ts_into_windows(
     ts, tstamps, window_size, ignore_rest=False, shuffle=True):
   if len(ts.shape) < 2:
@@ -465,7 +466,7 @@ def split_discnt_ts_into_windows(
   windows = []
   w_tstamps = []
   cnt_tstamps_and_ts = np.split(tstamps_and_ts, gap_inds, axis=0)
-  for cts in cnt_ts:
+  for cts in cnt_tstamps_and_ts:
     wcts = split_ts_into_windows(cts, window_size, ignore_rest, shuffle=False)
     w_tstamps.append(wcts[:, :, 0])
     windows.append(wcts[:, :, 1:])
@@ -572,7 +573,7 @@ def convert_data_into_windows(
       # Appending labels:
       vf_with_labels = np.c_[vlabels.reshape(-1, 1), vf]
       vf_tstamps, vf_windows = split_discnt_ts_into_windows(
-          vf, vtstamps, window_size, ignore_rest, shuffle=False)
+          vf_with_labels, vtstamps, window_size, ignore_rest, shuffle=False)
       labels[i].append(vf_windows[:, :, 0])
       data[i].append(vf_windows[:, :, 1:])
       tstamps[i].append(vf_tstamps)
