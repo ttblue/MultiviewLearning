@@ -315,8 +315,6 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
 
     self._obj_map = None
 
-    self._trained = False
-
   def set_data(self, data):
     # raise NotImplemented("Abstract class method.")
     self._nviews = len(data)
@@ -326,11 +324,15 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
     self._rest_data = {
         vi: vd for vi, vd in self._data_torch.items() if vi != self.view_id}
 
+    self._initialized = False
     self._has_data = True
 
   def initialize(self):
     if not self._has_data:
       raise ModelException("Data has not been set. Use set_data function.")
+    if self._initialized:
+      print("Model already initialized.")
+      return
 
     # self._lambda_global = value=self.config.lambda_global
     gl_reg = self.config.global_regularizer
@@ -367,6 +369,7 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
     # self._rest_data_torch = torch_utils.dict_numpy_to_torch(self._rest_data)
 
     self.opt = optim.Adam(self.parameters(), self.config.lr)
+    self._initialized = True
 
   def _reconstruction(self, data=None):
     data = self._rest_data if data is None else data
@@ -457,8 +460,9 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
           print("Iteration %i took %0.2fs." % (itr + 1, itr_duration))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
-    self._trained = True
+    self.eval()
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
+    return self
 
   def get_objective(self, obj_type="all"):
     if self._obj_map is None:
@@ -473,8 +477,14 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
       return [self._obj_map[otype]() for otype in _OBJ_ORDER]
     return self._obj_map.get(obj_type, "total")()
 
+  def compute_projections(self):
+    projections = {}
+    for i, pl in self._p_last_layers.items():
+      projections[i] = pl.detach().numpy().T
+    self.projections = projections
+
   def predict(self, xvs, rtn_torch=False):
-    if not self._trained:
+    if self.training:
       raise ModelException("Model not yet trained!")
 
     xvs = torch_utils.dict_numpy_to_torch(xvs)

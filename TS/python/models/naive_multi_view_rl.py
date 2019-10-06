@@ -1,6 +1,7 @@
 import cvxpy as cvx
 import multiprocessing as mp
 import numpy as np
+import torch
 import time
 
 from models import naive_single_view_rl
@@ -54,8 +55,12 @@ class NBSMVRLConfig(object):
     self.verbose = verbose
 
 
+# TODO: Fix this for OPT
 def view_solve_func(view_solver):
-  return view_solver.fit()
+  view_solver.fit()
+  fname = "./temp_models/tmp%i" % view_solver.view_id
+  torch.save(view_solver.state_dict(), fname)
+  return fname
 
 
 class NaiveBlockSparseMVRL(object):
@@ -109,8 +114,9 @@ class NaiveBlockSparseMVRL(object):
     result = pool.map_async(view_solve_func, solvers)
     pool.close()
     pool.join()
-    solvers = result.get()
-    self._view_solvers = {vi: solver for vi, solver in enumerate(solvers)}
+    for vi, fname in enumerate(result.get()):
+      self._view_solvers[vi].load_state_dict(torch.load(fname))
+      self._view_solvers[vi].eval()
 
     if self.config.verbose:
       objs = self.get_objective(vi=None, obj_type="all")
@@ -215,6 +221,12 @@ class NaiveBlockSparseMVRL(object):
         so_ind, eo_ind = start_inds[vo], end_inds[vo]
         rmat[so_ind:eo_ind, si_ind:ei_ind] = projections[vi][vo]
     return rmat
+
+  def predict(self, view_data, vi_out=None):
+    if vi_out is None:
+      vi_out = list(range(self._nviews))
+    preds = {vo: self._view_solvers[vo].predict(view_data) for vo in vi_out}
+    return preds
 
   def has_history(self):
     return all([vs.has_history for vs in self._view_solvers.values()])

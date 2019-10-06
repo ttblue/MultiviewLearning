@@ -60,6 +60,7 @@ def default_RMAE_config(v_sizes):
   use_vae = False
   activation = nn.ReLU  # nn.functional.relu
   last_activation = nn.Sigmoid  # functional.sigmoid
+  dropout_p = 0
   encoder_params = {}
   for i in range(n_views):
     input_size = v_sizes[i]
@@ -68,12 +69,13 @@ def default_RMAE_config(v_sizes):
     encoder_params[i] = tu.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
-        last_activation=last_activation, use_vae=use_vae)
+        last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   input_size = joint_code_size
   layer_units = [32]  #[64, 32]
   use_vae = False
   last_activation = tu.Identity
+  dropout_p = 0.
   decoder_params = {}
   for i in range(n_views):
     output_size = v_sizes[i]
@@ -82,7 +84,7 @@ def default_RMAE_config(v_sizes):
     decoder_params[i] = tu.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
-      last_activation=last_activation, use_vae=use_vae)
+      last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   input_size = hidden_size * len(v_sizes)
   output_size = joint_code_size
@@ -93,7 +95,7 @@ def default_RMAE_config(v_sizes):
   joint_coder_params = tu.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
-      last_activation=last_activation, use_vae=use_vae)
+      last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   drop_scale = True
   zero_at_input = True
@@ -224,6 +226,12 @@ def test_RMAE(
   # msplit_inds = np.cumsum(vlens)[:-1]
   IPython.embed()
   # plot_heatmap(model.nullspace_matrix(), msplit_inds
+  plt.plot(x, y)
+  plt.title("Reconstruction error vs. number of views", fontsize=20)
+  plt.xticks([1,2,3,4,5], fontsize=15)
+  plt.yticks(fontsize=15)
+  plt.xlabel("Available views", fontsize=18)
+  plt.ylabel("Error", fontsize=18)
 
 
 if __name__ == "__main__":
@@ -238,8 +246,8 @@ if __name__ == "__main__":
   print("Drop scale: %s"%drop_scale)
   print("Zero at input: %s"%zero_at_input)
 
-  nviews = 3
-  dim = 9
+  nviews = 5
+  dim = 15
   npts = 1000
   peps = 0.
   test_RMAE(nviews, dim, npts, peps)

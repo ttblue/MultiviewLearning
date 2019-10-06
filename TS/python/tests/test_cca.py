@@ -111,12 +111,14 @@ def default_mcca_config(as_dict=False):
 def plot_heatmap(mat, msplit_inds, misc_title=""):
   fig = plt.figure()
   hm = plt.imshow(mat)
-  plt.title("Redundancy Matrix: %s" % misc_title)
+  # plt.title("Redundancy Matrix: %s" % misc_title, fontsize=30)
   cbar = plt.colorbar(hm)
+  cbar.ax.tick_params(labelsize=15)
   for mind in msplit_inds:
     mind -= 0.5
     plt.axvline(x=mind, ls="--")
     plt.axhline(y=mind, ls="--")
+  plt.axis('off')
   plt.show(block=True)
 
 
@@ -248,12 +250,13 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
     # layer_types = None
     # layer_args = None
     bias = False
+    dropout_p = 0.
     layer_types, layer_args = tu.generate_linear_types_args(
           input_size, layer_units, output_size, bias)
     nn_config = tu.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
-        last_activation=last_activation, use_vae=use_vae)
+        last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
     batch_size = 32
     lr = 1e-3
@@ -331,20 +334,30 @@ def test_mv_NGSRL_NN(dtype=1, nviews=4, dim=12, npts=1000, peps=0.):
   #   np.save(fname, [data, ptfms])
   # else:
   #   data, ptfms = np.load(fname)
+  peps = 0.0
   default_dfunc = default_data if dtype == 1 else default_data2
   data, ptfms = default_dfunc(npts=npts, nviews=nviews, ndim=dim, peps=peps)
 
   config = default_NGSRL_config(sv_type="nn")
 
+  data_old = data
+  # data_scales = np.array([0.86307, 0.72325, 0.60052, 1.11316])
+  data_scales = np.array([0.98, 0.95, 1.03, 1.07])
+  #np.random.rand(len(data))
+  # data_scales /= data_scales.mean()
+  globals().update(locals())
+  data = {i: s*data_scales[i] for i, s in data_old.items()}
+  globals().update(locals())
   # if npts > 0:
   #   data = {vi: d[:npts] for vi, d in data.items()}
-  config.single_view_config.lambda_global = 1e-3
-  config.single_view_config.lambda_group = 0  #1e-2
-
-  config.single_view_config.max_iters = 1000
+  config.single_view_config.lambda_global = 1e-2#1e-2
+  config.single_view_config.lambda_group = 1e-1# 1 # 100
+  config.single_view_config.global_regularizer = "L1"
+  config.single_view_config.group_regularizer = "Linf"
+  config.single_view_config.max_iters = 150
 
   # IPython.embed()
-  config.parallel = False
+  config.parallel = True
   # config.lambda_global = 0  #1e-1
   # config.lambda_group = 0 #0.5  #1e-1
   # config.sp_eps = 5e-5
@@ -352,9 +365,17 @@ def test_mv_NGSRL_NN(dtype=1, nviews=4, dim=12, npts=1000, peps=0.):
 
   model = naive_multi_view_rl.NaiveBlockSparseMVRL(config)
   model.fit(data)
-
+  globals().update(locals())
   vlens = [data[vi].shape[1] for vi in range(len(data))]
   msplit_inds = np.cumsum(vlens)[:-1]
+
+  model.compute_projections()
+  projections = model.view_projections
+  # for i in projections: 
+  #   for j in projections[i]: 
+  #     projections[i][j] = projections[i][j].T 
+
+  plot_heatmap(model.nullspace_matrix(projections), msplit_inds, "")
   IPython.embed()
   # plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
@@ -395,9 +416,10 @@ if __name__=="__main__":
   # test_GSCCA()
   # test_GSCCA_loaded()
   # test_mv_GSCCA()
-  dtype = 2
+  dtype = 1
   nviews = 4
-  dim = 12
+  d_view = 3
+  dim = nviews * d_view
   npts = 1000
   peps = 0.
   # test_mv_NGSRL_opt(dtype, nviews, dim, npts, peps)

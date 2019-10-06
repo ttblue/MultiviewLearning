@@ -113,10 +113,11 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
     input_size = 10  # Computed online
     # Default Encoder config:
     output_size = 10  # Computed online
-    layer_units = []  #[32] # [32, 64]
+    layer_units = [32, 64]
     use_vae = False
     activation = nn.ReLU  # nn.functional.relu
     last_activation = tu.Identity  #nn.Sigmoid  # functional.sigmoid
+    dropout_p = 0.
     # layer_types = None
     # layer_args = None
     bias = False
@@ -124,11 +125,11 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
           input_size, layer_units, output_size, bias)
     nn_config = tu.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
-        layer_args=layer_args, activation=activation,
+        layer_args=layer_args, activation=activation, dropout_p=dropout_p,
         last_activation=last_activation, use_vae=use_vae)
 
     batch_size = 32
-    lr = 1e-3
+    lr = 1e-4
     max_iters = 1000
     single_view_config = naive_single_view_rl.SVNNSConfig(
       nn_config=nn_config, group_regularizer=group_regularizer,
@@ -432,9 +433,10 @@ def test_video_vitals_rmae(
         "ds": ds, "ws": ws, "nfeats": nfeats, "view_subset": view_subset,
         "valid_labels": valid_labels}
   elif vs_ftype == "vs_orig":
-      ds=5, ds_factor=10,
-    feature_columns=ALL_FEATURE_COLUMNS, view_feature_sets=None,
-    save_new=False, valid_labels=None
+    raise NotImplementedError("Fix this.")
+    # ds=5, ds_factor=10,
+    # feature_columns=ALL_FEATURE_COLUMNS, view_feature_sets=None,
+    # save_new=False, valid_labels=None
   phases = [phase]
   mv_dset = pig_videos.load_synced_vidfeat_data(num_pigs, phases, f_kwargs)
   all_data = {}

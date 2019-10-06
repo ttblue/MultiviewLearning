@@ -170,12 +170,12 @@ class TimeSeriesFourierFeaturizer(object):
 
   def save_to_file(self, fname):
     data = [self.basis, self.mu, self.S, self.config.__dict__]
-    with open(fname, "b") as fh:
+    with open(fname, "wb") as fh:
       np.save(fh, data)
 
   def load_from_file(self, fname):
     data = np.load(fname).tolist()
     [basis, mu, S] = map(_convert_dict_to_numpy, data[:-1])
-    config = FFconfig(**data[-1])
+    config = FFConfig(**data[-1])
 
     return self.reset(basis, mu, S, config)

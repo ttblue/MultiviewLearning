@@ -292,7 +292,7 @@ def default_FF_config():
   return config
 
 
-def test_fourier_ts_encoding(num_pigs=3, phase=None):
+def test_fourier_ts_encoding(num_pigs=3, phase=None, load=True):
   ds_factor = 25
   valid_labels = None if phase is None else [phase]
   pig_data = load_pig_data(
@@ -306,18 +306,14 @@ def test_fourier_ts_encoding(num_pigs=3, phase=None):
   tr_wtstamps, tr_wdata, tr_wlabels = tr_all_data
   te_wtstamps, te_wdata, te_wlabels = te_all_data
 
+  # Temp for now -- no need
+  tr_data_channel = tr_wdata[0]
+  te_data_channel = te_wdata[0]
+  dsets = {"Train": tr_data_channel, "Test": te_data_channel}
+
   config = default_FF_config()
   config.ndim = 30
   config.use_imag = False
-
-  model = ts_fourier_featurization.TimeSeriesFourierFeaturizer(config)
-  tr_data_channel = tr_wdata[0]
-  te_data_channel = te_wdata[0]
-  # IPython.embed()
-  model.fit(tr_data_channel, None)
-  IPython.embed()
-  ch_models = model.split_channels_into_models()
-  dsets = {"Train": tr_data_channel, "Test": te_data_channel}
 
   # Yes, the model save file extensions are ".fart".
   # No, it does not stand for anything relevant.
@@ -325,13 +321,23 @@ def test_fourier_ts_encoding(num_pigs=3, phase=None):
   save_file_base_name = "fft_feats_ws%i.fart" % window_size
   model_save_file = os.path.join(
       os.getenv("RESEARCH_DIR"), "tests/saved_models", save_file_base_name)
+
+  model = ts_fourier_featurization.TimeSeriesFourierFeaturizer(config)
+  # IPython.embed()
+  if load:
+    model.load_from_file(model_save_file)
+  else:
+    model.fit(tr_data_channel, None)
+  IPython.embed()
+  ch_models = model.split_channels_into_models()
+
   # For plotting:
   nrows = 2
   ncols = 3
 
   nwin = 5
   channels = pig_videos.ALL_FEATURE_COLUMNS
-  wsize = tr_data_channel.shape[1]
+  wsize = window_size
   ndisp = -1
   all_labels = ["Ground Truth", "Real Freq. Recon", "Imag Freq. Recon"]
   ph_name = pig_videos.PHASE_MAP.get(phase, str(phase))
