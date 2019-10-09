@@ -5,7 +5,9 @@ import time
 import torch
 from torch import nn, optim
 
-from models.model_base import ModelException, BaseConfig
+from models.abstract_single_view_rl import\
+    AbstractSVSConfig, AbstractSingleViewSolver
+from models.model_base import ModelException
 from utils import cvx_utils, torch_utils, utils
 
 
@@ -14,37 +16,6 @@ import IPython
 
 _SOLVER = cvx.GUROBI
 _OBJ_ORDER = ["error", "gs", "reg", "total"]
-
-
-class AbstractSVSConfig(BaseConfig):
-  pass
-
-
-# Simple abstract base class 
-class AbstractSingleViewSolver(object):
-  def __init__(self, view_id, config):
-    self.view_id = view_id
-    self.config = config
-
-    self._has_data = False
-    self.projections = None
-
-    self.has_history = False
-
-  def set_data(self, data):
-    raise NotImplemented("Abstract class method.")
-
-  def initialize(self):
-    raise NotImplemented("Abstract class method.")
-
-  def fit(self):
-    raise NotImplemented("Abstract class method.")
-
-  def compute_projections(self):
-    raise NotImplemented("Abstract class method.")
-
-  def get_objective(self, obj_type):
-    raise NotImplemented("Abstract class method.")
 
 
 ################################################################################
@@ -137,7 +108,7 @@ class OptimizationSolver(AbstractSingleViewSolver):
         vi: np.where(np.abs(proj) < self.config.sp_eps, 0., proj)
         for vi, proj in projs.items()}
 
-  def get_objective(self, obj_type="all"):
+  def get_objective(self, obj_type=None):
     if obj_type == "all":
       return [self._obj_map[otype].value for otype in _OBJ_ORDER]
     return self._obj_map.get(obj_type, "total").value
@@ -365,7 +336,7 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
     # IPython.embed()
       # vi_transform.get_layer_params(-1)  #(vi_layer.weight, vi_layer.bias)
 
-    # self._view_data_torch = torch.from_numpy(self._view_data.astype(np.float32))
+    # self._view_data_torch = torch.from_numpy(self._view_data.astype(torch_utils._DTYPE))
     # self._rest_data_torch = torch_utils.dict_numpy_to_torch(self._rest_data)
 
     self.opt = optim.Adam(self.parameters(), self.config.lr)
@@ -497,7 +468,7 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
 ################################################################################
 ################################################################################
 
-_SINGLE_VIEW_SOLVERS = {
-    "opt": OptimizationSolver,
-    "nn": NNSolver,
+_SOLVERS = {
+    "naive_opt": OptimizationSolver,
+    "naive_nn": NNSolver,
 }

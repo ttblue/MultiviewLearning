@@ -5,13 +5,15 @@ import torch
 import time
 
 from models import naive_single_view_rl
-from models.naive_single_view_rl import _SINGLE_VIEW_SOLVERS
-from models.model_base import ModelException
+from models.naive_single_view_rl import _SOLVERS
+from models.model_base import ModelException, BaseConfig
 from utils import cvx_utils
 
 
 import IPython
 
+
+_SINGLE_VIEW_SOLVERS = _SOLVERS
 
 # class NBSMVRLConfig(object):
 #   def __init__(
@@ -44,7 +46,7 @@ import IPython
 class NBSMVRLConfig(object):
   def __init__(
       self, single_view_solver_type, single_view_config, parallel, n_jobs,
-      verbose, *args, **kwargs):
+      *args, **kwargs):
 
     self.single_view_solver_type = single_view_solver_type
     self.single_view_config = single_view_config
@@ -52,7 +54,7 @@ class NBSMVRLConfig(object):
     self.parallel = parallel
     self.n_jobs = n_jobs
 
-    self.verbose = verbose
+    super(NBSMVRLConfig, self).__init__(*args, **kwargs)
 
 
 # TODO: Fix this for OPT
