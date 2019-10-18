@@ -1,0 +1,250 @@
+import cvxpy as cvx
+import multiprocessing as mp
+import numpy as np
+import torch
+import time
+
+from models import greedy_single_view_rl
+from models.greedy_single_view_rl import _SOLVERS
+from models.model_base import ModelException, BaseConfig
+from utils import cvx_utils
+
+
+import IPython
+
+
+_SINGLE_VIEW_SOLVERS = _SOLVERS
+
+
+class GMVRLConfig(BaseConfig):
+  def __init__(
+      self, single_view_solver_type, single_view_config, parallel, n_jobs,
+      verbose, *args, **kwargs):
+
+    self.single_view_solver_type = single_view_solver_type
+    self.single_view_config = single_view_config
+
+    self.parallel = parallel
+    self.n_jobs = n_jobs
+
+    super(GMVRLConfig, self).__init__(*args, **kwargs)
+
+
+# TODO: Fix this for OPT
+def view_solve_func(view_solver):
+  view_solver.fit()
+  fname = "./temp_models/tmp%i" % view_solver.view_id
+  torch.save(view_solver.state_dict(), fname)
+  return fname
+
+
+class GreedyMVRL(object):
+  def __init__(self, config):
+    self.config = config
+    # self._training = True
+    self._initialized = False
+    self._trained = False
+
+  def _initialize_views(self):
+    if self.config.single_view_solver_type not in _SINGLE_VIEW_SOLVERS:
+      raise ModelException(
+          "Invalid single-view solver type: %s" %
+          self.config.single_view_solver_type)
+
+    _solver_type = _SINGLE_VIEW_SOLVERS[self.config.single_view_solver_type]
+
+    self._view_solvers = {}
+    for vi in range(self._nviews):
+      vi_solver = _solver_type(vi, self.config.single_view_config)
+      vi_solver.set_data(self._view_data)
+      vi_solver.initialize()
+      self._view_solvers[vi] = vi_solver
+    #   self._final_obj += vi_solver._final_obj
+
+    # self._joint_problem = cvx.Problem(cvx.Minimize(self._final_obj))
+    self._initialized = True
+
+  def get_objective(self, vi=None, obj_type=None):
+    if not self._initialized:
+      raise ModelException("Model has not been initialized.")
+    if vi is not None:
+      return self._view_solvers[vi].get_objective(obj_type)
+
+    return np.sum([
+        self._view_solvers[vi].get_objective(obj_type)
+        for vi in range(self._nviews)])
+
+  def _solve_parallel(self):
+    if self.config.verbose:
+      print("  Solving problems in parallel...")
+      start_time = time.time()
+    pool = mp.Pool(processes=self._n_jobs)
+
+    solvers = [self._view_solvers[vi] for vi in range(self._nviews)]
+    result = pool.map_async(view_solve_func, solvers)
+    pool.close()
+    pool.join()
+    for vi, fname in enumerate(result.get()):
+      self._view_solvers[vi].load_state_dict(torch.load(fname))
+      self._view_solvers[vi].eval()
+
+    if self.config.verbose:
+      obj = self.get_objective(vi=None)
+      diff_time = time.time() - start_time
+      print("    Finished solving for all views. Objective value: %.3f" % obj)
+
+  def _solve_sequential(self):
+    if self.config.verbose:
+      print("  Solving problems in sequence...")
+      start_time = time.time()
+
+    for vi in range(self._nviews):
+      if self.config.verbose:
+        print("    Solving for view %i..." % (vi + 1))
+        vi_start_time = time.time()
+
+      self._view_solvers[vi].fit()
+
+      if self.config.verbose:
+        obj = self.get_objective(vi=vi, obj_type=None)
+        diff_time = time.time() - vi_start_time
+        print("    Finished solving for view %i (in %.2fs)."
+              "Objective value: %.3f" % (vi, obj, diff_time))
+
+    if self.config.verbose:
+      obj = self.get_objective(vi=None)
+      diff_time = time.time() - start_time
+      print("    Finished solving for all views (in %.2fs)."
+            "Objective value: %.3f" % (obj, diff_time))
+
+  # def _solve_joint(self):
+  #   if self.config.verbose:
+  #     # print("  Solving joint problem...")
+  #     start_time = time.time()
+  #   safe_solve(
+  #       self._joint_problem, parallel=self.config.parallel, verbose=False)
+
+  #   if self.config.verbose:
+  #     objs = self._get_current_obj(vi=None, obj_type="all")
+  #     diff_time = time.time() - start_time
+  #     print("    Error: %.3f, GS: %.3f, Reg: %.3f, Tot: %.3f (in %.2fs)" %
+  #           tuple(objs + [diff_time]))
+
+  def compute_projections(self, num_greedy_views=-1):
+    self.view_projections = {}
+    for vi in range(self._nviews):
+      self._view_solvers[vi].compute_projections(num_greedy_views)
+      self.view_projections[vi] = self._view_solvers[vi].projections
+
+  def _optimize(self):
+    if self.config.verbose:
+      print("Optimizing for group sparse transforms.")
+      start_time = time.time()
+
+    self._n_jobs = (
+        self._nviews if (self.config.parallel and self.config.n_jobs is None)
+        else self.config.n_jobs
+    )
+
+    # if self.config.solve_joint:
+    #   # solve_func = self._solve_joint
+    # else:
+    solve_func = (
+        self._solve_parallel if self.config.parallel else
+        self._solve_sequential
+    )
+    solve_func()
+
+    if self.config.verbose:
+      print("Finished training in %.2fs" % (time.time() - start_time))
+
+  def fit(self, view_data):
+    self._nviews = len(view_data)
+    self._view_data = view_data
+    self._npts = view_data[0].shape[0]
+    self._tot_dim = np.sum([view_data[i].shape[1] for i in view_data])
+
+    self._initialize_views()
+    self._optimize()
+
+    self._trained = True
+    return self
+
+  def redundancy_matrix(self, projections=None, num_greedy_views=-1):
+    if projections is None: self.compute_projections(num_greedy_views)
+    projections = self.view_projections if projections is None else projections
+    # if self._training is True:
+    #   raise ModelException("Model has not been trained yet.")
+    view_dims = [self._view_data[vi].shape[1] for vi in range(self._nviews)]
+    view_dims_cs = [0] + np.cumsum(view_dims).tolist()
+    start_inds, end_inds = view_dims_cs[:-1], view_dims_cs[1:]
+
+    rmat = np.zeros((self._tot_dim, self._tot_dim))
+    for vi in range(self._nviews):
+      si_ind, ei_ind = start_inds[vi], end_inds[vi]
+      for vo in range(self._nviews):
+        if vo == vi or vo not in projections[vi]: continue
+        so_ind, eo_ind = start_inds[vo], end_inds[vo]
+        rmat[so_ind:eo_ind, si_ind:ei_ind] = projections[vi][vo]
+    return rmat
+
+  def predict(self, view_data, vi_out=None):
+    if vi_out is None:
+      vi_out = list(range(self._nviews))
+    preds = {vo: self._view_solvers[vo].predict(view_data) for vo in vi_out}
+    return preds
+
+  def has_history(self):
+    return all([vs.has_history for vs in self._view_solvers.values()])
+
+  def redundancy_matrix_history(self):
+    if not self.has_history():
+      raise ModelException("History not present for all view solvers.")
+    # if self._training is True:
+    #   raise ModelException("Model has not been trained yet.")
+    view_dims = [self._view_data[vi].shape[1] for vi in range(self._nviews)]
+    view_dims_cs = [0] + np.cumsum(view_dims).tolist()
+    start_inds, end_inds = view_dims_cs[:-1], view_dims_cs[1:]
+
+    proj_histories = {}
+    max_len = 0
+    for vi, solver in self._view_solvers.items():
+        proj_histories[vi] = [
+            solver._proj_history[itr] for itr in solver._main_iters]
+        max_len = max(max_len, len(solver._main_iters))
+    for vi in proj_histories:
+      vi_len = len(proj_histories[vi])
+      if vi_len < max_len:
+        proj_histories[vi].extend([proj_histories[vi][-1]] * (max_len - vi_len))
+
+    rmats = []
+    for i in range(max_len):
+      projections = {vi: proj_histories[vi][i] for vi in proj_histories}
+      rmat = np.zeros((self._tot_dim, self._tot_dim))
+      for vi in range(self._nviews):
+        si_ind, ei_ind = start_inds[vi], end_inds[vi]
+        for vo in range(self._nviews):
+          if vo == vi or vo not in projections[vi]: continue
+          so_ind, eo_ind = start_inds[vo], end_inds[vo]
+          rmat[so_ind:eo_ind, si_ind:ei_ind] = projections[vi][vo]
+      rmats.append(rmat)
+    return rmats
+
+  def nullspace_matrix(self, projections=None, num_greedy_views=-1):
+    return (
+        -np.eye(self._tot_dim) +
+        self.redundancy_matrix(projections, num_greedy_views).T)
+
+  def nullspace_matrix_history(self):
+    rmats = self.redundancy_matrix_history()
+    return [(-np.eye(self._tot_dim) + rmat.T) for rmat in rmats]
+
+  def obj_history(self):
+    raise NotImplementedError("obj_history not yet implemented.")
+
+  def save_to_file(self, fname):
+    raise NotImplementedError("Saving to file not yet implemented.")    
+  #   nmat = self.nullspace_matrix()
+  #   vproj = self.view_projections
+  #   cfg = self.config.__dict__
+  #   np.save(fname, [nmat, vproj, cfg])

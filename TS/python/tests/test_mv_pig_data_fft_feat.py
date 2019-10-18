@@ -7,7 +7,8 @@ from torch import nn
 
 from dataprocessing import pig_videos
 from models import \
-    embeddings, ovr_mcca_embeddings, naive_multi_view_rl, naive_single_view_rl,\
+    embeddings, greedy_multi_view_rl, greedy_single_view_rl,\
+    naive_multi_view_rl, naive_single_view_rl, ovr_mcca_embeddings,\
     robust_multi_ae, ts_fourier_featurization
 from synthetic import multimodal_systems as ms
 from utils import torch_utils as tu, utils
@@ -17,6 +18,7 @@ from tests.test_mv_pig_data import \
     plot_heatmap, default_NGSRL_config, default_RMAE_config,\
     aggregate_multipig_data, rescale, split_data, make_subset_list, error_func,\
     all_subset_accuracy
+from tests.test_greedy_mvrl import default_GMVRL_config
 from tests.test_ts_encoding import \
     default_FFNN_config, default_RNN_config, default_FRFW_config,\
     default_FF_config, default_TSRF_config, load_pig_data, plot_windows,\
@@ -212,23 +214,86 @@ def test_vitals_only_rmae(num_pigs=-1, npts=1000, phase=None):
   model.fit(tr_mv_feats)
   # vlens = [data[vi].shape[1] for vi in range(len(data))]
   # msplit_inds = np.cumsum(vlens)[:-1]
+  # preds = model.predict(te_mv_feats)
+  # pred_ts = reconstruct_ts(preds, output_len=window_size)
+  IPython.embed()
+  vlens = [tr_mv_feats[vi].shape[1] for vi in range(len(tr_mv_feats))]
+  msplit_inds = np.cumsum(vlens)[:-1]
+  view_subset = [1, 2, 3, 4, 5, 6, 10] #None
+  msplit_names = [pig_videos.VS_MAP[vidx] for vidx in view_subset]
+
+  tr_preds = model.predict(tr_mv_feats)
+  te_preds = model.predict(te_mv_feats)
+
+  tr_preds_ts = reconstruct_ts(tr_preds, window_size)
+  te_preds_ts = reconstruct_ts(te_preds, window_size)
+
+  dsets_ts = {"Train": tr_wdata[0], "Test": te_wdata[0]}
+  dsets_pred_ts = {"Train": tr_preds_ts, "Test": te_preds_ts}
+
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds
+
+
+def test_pff_NGSRL_NN(num_pigs=-1, npts=1000, phase=None):
+  # fname = "./data/mv_dim_%i_data.npy" % nviews
+  # if not os.path.exists(fname):
+  #   data, ptfms = default_data(nviews=nviews, ndim=dim)
+  #   np.save(fname, [data, ptfms])
+  # else:
+  #   data, ptfms = np.load(fname)
+  ds_factor = 25
+  valid_labels = None if phase is None else [phase]
+  pig_data = load_pig_data(
+      num_pigs, ds_factor=ds_factor, valid_labels=valid_labels)
+
+  data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
+  window_size = int(_WINDOW_SIZE_IN_S * data_frequency)
+  tr_frac = 0.8
+  tr_all_data, te_all_data = split_pigs_into_train_test(
+      pig_data, tr_frac=tr_frac, window_size=window_size)
+  tr_wtstamps, tr_wdata, tr_wlabels = tr_all_data
+  te_wtstamps, te_wdata, te_wlabels = te_all_data
+
+  tr_mv_feats = fft_featurize_pig_data(tr_wdata[0])
+  te_mv_feats = fft_featurize_pig_data(te_wdata[0])
+
+  config = default_GMVRL_config(sv_type="nn")
+
+  config.single_view_config.lambda_reg = 1e-2
+  config.single_view_config.regularizer = "L1"
+  config.single_view_config.max_iters = 200
+
+  # IPython.embed()
+  config.parallel = False
+  config.n_jobs = 2
+  config.single_view_config.parallel = True
+  # config.lambda_global = 0  #1e-1
+  # config.lambda_group = 0 #0.5  #1e-1
+  # config.sp_eps = 5e-5
+  # config.n_solves = 1
+
+  model = greedy_multi_view_rl.GreedyMVRL(config)
+  model.fit(tr_mv_feats)
+
   IPython.embed()
   preds = model.predict(te_mv_feats)
   pred_ts = reconstruct_ts(preds, output_len=window_size)
-  # plot_heatmap(model.nullspace_matrix(), msplit_inds
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
 
 if __name__ == "__main__":
   import sys
 
   param_num = 1
-  expt = int(sys.argv[param_num]) if len(sys.argv) > param_num else 1; param_num += 1
+  expt = int(sys.argv[param_num]) if len(sys.argv) > param_num else 2; param_num += 1
   phase = int(sys.argv[param_num]) if len(sys.argv) > param_num else 0; param_num += 1
   # channel = int(sys.argv[param_num]) if len(sys.argv) > param_num else 0; param_num += 1
-  num_pigs = 10
-  npts = 5000
+  num_pigs = 5
+  npts = 1000
 
   if expt == 0:
     test_vitals_only_nn(num_pigs=num_pigs, npts=npts, phase=phase)
-  else:
+  elif expt == 1:
     test_vitals_only_rmae(num_pigs=num_pigs, npts=npts, phase=phase)
+  else:
+    test_pff_NGSRL_NN(num_pigs=num_pigs, npts=npts, phase=phase)
