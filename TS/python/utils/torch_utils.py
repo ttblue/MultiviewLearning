@@ -19,19 +19,24 @@ _BATCH_FIRST = False
 
 ################################################################################
 ## Type converters
+def numpy_to_torch(var):
+  if not isinstance(var, torch.Tensor):
+    var = torch.from_numpy(var).type(_DTYPE).requires_grad_(False)
+  return var
+
+
+def torch_to_numpy(var):
+  if isinstance(var, torch.Tensor):
+    var = var.detach().numpy()
+  return var
+
+
 def dict_numpy_to_torch(data):
-  if not isinstance(data[utils.get_any_key(data)], torch.Tensor):
-    data = {
-        i: torch.from_numpy(x).type(_DTYPE).requires_grad_(False)
-        for i, x in data.items()
-    }
-  return data
+  return {i: numpy_to_torch(x) for i, x in data.items()}
 
 
 def dict_torch_to_numpy(data):
-  if isinstance(data[utils.get_any_key(data)], torch.Tensor):
-    data = {i: x.detach().numpy() for i, x in data.items()}
-  return data
+  return {i: torch_to_numpy(x) for i, x in data.items()}
 
 ################################################################################
 ## Feedforward NN
