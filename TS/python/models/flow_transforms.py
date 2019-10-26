@@ -1,4 +1,3 @@
-import multiprocessing as mp
 import numpy as np
 import scipy
 import torch
@@ -339,20 +338,6 @@ class CompositionTransform(InvertibleTransform):
       x = tfm.inverse(x)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
-
-  # def jacobian_logdet(self, x):
-  #   if not isinstance(x, torch.Tensor):
-  #     x = torch.from_numpy(x).type(torch_utils._DTYPE).requires_grad_(False)
-
-  #   y = x
-  #   jac_logdet = 0
-  #   for tfm in self._tfm_list[:-1]:
-  #     jac_det += tfm.jacobian_logdet(y)
-  #     y = tfm(y)
-  #   # This is simply to not compute the unneeded final output:
-  #   jac_det += self._tfm_list[-1].jacobian_logdet(y)
-
-  #   return jac_det
 
 
 if __name__ == "__main__":
