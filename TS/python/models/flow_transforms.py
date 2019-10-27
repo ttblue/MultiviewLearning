@@ -30,11 +30,12 @@ import IPython
 class TfmConfig(BaseConfig):
   # General config object for all transforms
   def __init__(
-      self, neg_slope=0.01, scale_config=None, shift_config=None,
-      shared_wts=False, ltfm_config=None, bias_config=None, has_bias=True,
-      *args, **kwargs):
+      self, tfm_type="scale_shift_coupling", neg_slope=0.01, scale_config=None,
+      shift_config=None, shared_wts=False, ltfm_config=None, bias_config=None,
+      has_bias=True, *args, **kwargs):
     super(TfmConfig, self).__init__(*args, **kwargs)
 
+    self.tfm_type = tfm_type.lower()
     # LeakyReLU params:
     self.neg_slope = neg_slope
 
@@ -338,6 +339,21 @@ class CompositionTransform(InvertibleTransform):
       x = tfm.inverse(x)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
+
+
+_TFM_TYPES = {
+    "reverse": ReverseTransform,
+    "leaky_relu": LeakyReLUTransform,
+    "scale_shift_coupling": ScaleShiftCouplingTransform,
+    "fixed_linear":FixedLinearTransformation,
+}
+def make_transform(config):
+  if config.tfm_type not in _TFM_TYPES:
+    raise TypeError(
+        "%s not a valid transform. Available transforms: %s" %
+        (config.tfm_type, _TFM_TYPES))
+
+  return _TFM_TYPES[config.tfm_type](config)
 
 
 if __name__ == "__main__":
