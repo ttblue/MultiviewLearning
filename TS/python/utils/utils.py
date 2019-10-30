@@ -1,4 +1,5 @@
 # Utility functions for processing data and such.
+import argparse
 import csv
 import glob
 import numpy as np
@@ -13,6 +14,16 @@ import IPython
 
 class UtilsException(Exception):
   pass
+
+
+def get_args(options=[]):
+  # Arguments from command line using parser (usually for testing)
+  # options is a list of (<name>, <type>, <help>, <default>) tuples
+  parser = argparser.ArgumentParser(description="Default parser")
+  parser.add_argument("expt", type=int, help="Experiment to be run.")
+  for aname, atype, ahelp, adefault in options:d
+    parser.add_argument(aname, type=atype, help=ahelp, default=a)
+  return parser.parse_args()
 
 
 def file_len(fname):

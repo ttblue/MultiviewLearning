@@ -304,19 +304,22 @@ class AdaptiveLinearTransformation(InvertibleTransform):
 
 
 class CompositionTransform(InvertibleTransform):
-  def __init__(self, config, tfm_list=[]):
+  def __init__(self, config, tfm_list=[], init_args=None):
     super(CompositionTransform, self).__init__(config)
-    if tfm_list:
-      self._set_transform_ordered_list(tfm_list)
+    if tfm_list or init_args:
+      self.initialize(tfm_list, init_args)
 
   def _set_transform_ordered_list(self, tfm_list):
     self._tfm_list = tfm_list
     for i, tfm in enumerate(tfm_list):
       self.add_module("tfm_%i" % i, tfm)
 
-  def initialize(self, tfm_list):
+  def initialize(self, tfm_list, init_args=None):
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
+    if init_args:
+      for tfm, arg in zip(self._tfm_list, init_args):
+        tfm.initialize(arg)
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -345,15 +348,24 @@ _TFM_TYPES = {
     "reverse": ReverseTransform,
     "leaky_relu": LeakyReLUTransform,
     "scale_shift_coupling": ScaleShiftCouplingTransform,
-    "fixed_linear":FixedLinearTransformation,
+    "fixed_linear": FixedLinearTransformation,
 }
-def make_transform(config):
+def make_transform(config, init_args=None):
+  if isinstance(config, list):
+    if init_args is None:
+      raise ValueError("")
+    tfm_list = [make_transform(cfg) for cfg in config]
+    return CompositionTransform(TfmConfig("composition"), tfm_list, init_args)
+
   if config.tfm_type not in _TFM_TYPES:
     raise TypeError(
         "%s not a valid transform. Available transforms: %s" %
         (config.tfm_type, _TFM_TYPES))
 
-  return _TFM_TYPES[config.tfm_type](config)
+  tfm = _TFM_TYPES[config.tfm_type](config)
+  if init_args is not None:
+    tfm.initialize(init_args)
+  return tfm
 
 
 if __name__ == "__main__":

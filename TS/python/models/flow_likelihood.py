@@ -13,8 +13,12 @@ import IPython
 
 class LikelihoodConfig(BaseConfig):
   # General config for likelihood models
-  def __init__(self, dist_type="gaussian", n_components=5, *arg, **kwargs):
+  def __init__(
+    self, model_type="linear_arm", dist_type="gaussian", n_components=5,
+    *arg, **kwargs):
     super(LikelihoodConfig, self).__init__(*args, **kwargs)
+
+    self.model_type = model_type.lower()
     # Mixture model params:
     self.dist_type = dist_type.lower()
     self.n_components = n_components
@@ -38,13 +42,6 @@ class AbstractLikelihood(nn.Module):
   def nll(self, x, *args, **kwargs):
     lls = self.log_likelihood(x, *args, **kwargs)
     return -torch.mean(lls)
-
-
-################################################################################
-# Base distributions
-
-
-
 
 
 ################################################################################
@@ -178,6 +175,7 @@ class LinearARM(AbstractLikelihood):
 class RecurrentARM(AbstractLikelihood):
   def __init__(self, config):
     super(RecurrentARM, self).__init__(config)
+    raise NotImplementedError("Not implemented yet.")
 
   def initialize(self, dim, *args, **kwargs):
     super(LinearARM, self).initialize(dim, *args, **kwargs)
@@ -193,3 +191,16 @@ class RecurrentARM(AbstractLikelihood):
     Wx_i = torch.matmul(self._Ws[i], x_i.transpose(0, 1))
     h_i = Wx_i.transpose(0, 1) + self._b
     return h_i
+
+
+_LIKELIHOOD_TYPES = {
+    "linear_arm": LinearARM,
+    "recurrent_arm": RecurrentARM,
+}
+def make_likelihood_model(config):
+  if config.model_type not in _LIKELIHOOD_TYPES:
+    raise TypeError(
+        "%s not a valid likelihood model. Available models: %s" %
+        (config.model_type, _LIKELIHOOD_TYPES))
+
+  return _LIKELIHOOD_TYPES[config.model_type](config)
