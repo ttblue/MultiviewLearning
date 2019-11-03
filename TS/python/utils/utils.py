@@ -22,7 +22,7 @@ def get_args(options=[]):
   parser = argparser.ArgumentParser(description="Default parser")
   parser.add_argument("expt", type=int, help="Experiment to be run.")
   for aname, atype, ahelp, adefault in options:d
-    parser.add_argument(aname, type=atype, help=ahelp, default=a)
+    parser.add_argument(aname, type=atype, help=ahelp, default=adefault)
   return parser.parse_args()
 
 

@@ -32,13 +32,13 @@ class TfmConfig(BaseConfig):
   def __init__(
       self, tfm_type="scale_shift_coupling", neg_slope=0.01, scale_config=None,
       shift_config=None, shared_wts=False, ltfm_config=None, bias_config=None,
-      has_bias=True, *args, **kwargs):
+      has_bias=True, lr=1e-3, batch_size=50, max_iters=1000, reg_coeff=.1,
+      *args, **kwargs):
     super(TfmConfig, self).__init__(*args, **kwargs)
 
     self.tfm_type = tfm_type.lower()
     # LeakyReLU params:
     self.neg_slope = neg_slope
-
 
     # Shift Scale params:
     self.scale_config = scale_config
@@ -52,6 +52,13 @@ class TfmConfig(BaseConfig):
     # Fixed Linear Transform params:
     self.has_bias = has_bias
 
+    # Some misc. parameters if training transforms only
+    self.lr = lr
+    self.batch_size = batch_size
+    self.max_iters = max_iters
+
+    self.reg_coeff = reg_coeff
+
 
 class InvertibleTransform(nn.Module):
   def __init__(self, config):
@@ -61,8 +68,67 @@ class InvertibleTransform(nn.Module):
   def initialize(self):
     raise NotImplementedError("Abstract class method")
 
+  def forward(self, x, rtn_torch=True, rtn_logdet=False):
+    raise NotImplementedError("Abstract class method")
+
   def inverse(self, y):
     raise NotImplementedError("Abstract class method")
+
+  def loss(self, x_tfm, y, log_jac_det):
+    recon_error = self.recon_criterion(x_tfm, y)
+    logdet_reg = -torch.mean(log_jac_det)
+    loss_val = recon_error + self.config.reg_coeff * logdet_reg
+    return loss_val
+
+  def _train_loop(self, x, y):
+    shuffle_inds = np.permutation(x.shape[0])
+    x, y = x[shuffle_inds], y[shuffle_inds]
+    self.itr_loss = 0.
+    for bidx in range(self._n_batches):
+      b_start = bidx * self.config.batch_size
+      b_end = b_start + self.config.batch_size
+      x_batch, y_batch = x[b_start:b_end], y[b_start:b_end]
+      x_tfm_batch, jac_logdet = self.forward(
+          x_batch, rtn_torch=True, rtn_logdet=True)
+      # keep_subsets = next(self._view_subset_shuffler)
+      # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
+      self.opt.zero_grad()
+      loss_val = self.loss(x_tfm_batch, y_batch, jac_logdet)
+      loss_val.backward()
+      self.opt.step()
+      self.itr_loss += loss_val
+
+  def fit(self, x, y):
+    # Simple fitting procedure for transforming x to y
+    if self.config.verbose:
+      all_start_time = time.time()
+      print("Starting training loop.")
+
+    self.recon_criterion = nn.MSELoss(reduction="mean")
+    self.opt = optim.Adam(self.parameters(), self.config.lr)
+    self._n_batches = int(np.ceil(x.shape[0] / self.config.batch_size))
+
+    try:
+      for itr in range(self.config.max_iters):
+        if self.config.verbose:
+          itr_start_time = time.time()
+        self._train_loop()
+
+        if self.config.verbose:
+          itr_diff_time = time.time() - itr_start_time
+          loss_val = float(self.itr_loss.detach())
+          print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
+                (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
+                end='\r')
+      if self.config.verbose:
+        print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
+              (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
+              end='\r')
+    except KeyboardInterrupt:
+      print("Training interrupted. Quitting now.")
+    self.eval()
+    print("Training finished in %0.2f s." % (time.time() - all_start_time))
+    return self
 
 
 class ReverseTransform(InvertibleTransform):
