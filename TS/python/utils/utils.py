@@ -19,9 +19,9 @@ class UtilsException(Exception):
 def get_args(options=[]):
   # Arguments from command line using parser (usually for testing)
   # options is a list of (<name>, <type>, <help>, <default>) tuples
-  parser = argparser.ArgumentParser(description="Default parser")
-  parser.add_argument("expt", type=int, help="Experiment to be run.")
-  for aname, atype, ahelp, adefault in options:d
+  parser = argparse.ArgumentParser(description="Default parser")
+  parser.add_argument("expt", type=int, help="Experiment to be run.", default=0)
+  for aname, atype, ahelp, adefault in options:
     parser.add_argument(aname, type=atype, help=ahelp, default=adefault)
   return parser.parse_args()
 
@@ -327,13 +327,11 @@ def get_size(obj, seen=None):
     return size
 
 
-# Some simple list comprehension tricks
+# Misc. useful utilities
 
 def flatten(list_of_lists):
   return [a for b in list_of_lists for a in b]
 
-
-# Misc. useful utilities
 
 def is_valid_partitioning(G, dim):
   if np.sum([len(g) for g in G]) != dim:
@@ -353,7 +351,30 @@ def is_valid_partitioning(G, dim):
 def get_any_key(dict_var):
   return list(dict_var.keys())[0]
 
+
+# Data utils:
+def split(Xs, fracs=[0.8, 0.2], shuffle=True, get_inds=True):
+  fracs = np.array(fracs) / np.sum(fracs)
+
+  npts = len(Xs)
+  num_split = (fracs * npts).astype(int)
+  num_split[-1] = npts - num_split[:-1].sum()
+  all_inds = np.random.permutation(npts) if shuffle else np.arange(npts)
+  end_inds = np.cumsum(num_split).tolist()
+  start_inds = [0] + end_inds[:-1]
+
+  dsets = []
+  for si, ei in zip(start_inds, end_inds):
+    split_inds = all_inds[si:ei]
+    split_xs = Xs[split_inds]
+    dsets.append(split_xs)
+
+  if get_inds:
+    inds = [all_inds[si:ei] for si, ei in zip(start_inds, end_inds)]
+    return dsets, inds
+  return dsets
 # if __name__ == '__main__':
 #   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
 #   critical_anns, ann_labels = create_annotation_labels(ann_text)
 #   IPython.embed()
+

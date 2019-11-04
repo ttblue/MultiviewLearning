@@ -15,7 +15,7 @@ def coupled_scale_shift_tfm(X, bit_mask, W=None, gamma=0.1):
   # If same size of fixed and not fixed, no need for dim correction
   if W is None and nfixed * 2 == ndim:
     W = np.eye(nfixed)
-  W = W or np.random.randn(nfixed, ndim - nfixed)
+  W = np.random.randn(nfixed, ndim - nfixed) if W is None else W
 
   X_fixed = X[:, bit_mask]
   Y = np.empty_like(X)
@@ -43,7 +43,7 @@ def simple_transform_data(npts=1000, ndim=10, tfm_types=[]):
       Y, W = coupled_scale_shift_tfm(Y, bit_mask, gamma=gamma)
       tfm_args.append((ttype, bit_mask, W, gamma))
     elif ttype == "linear":
-      W = math_utils.make_unitary_matrix(ndim)
+      W = math_utils.random_unitary_matrix(ndim)
       Y = Y.dot(W.T)
       tfm_args.append((ttype, W))
     elif ttype == "leakyrelu":

@@ -55,7 +55,7 @@ def get_index_p_in_ordered_pdf(pdf, p):
 
 
 def convert_zeros_to_num(mat, num=1.0, eps=1e-6):
-  return np.where(np.abs(mat) > eps, mat, 1.0)
+  return np.where(np.abs(mat) > eps, mat, num)
 
 
 def shift_and_scale(Xs, scale=True):

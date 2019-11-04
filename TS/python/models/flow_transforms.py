@@ -170,7 +170,7 @@ class LeakyReLUTransform(InvertibleTransform):
     if rtn_logdet:
       jac_logdet = (x < 0).sum(1) * self._log_slope
       return y, jac_logdet
-    return else y
+    return y
 
   def inverse(self, y, rtn_torch=True):
     y = torch_utils.numpy_to_torch(y)
