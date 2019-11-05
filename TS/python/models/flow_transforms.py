@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
 import torch
-from torch import nn
+from torch import nn, optim
 import time
 
 from models.model_base import ModelException, BaseConfig
@@ -80,9 +80,9 @@ class InvertibleTransform(nn.Module):
     loss_val = recon_error + self.config.reg_coeff * logdet_reg
     return loss_val
 
-  def _train_loop(self, x, y):
-    shuffle_inds = np.permutation(x.shape[0])
-    x, y = x[shuffle_inds], y[shuffle_inds]
+  def _train_loop(self):
+    shuffle_inds = np.random.permutation(self._npts)
+    x, y = self._x[shuffle_inds], self._y[shuffle_inds]
     self.itr_loss = 0.
     for bidx in range(self._n_batches):
       b_start = bidx * self.config.batch_size
@@ -104,9 +104,12 @@ class InvertibleTransform(nn.Module):
       all_start_time = time.time()
       print("Starting training loop.")
 
+    self._x, self._y = map(torch_utils.numpy_to_torch, [x, y])
+    self._npts = self._x.shape[0]
+
     self.recon_criterion = nn.MSELoss(reduction="mean")
     self.opt = optim.Adam(self.parameters(), self.config.lr)
-    self._n_batches = int(np.ceil(x.shape[0] / self.config.batch_size))
+    self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
     try:
       for itr in range(self.config.max_iters):
@@ -385,7 +388,7 @@ class CompositionTransform(InvertibleTransform):
       self._set_transform_ordered_list(tfm_list)
     if init_args:
       for tfm, arg in zip(self._tfm_list, init_args):
-        tfm.initialize(arg)
+        tfm.initialize(*arg)
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)

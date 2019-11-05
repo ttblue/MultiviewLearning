@@ -38,17 +38,23 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
   shift_config = default_nn_config()
   shared_wts = False
 
-  linear_config = default_nn_config()
+  ltfm_config = default_nn_config()
   bias_config = default_nn_config()
 
   has_bias = True
+
+  lr = 1e-3
+  batch_size = 50
+  max_iters = 1000
+  reg_coeff = 0.
 
   verbose = True
 
   config = flow_transforms.TfmConfig(
       tfm_type=tfm_type, neg_slope=neg_slope, scale_config=scale_config,
       shift_config=shift_config, shared_wts=shared_wts, ltfm_config=ltfm_config,
-      bias_config=bias_config, has_bias=has_bias, verbose=verbose)
+      bias_config=bias_config, has_bias=has_bias, lr=lr, batch_size=batch_size,
+      max_iters=max_iters, reg_coeff=reg_coeff, verbose=verbose)
   return config
 
 
@@ -69,6 +75,11 @@ def simple_test_tfms(args):
   tr_Y, te_Y = [Y[idx] for idx in inds]
 
 
+  # Generate config list:
+  tfm_configs = []
+  tfm_inits = []
+  scale_shift_tfm = default_tfm_config("shift_scale_coupling")
+  bit_mask
   linear_tfm_config = default_tfm_config("fixed_linear")
   linear_tfm = flow_transforms.make_transform(linear_tfm_config)
   linear_tfm.initialize(X.shape[1])

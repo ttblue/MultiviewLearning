@@ -353,7 +353,7 @@ def get_any_key(dict_var):
 
 
 # Data utils:
-def split(Xs, fracs=[0.8, 0.2], shuffle=True, get_inds=True):
+def split_data(Xs, fracs=[0.8, 0.2], shuffle=True, get_inds=True):
   fracs = np.array(fracs) / np.sum(fracs)
 
   npts = len(Xs)
@@ -373,6 +373,8 @@ def split(Xs, fracs=[0.8, 0.2], shuffle=True, get_inds=True):
     inds = [all_inds[si:ei] for si, ei in zip(start_inds, end_inds)]
     return dsets, inds
   return dsets
+
+
 # if __name__ == '__main__':
 #   ann_idx, ann_text = load_xlsx_annotation_file('/usr0/home/sibiv/Research/Data/TransferLearning/PigData/extracted/33.xlsx')
 #   critical_anns, ann_labels = create_annotation_labels(ann_text)
