@@ -65,7 +65,7 @@ class InvertibleTransform(nn.Module):
     super(InvertibleTransform, self).__init__()
     self.config = config
 
-  def initialize(self):
+  def initialize(self, *args, **kwargs):
     raise NotImplementedError("Abstract class method")
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
@@ -138,28 +138,28 @@ class ReverseTransform(InvertibleTransform):
   def __init__(self, config):
     super(ReverseTransform, self).__init__(config)
 
-  def initialize(self):
+  def initialize(self, *args, **kwargs):
     pass
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     reverse_idx = torch.arange(x.size(-1) -1, -1, -1).long()
-    y = y.index_select(-1, reverse_idx)
+    y = x.index_select(-1, reverse_idx)
 
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
 
     # Determinant of Jacobian reverse transform is 1.
     return (y, 0.) if rtn_logdet else y
 
-  def inverse(self, y):
-    raise NotImplementedError("Abstract class method")
+  def inverse(self, y, rtn_torch=True):
+    return self(y, rtn_torch=rtn_torch, rtn_logdet=False)
 
 
 class LeakyReLUTransform(InvertibleTransform):
   def __init__(self, config):
     super(LeakyReLUTransform, self).__init__(config)
 
-  def initialize(self):
+  def initialize(self, *args, **kwargs):
     neg_slope = self.config.neg_slope
     self._relu_func = torch.nn.LeakyReLU(negative_slope=neg_slope)
     self._inv_func = torch.nn.LeakyReLU(negative_slope=(1. / neg_slope))
@@ -184,7 +184,7 @@ class LeakyReLUTransform(InvertibleTransform):
 
 class ScaleShiftCouplingTransform(InvertibleTransform):
   def __init__(self, config, index_mask=None):
-    super(ScaleShiftCouplingTransform, self).__init__(config, index_mask)
+    super(ScaleShiftCouplingTransform, self).__init__(config)
 
     if index_mask is not None:
       self._set_fixed_inds(index_mask)
@@ -204,7 +204,7 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
     self._fixed_dim = self._fixed_inds.shape[0]
     self._output_dim = self._tfm_inds.shape[0]
 
-  def initialize(self, index_mask=None):
+  def initialize(self, index_mask=None, *args, **kwargs):
     if self.config.shared_wts:
       raise NotImplementedError("Not yet implemented shared weights.")
 
@@ -217,18 +217,21 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
         self.config.scale_config.copy()
         if self.config.shift_config is None else
         self.config.shift_config)
+    shift_config.set_sizes(
+        input_size=self._fixed_dim, output_size=self._output_dim)
     self._scale_tfm = torch_utils.MultiLayerNN(self.config.scale_config)
     self._shift_tfm = torch_utils.MultiLayerNN(shift_config)
     
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     y = torch.zeros_like(x)
-    x_fixed = x[self._fixed_inds]
+    x_fixed = x[:, self._fixed_inds]
+
     scale = torch.exp(self._scale_tfm(x_fixed))
     shift = self._shift_tfm(x_fixed)
 
-    y[self._fixed_inds] = x_fixed
-    y[self._tfm_inds] = scale * x[self._tfm_inds] + shift
+    y[:, self._fixed_inds] = x_fixed
+    y[:, self._tfm_inds] = scale * x[:, self._tfm_inds] + shift
 
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
 
@@ -257,7 +260,8 @@ class FixedLinearTransformation(InvertibleTransform):
   def __init__(self, config):
     super(FixedLinearTransformation, self).__init__(config)
 
-  def initialize(self, dim, init_lin_param=None, init_bias_param=None):
+  def initialize(
+      self, dim, init_lin_param=None, init_bias_param=None, *args, **kwargs):
     # init_lin_param: Tensor of shape dim x dim of initial values, or None.
     self._dim = dim
 
@@ -274,7 +278,7 @@ class FixedLinearTransformation(InvertibleTransform):
           torch_utils.numpy_to_torch(init_bias_param))
       self._b = torch.nn.Parameter(init_bias_param)
     else:
-      self._b = 0.
+      self._b = torch.zeros(dim)
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -323,7 +327,7 @@ class AdaptiveLinearTransformation(InvertibleTransform):
     self._L = None
     self._U = None
 
-  def initialize(self, dim):
+  def initialize(self, dim, *args, **kwargs):
     self._dim = dim
 
     bias_config = (
@@ -383,12 +387,15 @@ class CompositionTransform(InvertibleTransform):
     for i, tfm in enumerate(tfm_list):
       self.add_module("tfm_%i" % i, tfm)
 
-  def initialize(self, tfm_list, init_args=None):
+  def initialize(self, tfm_list, init_args=None, *args, **kwargs):
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
     if init_args:
       for tfm, arg in zip(self._tfm_list, init_args):
-        tfm.initialize(*arg)
+        if isinstance(arg, tuple):
+          tfm.initialize(*arg)
+        else:
+          tfm.initialize(arg)
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -421,15 +428,13 @@ _TFM_TYPES = {
 }
 def make_transform(config, init_args=None):
   if isinstance(config, list):
-    if init_args is None:
-      raise ValueError("")
     tfm_list = [make_transform(cfg) for cfg in config]
     return CompositionTransform(TfmConfig("composition"), tfm_list, init_args)
 
   if config.tfm_type not in _TFM_TYPES:
     raise TypeError(
         "%s not a valid transform. Available transforms: %s" %
-        (config.tfm_type, _TFM_TYPES))
+        (config.tfm_type, list(_TFM_TYPES.keys())))
 
   tfm = _TFM_TYPES[config.tfm_type](config)
   if init_args is not None:

@@ -1,5 +1,6 @@
 # Toy data for flow related testing:
 import numpy as np
+import scipy.linalg as slg
 
 from utils import math_utils
 
@@ -44,8 +45,10 @@ def simple_transform_data(npts=1000, ndim=10, tfm_types=[]):
       tfm_args.append((ttype, bit_mask, W, gamma))
     elif ttype == "linear":
       W = math_utils.random_unitary_matrix(ndim)
+      P, L, U = slg.lu(W)
+      W = L.dot(U)
       Y = Y.dot(W.T)
-      tfm_args.append((ttype, W))
+      tfm_args.append((ttype, L, U))
     elif ttype == "leakyrelu":
       Y = np.where(Y > 0, Y, gamma * Y)
       tfm_args.append((ttype, gamma))
