@@ -4,6 +4,7 @@ import torch
 from torch import nn, optim
 import time
 
+from models import torch_models
 from models.model_base import ModelException, BaseConfig
 from utils import math_utils, torch_utils
 
@@ -33,7 +34,7 @@ class TfmConfig(BaseConfig):
       self, tfm_type="scale_shift_coupling", neg_slope=0.01, scale_config=None,
       shift_config=None, shared_wts=False, ltfm_config=None, bias_config=None,
       has_bias=True, lr=1e-3, batch_size=50, max_iters=1000, reg_coeff=.1,
-      *args, **kwargs):
+      stopping_eps=1e-5, *args, **kwargs):
     super(TfmConfig, self).__init__(*args, **kwargs)
 
     self.tfm_type = tfm_type.lower()
@@ -53,11 +54,11 @@ class TfmConfig(BaseConfig):
     self.has_bias = has_bias
 
     # Some misc. parameters if training transforms only
+    self.reg_coeff = reg_coeff
     self.lr = lr
     self.batch_size = batch_size
     self.max_iters = max_iters
-
-    self.reg_coeff = reg_coeff
+    self.stopping_eps = stopping_eps
 
 
 class InvertibleTransform(nn.Module):
@@ -98,6 +99,9 @@ class InvertibleTransform(nn.Module):
       self.opt.step()
       self.itr_loss += loss_val
 
+    if self.itr_loss.detach() < self.config.stopping_eps:
+      self._finished_training = True
+
   def fit(self, x, y):
     # Simple fitting procedure for transforming x to y
     if self.config.verbose:
@@ -111,22 +115,27 @@ class InvertibleTransform(nn.Module):
     self.opt = optim.Adam(self.parameters(), self.config.lr)
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
+    self._finished_training = False
+    self._loss_history = []
     try:
       for itr in range(self.config.max_iters):
         if self.config.verbose:
           itr_start_time = time.time()
         self._train_loop()
-
+        self._loss_history.append(float(self.itr_loss.detach()))
+        if self._finished_training:
+          if self.config.verbose:
+            print("\nLoss < stopping eps. Finished training.")
+          break
         if self.config.verbose:
           itr_diff_time = time.time() - itr_start_time
           loss_val = float(self.itr_loss.detach())
-          print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
+          print("Iteration %i out of %i (in %.2fs). Loss: %.5f" %
                 (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
                 end='\r')
       if self.config.verbose:
         print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
-              (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
-              end='\r')
+              (itr + 1, self.config.max_iters, itr_diff_time, loss_val))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
     self.eval()
@@ -219,8 +228,8 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
         self.config.shift_config)
     shift_config.set_sizes(
         input_size=self._fixed_dim, output_size=self._output_dim)
-    self._scale_tfm = torch_utils.MultiLayerNN(self.config.scale_config)
-    self._shift_tfm = torch_utils.MultiLayerNN(shift_config)
+    self._scale_tfm = torch_models.MultiLayerNN(self.config.scale_config)
+    self._shift_tfm = torch_models.MultiLayerNN(shift_config)
     
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -243,12 +252,12 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
   def inverse(self, y, rtn_torch=True):
     y = torch_utils.numpy_to_torch(y)
     x = torch.zeros_like(y)
-    y_fixed = y[self._fixed_inds]
+    y_fixed = y[:, self._fixed_inds]
     scale = torch.exp(-self._scale_tfm(y_fixed))
     shift = -self._shift_tfm(y_fixed)
 
-    x[self._fixed_inds] = y_fixed
-    x[self._tfm_inds] = scale * y[self._tfm_inds] + shift
+    x[:, self._fixed_inds] = y_fixed
+    x[:, self._tfm_inds] = scale * y[:, self._tfm_inds] + shift
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
 
@@ -269,8 +278,6 @@ class FixedLinearTransformation(InvertibleTransform):
         torch.eye(dim) if init_lin_param is None else
         torch_utils.numpy_to_torch(init_lin_param))
     self._lin_param = torch.nn.Parameter(init_lin_param)
-    self._L = torch.eye(self._dim) + torch.tril(self._lin_param, diagonal=-1)
-    self._U = torch.triu(self._lin_param, diagonal=0)
 
     if self.config.has_bias:
       init_bias_param = (
@@ -282,10 +289,11 @@ class FixedLinearTransformation(InvertibleTransform):
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    # This is to store L and U for current forward pass, so that it can be used
-    # for the inverse.
+
+    L, U = torch_utils.LU_split(self._lin_param)
+
     x_ = x.transpose(0, 1) if len(x.shape) > 1 else x.view(-1, 1)
-    y = self._L.matmul(self._U.matmul(x_)) + self._b.view(-1, 1)
+    y = L.matmul(U.matmul(x_)) + self._b.view(-1, 1)
     # Undoing dimension changes to be consistent with input
     y = y.transpose(0, 1) if len(x.shape) > 1 else y.squeeze()
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
@@ -294,21 +302,21 @@ class FixedLinearTransformation(InvertibleTransform):
       # Determinant of triangular jacobian is product of the diagonals.
       # Since both L and U are triangular and L has unit diagonal,
       # this is just the product of diagonal elements of U.
-      jac_logdet = torch.sum(torch.log(torch.abs(torch.diag(self._U))))
+      jac_logdet = torch.sum(torch.log(torch.abs(torch.diag(U))))
       return y, jac_logdet
     return y
 
   def inverse(self, y, rtn_torch=True):
     y = torch_utils.numpy_to_torch(y)
-    # Lt = self._L.transpose(0, 1)
-    # Ut = self._U.transpose(0, 1)
+
+    L, U = torch_utils.LU_split(self._lin_param)
     
     y_b = y - self._b
     y_b_t = y_b.transpose(0, 1) if len(y_b.shape) > 1 else y_b
     # Torch solver for triangular system of equations
     # IPython.embed()
-    sol_L = torch.trtrs(y_b, self._L, upper=False, unitriangular=True)[0]
-    x = torch.trtrs(sol_L, self._U, upper=True)[0]
+    sol_L = torch.trtrs(y_b, L, upper=False, unitriangular=True)[0]
+    x = torch.trtrs(sol_L, U, upper=True)[0]
     # trtrs always returns 2-D output, even if input is 1-D. So we do this:
     x = x.transpose(0, 1) if len(y.shape) > 1 else x.squeeze()
     x = x if rtn_torch else torch_utils.torch_to_numpy(x)
@@ -324,8 +332,6 @@ class AdaptiveLinearTransformation(InvertibleTransform):
   def __init__(self, config):
     raise NotImplementedError("Not implemented yet.")
     super(LinearTransformation, self).__init__(config)
-    self._L = None
-    self._U = None
 
   def initialize(self, dim, *args, **kwargs):
     self._dim = dim
@@ -338,8 +344,8 @@ class AdaptiveLinearTransformation(InvertibleTransform):
     self.config.linear_config.set_sizes(input_size=dim, output_size=(dim ** 2))
     bias_config.set_sizes(input_size=dim, output_size=dim)
 
-    self._lin_func = torch_utils.MultiLayerNN(self.config.linear_config)
-    self._bias_func = torch_utils.MultiLayerNN(bias_config)
+    self._lin_func = torch_models.MultiLayerNN(self.config.linear_config)
+    self._bias_func = torch_models.MultiLayerNN(bias_config)
 
   def _get_LU(self, x):
     A_vals = self._lin_func(x)

@@ -4,9 +4,8 @@ import os
 import torch
 from torch import nn
 
-from models import greedy_multi_view_rl, greedy_single_view_rl
+from models import greedy_multi_view_rl, greedy_single_view_rl, torch_models
 from synthetic import multimodal_systems as ms
-from utils import torch_utils as tu
 
 
 try:
@@ -82,14 +81,14 @@ def default_GMVRL_config(sv_type="nn", as_dict=False):
     layer_units = []  #[32] # [32, 64]
     use_vae = False
     activation = nn.ReLU  # nn.functional.relu
-    last_activation = tu.Identity  #nn.Sigmoid  # functional.sigmoid
+    last_activation = torch_models.Identity  #nn.Sigmoid  # functional.sigmoid
     # layer_types = None
     # layer_args = None
     bias = False
     dropout_p = 0.
-    layer_types, layer_args = tu.generate_linear_types_args(
+    layer_types, layer_args = torch_models.generate_linear_types_args(
           input_size, layer_units, output_size, bias)
-    nn_config = tu.MNNConfig(
+    nn_config = torch_models.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
         last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)

@@ -1,10 +1,13 @@
+#!/usr/bin/env python
+
 import numpy as np
 import os
 import scipy.linalg as slg
 import torch
 from torch import nn
 
-from models import flow_transforms#, flow_likelihood, flow_pipeline
+from models import flow_transforms #, flow_likelihood, flow_pipeline
+from models import torch_models
 from synthetic import flow_toy_data
 from utils import utils, torch_utils
 
@@ -19,14 +22,14 @@ def default_nn_config():
   layer_units = [32, 64]
   use_vae = False
   activation = nn.ReLU  # nn.functional.relu
-  last_activation = nn.ReLU  #torch_utils.Identity  # functional.sigmoid
+  last_activation = nn.ReLU  #torch_models.Identity  # functional.sigmoid
   # layer_types = None
   # layer_args = None
   bias = False
   dropout_p = 0.
   layer_types, layer_args = torch_utils.generate_linear_types_args(
         input_size, layer_units, output_size, bias)
-  nn_config = torch_utils.MNNConfig(
+  nn_config = torch_models.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
@@ -81,20 +84,25 @@ def simple_test_tfms(args):
   tfm_configs = []
   tfm_inits = []
 
+  #################################################
   # First transform is bit-mask.
   # tfm_idx = 0 
   # scale_shift_tfm_config = default_tfm_config("scale_shift_coupling")
   # idx_args = tfm_args[tfm_idx]
-  # bit_mask = idx_args[1]
+  # if idx_args[0] == "scaleshift":
+  #   bit_mask = idx_args[1]
+  # else:
+  #   bit_mask = np.zeros(args.ndim)
+  #   bit_mask[np.random.permutation(args.ndim)[:args.ndim//2]] = 1
   # tfm_configs.append(scale_shift_tfm_config)
   # tfm_inits.append((bit_mask,))
 
   # Then a fixed linear transform
-  tfm_idx = 1
-  linear_tfm_config = default_tfm_config("fixed_linear")
-  dim = X.shape[1]
-  tfm_configs.append(linear_tfm_config)
-  tfm_inits.append((dim, ))
+  # tfm_idx = 1
+  # linear_tfm_config = default_tfm_config("fixed_linear")
+  # dim = X.shape[1]
+  # tfm_configs.append(linear_tfm_config)
+  # tfm_inits.append((dim, ))
 
   # # Leaky ReLU
   # tfm_idx = 2
@@ -108,28 +116,38 @@ def simple_test_tfms(args):
   # reverse_config = default_tfm_config("reverse")
   # tfm_configs.append(reverse_config)
   # tfm_inits.append(None)
+  #################################################
 
-  # comp_tfm = flow_transforms.make_transform(tfm_configs, tfm_inits)
-  # comp_config = comp_tfm.config
-  # comp_config.lr = 1e-3
-  # comp_config.max_iters = 10000
+  num_tfm = 10
+  bit_mask = np.zeros(args.ndim)
+  bit_mask[np.random.permutation(args.ndim)[:args.ndim//2]] = 1
+  for i in range(num_tfm):
+    scale_shift_tfm_config = default_tfm_config("scale_shift_coupling")
+    tfm_configs.append(scale_shift_tfm_config)
+    tfm_inits.append((bit_mask,))
+    bit_mask = 1 - bit_mask
+
+  comp_tfm = flow_transforms.make_transform(tfm_configs, tfm_inits)
+  config = comp_tfm.config
+  config.batch_size = 1000
+  config.lr = 1e-3
+  config.reg_coeff = 0.
+  config.max_iters = 50000
+  IPython.embed()
+  comp_tfm.fit(tr_X, tr_Y)
+
+  # config = linear_tfm_config
+  # config.batch_size = 100
+  # config.max_iters = 10000
+  # config.has_bias = False
+  # linear_tfm = flow_transforms.make_transform(config)
+  # L, U = tfm_args[0][1:]
+  # # P, L, U = slg.lu(W)
+  # init_mat = np.tril(L, -1) + np.triu(U, 0)
+  # eps = 1e-1
+  # noise = np.random.randn(*init_mat.shape) * eps
+  # linear_tfm.initialize(dim)#, init_mat + noise)
   # comp_tfm.fit(tr_X, tr_Y)
-
-  config = linear_tfm_config
-  config.batch_size = 100
-  config.max_iters = 1000
-  config.has_bias = False
-  linear_tfm = flow_transforms.make_transform(config)
-  L, U = tfm_args[0][1:]
-  # P, L, U = slg.lu(W)
-  init_mat = np.tril(L, -1) + np.triu(U, 0)
-  eps = 1e-1
-  noise = np.random.randn(*init_mat.shape) * eps
-  linear_tfm.initialize(dim, init_mat + noise)
-  # IPython.embed()
-  p1 = list(linear_tfm.parameters())[0].detach().numpy().copy()
-  linear_tfm.fit(tr_X, tr_Y)
-  p2 = list(linear_tfm.parameters())[0].detach().numpy()
 
   IPython.embed()
 

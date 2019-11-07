@@ -20,8 +20,11 @@ def get_args(options=[]):
   # Arguments from command line using parser (usually for testing)
   # options is a list of (<name>, <type>, <help>, <default>) tuples
   parser = argparse.ArgumentParser(description="Default parser")
-  parser.add_argument("expt", type=int, help="Experiment to be run.", default=0)
+  parser.add_argument(
+      "--expt", type=int, help="Experiment to be run.", default=0)
   for aname, atype, ahelp, adefault in options:
+    if aname[:2] != "--":
+      aname = "--" + aname
     parser.add_argument(aname, type=atype, help=ahelp, default=adefault)
   return parser.parse_args()
 
