@@ -55,7 +55,8 @@ def load_cmas(dset_type="all", normalize=True):
     for dtype, tdat in data.items():
       data[dtype]["features"] = [
           (feat - means) / stds for feat in tdat["features"]]
-    data["misc"] = {"means": means, "stds": stds}
+    misc = {"means": means, "stds": stds}
+    return data, misc
 
   return data
 

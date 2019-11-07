@@ -12,10 +12,14 @@ from utils import cvx_utils
 
 import IPython
 
+# Hack to get rid of some issues with parallel running
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy("file_system")
+
 
 _SINGLE_VIEW_SOLVERS = _SOLVERS
 
-# class NBSMVRLConfig(object):
+# class NBSMVRLConfig(BaseConfig):
 #   def __init__(
       # self, group_regularizer="inf", global_regularizer="L1", lambda_group=1.0,
       # lambda_global=1.0, sp_eps=1e-5, n_solves=1, lambda_group_init=1e-5,
@@ -43,7 +47,7 @@ _SINGLE_VIEW_SOLVERS = _SOLVERS
 
     # self.verbose = verbose
 
-class NBSMVRLConfig(object):
+class NBSMVRLConfig(BaseConfig):
   def __init__(
       self, single_view_solver_type, single_view_config, parallel, n_jobs,
       *args, **kwargs):
@@ -186,7 +190,7 @@ class NaiveBlockSparseMVRL(object):
     #   # solve_func = self._solve_joint
     # else:
     solve_func = (
-        self._solve_parallel if self.config.parallel else
+        self._solve_parallel if self.config.parallel and self._n_jobs != 1 else
         self._solve_sequential
     )
     solve_func()

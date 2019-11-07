@@ -78,7 +78,7 @@ class InvertibleTransform(nn.Module):
   def loss(self, x_tfm, y, log_jac_det):
     recon_error = self.recon_criterion(x_tfm, y)
     logdet_reg = -torch.mean(log_jac_det)
-    loss_val = recon_error + self.config.reg_coeff * logdet_reg
+    loss_val = recon_error + self.config.reg_coeff * torch.abs(logdet_reg)
     return loss_val
 
   def _train_loop(self):
@@ -180,7 +180,8 @@ class LeakyReLUTransform(InvertibleTransform):
 
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
     if rtn_logdet:
-      jac_logdet = (x < 0).sum(1) * self._log_slope
+      neg_elements = torch.as_tensor((x < 0), dtype=torch_utils._DTYPE)
+      jac_logdet = neg_elements.sum(1) * self._log_slope
       return y, jac_logdet
     return y
 
@@ -302,7 +303,8 @@ class FixedLinearTransformation(InvertibleTransform):
       # Determinant of triangular jacobian is product of the diagonals.
       # Since both L and U are triangular and L has unit diagonal,
       # this is just the product of diagonal elements of U.
-      jac_logdet = torch.sum(torch.log(torch.abs(torch.diag(U))))
+      jac_logdet = (torch.ones(x.shape[0]) *
+                    torch.sum(torch.log(torch.abs(torch.diag(U)))))
       return y, jac_logdet
     return y
 
@@ -315,71 +317,71 @@ class FixedLinearTransformation(InvertibleTransform):
     y_b_t = y_b.transpose(0, 1) if len(y_b.shape) > 1 else y_b
     # Torch solver for triangular system of equations
     # IPython.embed()
-    sol_L = torch.trtrs(y_b, L, upper=False, unitriangular=True)[0]
-    x = torch.trtrs(sol_L, U, upper=True)[0]
+    sol_L = torch.trtrs(y_b_t, L, upper=False, unitriangular=True)[0]
+    x_t = torch.trtrs(sol_L, U, upper=True)[0]
     # trtrs always returns 2-D output, even if input is 1-D. So we do this:
-    x = x.transpose(0, 1) if len(y.shape) > 1 else x.squeeze()
+    x = x_t.transpose(0, 1) if len(y.shape) > 1 else x_t.squeeze()
     x = x if rtn_torch else torch_utils.torch_to_numpy(x)
 
     return x
 
 
-class AdaptiveLinearTransformation(InvertibleTransform):
-  # Model linear transform as L U matrix decomposition where L is lower
-  # triangular with unit diagonal and U is upper triangular with arbitrary
-  # non-zero diagonal elements.
-  # TODO: Incomplete
-  def __init__(self, config):
-    raise NotImplementedError("Not implemented yet.")
-    super(LinearTransformation, self).__init__(config)
+# class AdaptiveLinearTransformation(InvertibleTransform):
+#   # Model linear transform as L U matrix decomposition where L is lower
+#   # triangular with unit diagonal and U is upper triangular with arbitrary
+#   # non-zero diagonal elements.
+#   # TODO: Incomplete
+#   def __init__(self, config):
+#     raise NotImplementedError("Not implemented yet.")
+#     super(LinearTransformation, self).__init__(config)
 
-  def initialize(self, dim, *args, **kwargs):
-    self._dim = dim
+#   def initialize(self, dim, *args, **kwargs):
+#     self._dim = dim
 
-    bias_config = (
-        self.config.linear_config.copy()
-        if self.config.bias_config is None else
-        self.config.linear_config)
+#     bias_config = (
+#         self.config.linear_config.copy()
+#         if self.config.bias_config is None else
+#         self.config.linear_config)
 
-    self.config.linear_config.set_sizes(input_size=dim, output_size=(dim ** 2))
-    bias_config.set_sizes(input_size=dim, output_size=dim)
+#     self.config.linear_config.set_sizes(input_size=dim, output_size=(dim ** 2))
+#     bias_config.set_sizes(input_size=dim, output_size=dim)
 
-    self._lin_func = torch_models.MultiLayerNN(self.config.linear_config)
-    self._bias_func = torch_models.MultiLayerNN(bias_config)
+#     self._lin_func = torch_models.MultiLayerNN(self.config.linear_config)
+#     self._bias_func = torch_models.MultiLayerNN(bias_config)
 
-  def _get_LU(self, x):
-    A_vals = self._lin_func(x)
-    L = torch.eye(self._dim) + torch.tril(A_vals, diagonal=-1)
-    U = torch.triu(A_vals, diagonal=0)
-    return L, U
+#   def _get_LU(self, x):
+#     A_vals = self._lin_func(x)
+#     L = torch.eye(self._dim) + torch.tril(A_vals, diagonal=-1)
+#     U = torch.triu(A_vals, diagonal=0)
+#     return L, U
 
-  def forward(self, x, rtn_torch=True, rtn_logdet=False):
-    # This is to store L and U for current forward pass, so that it can be used
-    # for the inverse.
-    self._L, self._U = self._get_LU(x)
-    b = self._bias_func(x)
+#   def forward(self, x, rtn_torch=True, rtn_logdet=False):
+#     # This is to store L and U for current forward pass, so that it can be used
+#     # for the inverse.
+#     self._L, self._U = self._get_LU(x)
+#     b = self._bias_func(x)
 
-    y = self._L.dot(self._U.dot(x)) + b
-    y = y if rtn_torch else torch_utils.torch_to_numpy(y)
+#     y = self._L.dot(self._U.dot(x)) + b
+#     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
 
-    if rtn_logdet:
-      # Determinant of triangular jacobian is product of the diagonals.
-      # Since both L and U are triangular and L has unit diagonal,
-      # this is just the product of diagonal elements of U.
-      jac_logdet = torch.sum(torch.log(torch.abs(torch.diag(self._U))))
-      return y, jac_logdet
-    return y
+#     if rtn_logdet:
+#       # Determinant of triangular jacobian is product of the diagonals.
+#       # Since both L and U are triangular and L has unit diagonal,
+#       # this is just the product of diagonal elements of U.
+#       jac_logdet = torch.sum(torch.log(torch.abs(torch.diag(self._U))))
+#       return y, jac_logdet
+#     return y
 
-  def inverse(self, y):
-    pass
-    # Ut = tf.transpose(U)
-    # Lt = tf.transpose(L)
-    # yt = tf.transpose(y)
-    # sol = tf.matrix_triangular_solve(Ut, yt-tf.expand_dims(b, -1))
-    # x = tf.transpose(
-    #     tf.matrix_triangular_solve(Lt, sol, lower=False)
-    # )
-    # return x
+#   def inverse(self, y):
+#     pass
+#     # Ut = tf.transpose(U)
+#     # Lt = tf.transpose(L)
+#     # yt = tf.transpose(y)
+#     # sol = tf.matrix_triangular_solve(Ut, yt-tf.expand_dims(b, -1))
+#     # x = tf.transpose(
+#     #     tf.matrix_triangular_solve(Lt, sol, lower=False)
+#     # )
+#     # return x
 
 
 class CompositionTransform(InvertibleTransform):
@@ -410,9 +412,13 @@ class CompositionTransform(InvertibleTransform):
       jac_logdet = 0
     for tfm in self._tfm_list:
       y = tfm(y, rtn_torch=True, rtn_logdet=rtn_logdet)
-      if rtn_logdet:
-        y, tfm_jlogdet = y
-        jac_logdet += tfm_jlogdet
+      try:
+        if rtn_logdet:
+          y, tfm_jlogdet = y
+          jac_logdet += tfm_jlogdet
+      except Exception as e:
+        IPython.embed()
+        raise(e)
 
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
     return (y, jac_logdet) if rtn_logdet else y
@@ -421,7 +427,11 @@ class CompositionTransform(InvertibleTransform):
     y = torch_utils.numpy_to_torch(y)
     x = y
     for tfm in self._tfm_list[::-1]:
-      x = tfm.inverse(x)
+      try:
+        x = tfm.inverse(x)
+      except Exception as e:
+        IPython.embed()
+        raise(e)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
 

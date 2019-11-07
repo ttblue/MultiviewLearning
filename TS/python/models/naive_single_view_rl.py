@@ -8,10 +8,14 @@ from torch import nn, optim
 from models.abstract_single_view_rl import\
     AbstractSVSConfig, AbstractSingleViewSolver
 from models.model_base import ModelException
+from models import torch_models
 from utils import cvx_utils, torch_utils, utils
 
 
 import IPython
+
+
+
 
 
 _SOLVER = cvx.GUROBI
@@ -321,7 +325,7 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
       vi_config = self.config.nn_config.copy()
       vi_config.set_sizes(input_size=self._rest_data[vi].shape[1])
       # IPython.embed()
-      vi_transform = torch_utils.MultiLayerNN(vi_config)
+      vi_transform = torch_models.MultiLayerNN(vi_config)
 
       self.add_module("transform_%i" % vi, vi_transform)
       self._p_tfms[vi] = vi_transform

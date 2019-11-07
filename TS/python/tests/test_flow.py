@@ -72,7 +72,7 @@ def default_pipeline_config():
 
 
 def simple_test_tfms(args):
-  tfm_types = ["linear"]
+  tfm_types = ["scale_shift", "linear"]
   X, Y, tfm_args = flow_toy_data.simple_transform_data(
       args.npts, args.ndim, tfm_types)
 
@@ -85,54 +85,54 @@ def simple_test_tfms(args):
   tfm_inits = []
 
   #################################################
-  # First transform is bit-mask.
-  # tfm_idx = 0 
-  # scale_shift_tfm_config = default_tfm_config("scale_shift_coupling")
-  # idx_args = tfm_args[tfm_idx]
-  # if idx_args[0] == "scaleshift":
-  #   bit_mask = idx_args[1]
-  # else:
-  #   bit_mask = np.zeros(args.ndim)
-  #   bit_mask[np.random.permutation(args.ndim)[:args.ndim//2]] = 1
-  # tfm_configs.append(scale_shift_tfm_config)
-  # tfm_inits.append((bit_mask,))
-
   # Then a fixed linear transform
-  # tfm_idx = 1
-  # linear_tfm_config = default_tfm_config("fixed_linear")
-  # dim = X.shape[1]
-  # tfm_configs.append(linear_tfm_config)
-  # tfm_inits.append((dim, ))
+  tfm_idx = 1
+  num_lin_tfm = 1
+  dim = X.shape[1]
+  for i in range(num_lin_tfm):
+    linear_tfm_config = default_tfm_config("fixed_linear")
+    tfm_configs.append(linear_tfm_config)
+    tfm_inits.append((dim,))
 
-  # # Leaky ReLU
-  # tfm_idx = 2
-  # leaky_relu_config = default_tfm_config("leaky_relu")
-  # leaky_relu_config.neg_slope = 0.1
-  # tfm_configs.append(leaky_relu_config)
-  # tfm_inits.append(None)
-
-  # Reverse
-  # tfm_idx = 3
-  # reverse_config = default_tfm_config("reverse")
-  # tfm_configs.append(reverse_config)
-  # tfm_inits.append(None)
-  #################################################
-
-  num_tfm = 10
-  bit_mask = np.zeros(args.ndim)
-  bit_mask[np.random.permutation(args.ndim)[:args.ndim//2]] = 1
-  for i in range(num_tfm):
+  # First transform is bit-mask.
+  tfm_idx = 0 
+  num_ss_tfm = 1
+  idx_args = tfm_args[tfm_idx]
+  if idx_args[0] == "scaleshift":
+    bit_mask = idx_args[1]
+  else:
+    bit_mask = np.zeros(args.ndim)
+    bit_mask[np.random.permutation(args.ndim)[:args.ndim//2]] = 1
+  for i in range(num_ss_tfm):
     scale_shift_tfm_config = default_tfm_config("scale_shift_coupling")
     tfm_configs.append(scale_shift_tfm_config)
     tfm_inits.append((bit_mask,))
     bit_mask = 1 - bit_mask
 
+  # # Leaky ReLU
+  tfm_idx = 2
+  use_leaky_relu = False
+  if use_leaky_relu:
+    leaky_relu_config = default_tfm_config("leaky_relu")
+    leaky_relu_config.neg_slope = 0.1
+    tfm_configs.append(leaky_relu_config)
+    tfm_inits.append(None)
+
+  # Reverse
+  tfm_idx = 3
+  use_reverse = False
+  if use_reverse:
+    reverse_config = default_tfm_config("reverse")
+    tfm_configs.append(reverse_config)
+    tfm_inits.append(None)
+  #################################################
+
   comp_tfm = flow_transforms.make_transform(tfm_configs, tfm_inits)
   config = comp_tfm.config
   config.batch_size = 1000
   config.lr = 1e-3
-  config.reg_coeff = 0.
-  config.max_iters = 50000
+  config.reg_coeff = 0.1
+  config.max_iters = 1#50000
   IPython.embed()
   comp_tfm.fit(tr_X, tr_Y)
 

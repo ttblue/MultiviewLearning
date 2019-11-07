@@ -7,7 +7,7 @@ from torch import nn
 
 from dataprocessing import pig_videos
 from models import embeddings, ovr_mcca_embeddings, naive_multi_view_rl, \
-                   naive_single_view_rl, robust_multi_ae
+                   naive_single_view_rl, robust_multi_ae, torch_models
 from synthetic import multimodal_systems as ms
 from utils import torch_utils as tu, utils
 
@@ -92,7 +92,8 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
   lambda_group = 1e-1
   lambda_global = 1e-1
 
-  if sv_type == "opt":
+  if sv_type in ["opt", "naive_opt"]:
+    sv_type = "naive_opt"
     n_solves = 5
     lambda_group_init = 1e-5
     lambda_group_beta = 10
@@ -109,21 +110,22 @@ def default_NGSRL_config(sv_type="opt", as_dict=False):
         resolve_change_thresh=resolve_change_thresh,
         n_resolve_attempts=n_resolve_attempts, sp_eps=sp_eps, verbose=verbose)
     if as_dict: single_view_config = single_view_config.__dict__
-  elif sv_type == "nn":
+  elif sv_type in ["nn", "naive_nn"]:
+    sv_type = "naive_nn"
     input_size = 10  # Computed online
     # Default Encoder config:
     output_size = 10  # Computed online
     layer_units = [32, 64]
     use_vae = False
     activation = nn.ReLU  # nn.functional.relu
-    last_activation = tu.Identity  #nn.Sigmoid  # functional.sigmoid
+    last_activation = torch_models.Identity  #nn.Sigmoid  # functional.sigmoid
     dropout_p = 0.
     # layer_types = None
     # layer_args = None
     bias = False
     layer_types, layer_args = tu.generate_linear_types_args(
           input_size, layer_units, output_size, bias)
-    nn_config = tu.MNNConfig(
+    nn_config = torch_models.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation, dropout_p=dropout_p,
         last_activation=last_activation, use_vae=use_vae)
@@ -169,7 +171,7 @@ def default_RMAE_config(v_sizes):
     input_size = v_sizes[i]
     layer_types, layer_args = tu.generate_linear_types_args(
         input_size, layer_units, output_size)
-    encoder_params[i] = tu.MNNConfig(
+    encoder_params[i] = torch_models.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
         last_activation=last_activation, use_vae=use_vae)
@@ -177,13 +179,13 @@ def default_RMAE_config(v_sizes):
   input_size = joint_code_size
   layer_units = [32]  #[64, 32]
   use_vae = False
-  last_activation = tu.Identity
+  last_activation = torch_models.Identity
   decoder_params = {}
   for i in range(n_views):
     output_size = v_sizes[i]
     layer_types, layer_args = tu.generate_linear_types_args(
         input_size, layer_units, output_size)
-    decoder_params[i] = tu.MNNConfig(
+    decoder_params[i] = torch_models.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, use_vae=use_vae)
@@ -194,7 +196,7 @@ def default_RMAE_config(v_sizes):
   layer_types, layer_args = tu.generate_linear_types_args(
       input_size, layer_units, output_size)
   use_vae = False
-  joint_coder_params = tu.MNNConfig(
+  joint_coder_params = torch_models.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, use_vae=use_vae)

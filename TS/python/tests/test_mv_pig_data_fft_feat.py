@@ -9,7 +9,7 @@ from dataprocessing import pig_videos
 from models import \
     embeddings, greedy_multi_view_rl, greedy_single_view_rl,\
     naive_multi_view_rl, naive_single_view_rl, ovr_mcca_embeddings,\
-    robust_multi_ae, ts_fourier_featurization
+    robust_multi_ae, torch_models, ts_fourier_featurization
 from synthetic import multimodal_systems as ms
 from utils import torch_utils as tu, utils
 

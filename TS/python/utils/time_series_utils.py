@@ -421,8 +421,6 @@ def compute_time_delay_embedding(X, dt, tau=None, d=3, tau_s_to_search=2.):
 
 ################################################################################
 # Data processing stuff
-
-
 def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
   # round_func = np.floor if ignore_rest else np.ceil
   n_win = int(np.ceil(ts.shape[0] / window_size))
@@ -434,7 +432,11 @@ def split_ts_into_windows(ts, window_size, ignore_rest=False, shuffle=True):
     if ignore_rest:
       split_data = split_data[:-1]
     else:
+      # try:
       last_ts = np.r_[split_data[-2][-n_overlap:], last_ts]
+      # except Exception as e:
+      #   IPython.embed()
+      #   raise e
       split_data[-1] = last_ts
   windows = np.array(split_data)
 
