@@ -27,6 +27,45 @@ except ImportError:
 import IPython
 
 
+# Plotting funcs:
+def plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax=None):
+  plot_ts = []
+  for win in tvals:
+    plot_ts.append(win.reshape(-1, win.shape[-1]))
+
+  if nwin is not None and nwin > 0:
+    ndisp = nwin * wsize
+  if ndisp > 0:
+    plot_ts = [win[:ndisp] for win in plot_ts]
+
+  ntsteps = plot_ts[0].shape[0]
+
+  ax = plt if ax is None else ax
+
+  for win, lbl in zip(plot_ts, labels):
+    ax.plot(win, label=lbl)
+  # ax.plot(tv_plot, color='b', label="Ground Truth")
+  # ax.plot(op_plot, color='r', label="Predicted")
+  if title:
+    try:
+      ax.title(title, fontsize=30)
+      ax.xticks(fontsize=15)
+      ax.yticks(fontsize=15)
+      ax.legend(fontsize=15)
+    except TypeError:
+      ax.set_title(title, fontsize=10)
+      ax.legend()
+      # ax.set_xticks(fontsize=5)
+      # ax.set_yticks(fontsize=5)
+    # if nwin is not None and nwin > 0:
+
+  win_x = wsize
+  while win_x < ntsteps:
+    ax.axvline(x = win_x, ls="--")
+    win_x += wsize
+
+
+
 def split_into_windows(data, window_size, shuffle=True):
   ids, ts, feats, ys = data["ids"], data["ts"], data["features"], data["y"]
 
@@ -104,12 +143,14 @@ def load_cmas_data(window_size=20):
   data, misc = predictive_maintenance_datasets.load_cmas(dset_type, normalize)
 
   # Just need to make sure fft feats are done on train data first.
+  window_data = {}
   fft_window_data = {}
   for dset_type in ["train", "test"]:
-    window_data = split_into_windows(data[dset_type], window_size)
-    fft_window_data[dset_type] = fft_featurize_data(window_data)
+    wdata = split_into_windows(data[dset_type], window_size)
+    fft_window_data[dset_type] = fft_featurize_data(wdata)
+    window_data[dset_type] = wdata
 
-  return fft_window_data
+  return window_data, fft_window_data
 
 
 def reconstruct_ts(codes, output_len):
@@ -123,13 +164,15 @@ def reconstruct_ts(codes, output_len):
 def test_nn(args):
   window_size = args.wsize
   npts = args.npts
-  cmas_data = load_cmas_data(window_size=window_size)
+  win_data, cmas_data = load_cmas_data(window_size=window_size)
 
   # Fit model.
   tr_w_ffts = cmas_data["train"]
   te_w_ffts = cmas_data["test"]
+  tr_wdata = win_data["train"]["features"]
+  te_wdata = win_data["test"]["features"]
 
-  dsets = {"Train": tr_w_ffts, "Test": te_w_ffts}
+  dsets = {"Train": tr_wdata, "Test": te_wdata}
 
   config = default_NGSRL_config(sv_type="nn")
   config.n_jobs = None if args.n_jobs == -1 else args.n_jobs
@@ -140,7 +183,7 @@ def test_nn(args):
   config.single_view_config.lambda_global = 1e-3
   config.single_view_config.lambda_group = 0 # 1e-1
   config.single_view_config.sp_eps = 5e-5
-  # config.single_view_config.max_iters = 1
+  config.single_view_config.max_iters = args.n_iters
 
   model = naive_multi_view_rl.NaiveBlockSparseMVRL(config)
   # try:
@@ -149,11 +192,10 @@ def test_nn(args):
   #   print("Something went wrong with training.")
   #   IPython.embed()
   IPython.embed()
+  globals().update(locals())
   vlens = [tr_w_ffts[vi].shape[1] for vi in range(len(tr_w_ffts))]
   msplit_inds = np.cumsum(vlens)[:-1]
-  view_subset = [1, 2, 3, 4, 5, 6, 10] #None
-  msplit_names = [pig_videos.VS_MAP[vidx] for vidx in view_subset]
-  IPython.embed()
+  view_subset = msplit_names = []
 
   tr_preds = model.predict(tr_w_ffts)
   te_preds = model.predict(te_w_ffts)
@@ -161,35 +203,41 @@ def test_nn(args):
   tr_preds_ts = reconstruct_ts(tr_preds, window_size)
   te_preds_ts = reconstruct_ts(te_preds, window_size)
 
-  dsets_ts = {"Train": tr_wdata[0], "Test": te_wdata[0]}
+  dsets_ts = {"Train": tr_wdata, "Test": te_wdata}
   dsets_pred_ts = {"Train": tr_preds_ts, "Test": te_preds_ts}
-
+  # IPython.embed()
 
   # For plotting:
-  nrows = 2
-  ncols = 3
+  globals().update(locals())
+  nrows = 1
+  ncols = 5
 
+  n_channels = len(tr_w_ffts)
   nwin = 5
-  channels = pig_videos.ALL_FEATURE_COLUMNS
   wsize = window_size
   ndisp = -1
   labels = ["Ground Truth", "Recon."]
-
+  title = ""
   for dset_used in dsets_ts:
     fig, axs = plt.subplots(nrows, ncols)
     mng = plt.get_current_fig_manager()
     mng.window.showMaximized()
     plt_ts = dsets_ts[dset_used]
     plt_pred_ts = dsets_pred_ts[dset_used]
-    for i, ch in enumerate(channels[1:]):
+    for i in range(n_channels):
+      if i >= nrows * ncols:
+        break
       row, col = i // ncols, (i % ncols)
-      ax = axs[row, col]
+      if nrows == 1:
+        ax = axs[col]
+      elif ncols == 1:
+        ax = axs[row]
+      else:
+        ax = axs[row, col]
 
       tvals = [plt_ts[:, :, [i]], plt_pred_ts[i]]
 
-      ch_key = ch - 2
-      ch_name = pig_videos.VS_MAP.get(ch_key, str(ch_key))
-      plot_windows(tvals, labels, ndisp, ph_name, ch_name, nwin, wsize, ax)
+      plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax)
     fig.suptitle("Dataset: %s" % dset_used)
 
   # lnum = valid_labels[0]
@@ -264,6 +312,7 @@ if __name__ == "__main__":
       ("npts", int, "Number of points", 1000),
       ("wsize", int, "Number of t-steps per window", 20),
       ("n_jobs", int, "Number of processes to run in parallel", 3),
+      ("n_iters", int, "Number of iterations of training", 1000),
       ]
   args = utils.get_args(options)
   

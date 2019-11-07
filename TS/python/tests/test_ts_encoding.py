@@ -152,7 +152,7 @@ def load_pig_data(num_pigs=-1, ds_factor=25, valid_labels=None):
   return pig_data
 
 
-def plot_windows(tvals, labels, ndisp, ph_name, ch_name, nwin, wsize, ax=None):
+def plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax=None):
   plot_ts = []
   for win in tvals:
     plot_ts.append(win.reshape(-1, win.shape[-1]))
@@ -167,20 +167,21 @@ def plot_windows(tvals, labels, ndisp, ph_name, ch_name, nwin, wsize, ax=None):
   ax = plt if ax is None else ax
 
   for win, lbl in zip(plot_ts, labels):
-    ax.plot(win, label=lbl)    
+    ax.plot(win, label=lbl)
   # ax.plot(tv_plot, color='b', label="Ground Truth")
   # ax.plot(op_plot, color='r', label="Predicted")
-  try:
-    ax.title("Phase: %s -- Vital: %s" % (ph_name, ch_name), fontsize=30)
-    ax.xticks(fontsize=15)
-    ax.yticks(fontsize=15)
-    ax.legend(fontsize=15)
-  except TypeError:
-    ax.set_title("Phase: %s -- Vital: %s" % (ph_name, ch_name), fontsize=10)
-    ax.legend()
-    # ax.set_xticks(fontsize=5)
-    # ax.set_yticks(fontsize=5)
-  # if nwin is not None and nwin > 0:
+  if title:
+    try:
+      ax.title(title, fontsize=30)
+      ax.xticks(fontsize=15)
+      ax.yticks(fontsize=15)
+      ax.legend(fontsize=15)
+    except TypeError:
+      ax.set_title(title, fontsize=10)
+      ax.legend()
+      # ax.set_xticks(fontsize=5)
+      # ax.set_yticks(fontsize=5)
+    # if nwin is not None and nwin > 0:
 
   win_x = wsize
   while win_x < ntsteps:

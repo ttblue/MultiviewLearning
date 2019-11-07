@@ -15,9 +15,6 @@ from utils import cvx_utils, torch_utils, utils
 import IPython
 
 
-
-
-
 _SOLVER = cvx.GUROBI
 _OBJ_ORDER = ["error", "gs", "reg", "total"]
 
