@@ -45,7 +45,9 @@ def simple_transform_data(npts=1000, ndim=10, tfm_types=[]):
       tfm_args.append((ttype, bit_mask, W, gamma))
     elif ttype == "linear":
       W = math_utils.random_unitary_matrix(ndim)
-      P, L, U = slg.lu(W)
+      D_scale = np.random.rand(ndim)
+      D = np.diag(D_scale / D_scale.sum())
+      P, L, U = slg.lu(W.dot(D))
       W = L.dot(U)
       Y = Y.dot(W.T)
       tfm_args.append((ttype, L, U))

@@ -7,7 +7,7 @@ from torch import nn
 from torch import optim
 import time
 
-from utils import torch_utils as tu
+from models import torch_models
 from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 
 import IPython
@@ -41,7 +41,7 @@ def default_RMAE_config(v_sizes):
   activation = nn.functional.relu
   last_activation = None
   encoder_params = {
-      i: tu.MNNConfig(
+      i: torch_models.MNNConfig(
           input_size=v_sizes[i],
           output_size=output_size,
           layer_units=layer_units,
@@ -55,7 +55,7 @@ def default_RMAE_config(v_sizes):
   use_var = False
   last_activation = nn.sigmoid
   decoder_params = {
-      i: tu.MNNConfig(
+      i: torch_models.MNNConfig(
           input_size=input_size,
           output_size=v_sizes[i],
           layer_units=layer_units,
@@ -110,9 +110,9 @@ class MultiAutoEncoder(nn.Module):
 
     for vi in range(self._nviews):
       set_value(self._en_layers, vi, "en_%i" % vi,
-                tu.MultiLayerNN(self.config.encoder_params[vi]))
+                torch_models.MultiLayerNN(self.config.encoder_params[vi]))
       set_value(self._de_layers, vi, "de_%i" % vi,
-                tu.MultiLayerNN(self.config.decoder_params[vi]))
+                torch_models.MultiLayerNN(self.config.decoder_params[vi]))
 
   def _split_views(self, x, rtn_torch=True):
     if isinstance(x, torch.Tensor):

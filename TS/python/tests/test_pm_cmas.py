@@ -11,6 +11,7 @@ from models import \
     naive_multi_view_rl, naive_single_view_rl, ovr_mcca_embeddings,\
     robust_multi_ae, torch_models, ts_fourier_featurization
 from synthetic import multimodal_systems as ms
+from tests.test_greedy_mvrl import default_GMVRL_config
 from tests.test_mv_pig_data import \
     plot_heatmap, default_NGSRL_config, default_RMAE_config,\
     aggregate_multipig_data, rescale, split_data, make_subset_list, error_func,\
@@ -28,13 +29,19 @@ import IPython
 
 
 # Plotting funcs:
-def plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax=None):
+def plot_windows(
+    tvals, labels, ndisp, title, nwin, wsize, ax=None, shuffle=True):
   plot_ts = []
   for win in tvals:
     plot_ts.append(win.reshape(-1, win.shape[-1]))
 
   if nwin is not None and nwin > 0:
     ndisp = nwin * wsize
+
+  if shuffle and ndisp > 0:
+    shuffle_inds = np.random.permutation(plot_ts[0].shape[0])[:ndisp]
+    plot_ts = [win[shuffle_inds] for win in plot_ts]
+
   if ndisp > 0:
     plot_ts = [win[:ndisp] for win in plot_ts]
 
@@ -63,7 +70,6 @@ def plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax=None):
   while win_x < ntsteps:
     ax.axvline(x = win_x, ls="--")
     win_x += wsize
-
 
 
 def split_into_windows(data, window_size, shuffle=True):
@@ -194,7 +200,7 @@ def test_nn(args):
   IPython.embed()
   globals().update(locals())
   vlens = [tr_w_ffts[vi].shape[1] for vi in range(len(tr_w_ffts))]
-  msplit_inds = np.cumsum(vlens)[:-1]
+  msplit_inds = [] # np.cumsum(vlens)[:-1]
   view_subset = msplit_names = []
 
   tr_preds = model.predict(tr_w_ffts)
@@ -209,10 +215,10 @@ def test_nn(args):
 
   # For plotting:
   globals().update(locals())
-  nrows = 1
-  ncols = 5
+  nrows = 6
+  ncols = 4
 
-  n_channels = len(tr_w_ffts)
+  n_channels = dsets_ts["Train"].shape[2]
   nwin = 5
   wsize = window_size
   ndisp = -1
@@ -251,44 +257,43 @@ def test_nn(args):
   plot_heatmap(model.nullspace_matrix(), msplit_inds, msplit_names)
 
 
-def test_vitals_only_rmae(num_pigs=-1, npts=1000, phase=None):
-  ds_factor = 25
-  valid_labels = None if phase is None else [phase]
-  pig_data = load_pig_data(
-      num_pigs, ds_factor=ds_factor, valid_labels=valid_labels)
-
-  data_frequency = int(_PIG_DATA_FREQUENCY / ds_factor)
-  window_size = int(_WINDOW_SIZE_IN_S * data_frequency)
-  tr_frac = 0.8
-  tr_all_data, te_all_data = split_pigs_into_train_test(
-      pig_data, tr_frac=tr_frac, window_size=window_size)
-  tr_wtstamps, tr_wdata, tr_wlabels = tr_all_data
-  te_wtstamps, te_wdata, te_wlabels = te_all_data
-
-  tr_w_ffts = fft_featurize_pig_data(tr_wdata[0])
-  te_w_ffts = fft_featurize_pig_data(te_wdata[0])
-
+def test_rmae(args):
   drop_scale = True
   zero_at_input = True
-  v_sizes = [tr_w_ffts[vi].shape[1] for vi in tr_w_ffts]
-  config = default_RMAE_config(v_sizes)
 
-  config.drop_scale = drop_scale
-  config.zero_at_input = zero_at_input
-  config.max_iters = 10000
+  window_size = args.wsize
+  npts = args.n_pts
+  win_data, cmas_data = load_cmas_data(window_size=window_size)
+
+  # Fit model.
+  tr_w_ffts = cmas_data["train"]
+  te_w_ffts = cmas_data["test"]
+  tr_wdata = win_data["train"]["features"]
+  te_wdata = win_data["test"]["features"]
+
+  dsets = {"Train": tr_wdata, "Test": te_wdata}
+
+  if npts > 0:
+    tr_w_ffts = {vi: d[:npts] for vi, d in tr_w_ffts.items()}
 
   # IPython.embed()
+  v_sizes = [tr_w_ffts[vi].shape[1] for vi in tr_w_ffts]
+  config = default_RMAE_config(v_sizes)
+  config.drop_scale = drop_scale
+  config.zero_at_input = zero_at_input
+  config.max_iters = args.n_iters
+
   model = robust_multi_ae.RobustMultiAutoEncoder(config)
+  # try:
   model.fit(tr_w_ffts)
-  # vlens = [data[vi].shape[1] for vi in range(len(data))]
-  # msplit_inds = np.cumsum(vlens)[:-1]
-  # preds = model.predict(te_w_ffts)
-  # pred_ts = reconstruct_ts(preds, output_len=window_size)
+  # except Exception as e:
+  #   print("Something went wrong with training.")
+  #   IPython.embed()
   IPython.embed()
+  globals().update(locals())
   vlens = [tr_w_ffts[vi].shape[1] for vi in range(len(tr_w_ffts))]
   msplit_inds = np.cumsum(vlens)[:-1]
-  view_subset = [1, 2, 3, 4, 5, 6, 10] #None
-  msplit_names = [pig_videos.VS_MAP[vidx] for vidx in view_subset]
+  view_subset = msplit_names = []
 
   tr_preds = model.predict(tr_w_ffts)
   te_preds = model.predict(te_w_ffts)
@@ -296,21 +301,110 @@ def test_vitals_only_rmae(num_pigs=-1, npts=1000, phase=None):
   tr_preds_ts = reconstruct_ts(tr_preds, window_size)
   te_preds_ts = reconstruct_ts(te_preds, window_size)
 
-  dsets_ts = {"Train": tr_wdata[0], "Test": te_wdata[0]}
+  dsets_ts = {"Train": tr_wdata, "Test": te_wdata}
   dsets_pred_ts = {"Train": tr_preds_ts, "Test": te_preds_ts}
+  # IPython.embed()
 
-  # plot_heatmap(model.nullspace_matrix(), msplit_inds
+  # For plotting:
+  globals().update(locals())
+  nrows = 6
+  ncols = 4
+
+  n_channels = len(tr_w_ffts)
+  nwin = 5
+  wsize = window_size
+  ndisp = -1
+  labels = ["Ground Truth", "Recon."]
+  title = ""
+  for dset_used in dsets_ts:
+    fig, axs = plt.subplots(nrows, ncols)
+    mng = plt.get_current_fig_manager()
+    mng.window.showMaximized()
+    plt_ts = dsets_ts[dset_used]
+    plt_pred_ts = dsets_pred_ts[dset_used]
+    for i in range(n_channels):
+      if i >= nrows * ncols:
+        break
+      row, col = i // ncols, (i % ncols)
+      if nrows == 1:
+        ax = axs[col]
+      elif ncols == 1:
+        ax = axs[row]
+      else:
+        ax = axs[row, col]
+
+      tvals = [plt_ts[:, :, [i]], plt_pred_ts[i]]
+
+      plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax)
+    fig.suptitle("Dataset: %s" % dset_used)
+
+  # lnum = valid_labels[0]
+  # fl = "nmat_lbl_%i_opt.npy" % lnum
+  # idx = 0 
+  # while os.path.exists(fl):
+  #    fl = "nmat_lbl_%i_opt%i.npy" % (lnum, idx)
+  #    idx += 1
+  # np.save(fl, model.nullspace_matrix()) 
+
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds, msplit_names)
+
+
+def test_greedy(args):
+  window_size = args.wsize
+  npts = args.npts
+  win_data, cmas_data = load_cmas_data(window_size=window_size)
+
+  # Fit model.
+  tr_w_ffts = cmas_data["train"]
+  te_w_ffts = cmas_data["test"]
+  tr_wdata = win_data["train"]["features"]
+  te_wdata = win_data["test"]["features"]
+  # globals().update(locals())
+  # if npts > 0:
+  #   data = {vi: d[:npts] for vi, d in data.items()}
+  config = default_GMVRL_config(sv_type="nn")
+  config.single_view_config.lambda_reg = 1e-2
+  config.single_view_config.regularizer = "L1"
+  config.single_view_config.max_iters = 200
+
+  # IPython.embed()
+  config.parallel = False
+  config.single_view_config.parallel = True
+  # config.lambda_global = 0  #1e-1
+  # config.lambda_group = 0 #0.5  #1e-1
+  # config.sp_eps = 5e-5
+  # config.n_solves = 1
+
+  model = greedy_multi_view_rl.GreedyMVRL(config)
+  model.fit(data)
+  # globals().update(locals())
+  vlens = [data[vi].shape[1] for vi in range(len(data))]
+  msplit_inds = np.cumsum(vlens)[:-1]
+
+  # model.compute_projections(ng)
+  # projections = model.view_projections
+  # for i in projections: 
+  #   for j in projections[i]: 
+  #     projections[i][j] = projections[i][j].T
+  ng = 1
+  for ng in range(1, 4):
+    plot_heatmap(model.nullspace_matrix(None, ng), msplit_inds, "%i greedy views" % ng)
+    plt.show()
+  IPython.embed()
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds)
 
 
 _TEST_FUNCS = {
     0: test_nn,
+    1: test_rmae,
+    2: test_greedy,
 }
 if __name__ == "__main__":
   np.set_printoptions(linewidth=1000, precision=3, suppress=True)
   torch.set_printoptions(precision=3)
   options = [
-      ("npts", int, "Number of points", 1000),
-      ("wsize", int, "Number of t-steps per window", 20),
+      ("n_pts", int, "Number of points", 1000),
+      ("w_size", int, "Number of t-steps per window", 20),
       ("n_jobs", int, "Number of processes to run in parallel", 3),
       ("n_iters", int, "Number of iterations of training", 1000),
       ]

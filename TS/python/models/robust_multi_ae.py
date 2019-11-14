@@ -6,10 +6,9 @@ from torch import nn
 from torch import optim
 import time
 
-from models import multi_ae
+from models import multi_ae, torch_models
 from models.model_base import ModelException
-from utils import utils
-import utils.torch_utils as tu
+from utils import utils, torch_utils
 from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 
 import IPython
@@ -48,7 +47,8 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
          for vi in range(self._nviews)])
     self.config.joint_coder_params.input_size = input_size
     self.config.joint_coder_params.output_size = self.config.code_size
-    self._joint_coder = tu.MultiLayerNN(self.config.joint_coder_params)
+    self._joint_coder = torch_models.MultiLayerNN(
+        self.config.joint_coder_params)
 
   def _encode_view(self, xv, vi):
     if not isinstance(xv, torch.Tensor):

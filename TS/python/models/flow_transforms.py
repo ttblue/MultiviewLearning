@@ -33,8 +33,9 @@ class TfmConfig(BaseConfig):
   def __init__(
       self, tfm_type="scale_shift_coupling", neg_slope=0.01, scale_config=None,
       shift_config=None, shared_wts=False, ltfm_config=None, bias_config=None,
-      has_bias=True, lr=1e-3, batch_size=50, max_iters=1000, reg_coeff=.1,
-      stopping_eps=1e-5, *args, **kwargs):
+      has_bias=True, base_dist="gaussian", reg_coeff=.1, lr=1e-3, batch_size=50,
+      max_iters=1000, stopping_eps=1e-5, num_stopping_iter=10,
+      *args, **kwargs):
     super(TfmConfig, self).__init__(*args, **kwargs)
 
     self.tfm_type = tfm_type.lower()
@@ -54,11 +55,13 @@ class TfmConfig(BaseConfig):
     self.has_bias = has_bias
 
     # Some misc. parameters if training transforms only
+    self.base_dist = "gaussian"
     self.reg_coeff = reg_coeff
     self.lr = lr
     self.batch_size = batch_size
     self.max_iters = max_iters
     self.stopping_eps = stopping_eps
+    self.num_stopping_iter = num_stopping_iter
 
 
 class InvertibleTransform(nn.Module):
@@ -75,64 +78,112 @@ class InvertibleTransform(nn.Module):
   def inverse(self, y):
     raise NotImplementedError("Abstract class method")
 
-  def loss(self, x_tfm, y, log_jac_det):
+  def loss_nll(self, z, log_jac_det):
+    z_ll = self.base_log_likelihood(z)
+    # nll_orig = -torch.sum(log_jac_det + z_ll)
+    nll_orig = -torch.sum(z_ll)
+    return nll_orig
+
+  def loss_err(self, x_tfm, y, log_jac_det):
     recon_error = self.recon_criterion(x_tfm, y)
-    logdet_reg = -torch.mean(log_jac_det)
+    logdet_reg = -torch.sum(log_jac_det)
     loss_val = recon_error + self.config.reg_coeff * torch.abs(logdet_reg)
     return loss_val
 
   def _train_loop(self):
     shuffle_inds = np.random.permutation(self._npts)
-    x, y = self._x[shuffle_inds], self._y[shuffle_inds]
+    x = self._x[shuffle_inds]
+    y = None if self._y is None else self._y[shuffle_inds]
+
     self.itr_loss = 0.
     for bidx in range(self._n_batches):
       b_start = bidx * self.config.batch_size
       b_end = b_start + self.config.batch_size
-      x_batch, y_batch = x[b_start:b_end], y[b_start:b_end]
+      x_batch = x[b_start:b_end]
       x_tfm_batch, jac_logdet = self.forward(
           x_batch, rtn_torch=True, rtn_logdet=True)
-      # keep_subsets = next(self._view_subset_shuffler)
-      # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
+      if y is not None:
+        y_batch = y[b_start:b_end]
+
       self.opt.zero_grad()
-      loss_val = self.loss(x_tfm_batch, y_batch, jac_logdet)
+      loss_val = (
+          # Reconstruction loss
+          self.loss_err(x_tfm_batch, y_batch, jac_logdet)
+          if y is not None else
+          # Generative model -- log likelihood loss
+          self.loss_nll(x_tfm_batch, jac_logdet)
+      ) / x_batch.shape[0]
+
       loss_val.backward()
       self.opt.step()
       self.itr_loss += loss_val
+    self.itr_loss /= self._npts
 
-    if self.itr_loss.detach() < self.config.stopping_eps:
-      self._finished_training = True
+    curr_loss = float(self.itr_loss.detach())
+    if np.abs(self._prev_loss - curr_loss) < self.config.stopping_eps:
+      self._stop_iters += 1
+      if self._stop_iters >= self.config.num_stopping_iter:
+        self._finished_training = True
+    else:
+      self._stop_iters = 0
+    self._prev_loss = curr_loss
 
-  def fit(self, x, y):
+  def _get_avg_grad_val(self):
+    # Just for debugging
+    p_grads = [p.grad for p in self.parameters()]
+    num_params = sum([pg.numel() for pg in p_grads])
+    abs_sum_grad = sum([pg.abs().sum() for pg in p_grads])
+    return abs_sum_grad / num_params
+
+  def fit(self, x, y=None):
     # Simple fitting procedure for transforming x to y
     if self.config.verbose:
       all_start_time = time.time()
-      print("Starting training loop.")
+    self._x = torch_utils.numpy_to_torch(x)
+    self._y = None if y is None else torch_utils.numpy_to_torch(y)
+    self._npts, self._dim = self._x.shape
 
-    self._x, self._y = map(torch_utils.numpy_to_torch, [x, y])
-    self._npts = self._x.shape[0]
+    if y is None:
+      if self.config.base_dist != "gaussian":
+        raise NotImplementedError(
+            "Base dist. type %s not implemented." % self.config.base_dist)
+      self.recon_criterion = None
+      loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+      self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
+      self.base_log_likelihood = self.base_dist.log_prob
+    else:
+      self.recon_criterion = nn.MSELoss(reduction="mean")
+      self.base_log_likelihood = None
 
-    self.recon_criterion = nn.MSELoss(reduction="mean")
     self.opt = optim.Adam(self.parameters(), self.config.lr)
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
     self._finished_training = False
     self._loss_history = []
+    self._avg_grad_history = []
+    self._prev_loss = np.inf
+    self._stop_iters = 0
     try:
       for itr in range(self.config.max_iters):
         if self.config.verbose:
           itr_start_time = time.time()
+
         self._train_loop()
         self._loss_history.append(float(self.itr_loss.detach()))
+        self._avg_grad_history.append(float(self._get_avg_grad_val().detach()))
+
         if self._finished_training:
           if self.config.verbose:
-            print("\nLoss < stopping eps. Finished training.")
+            print("\nLoss change < stopping eps for multiple iters."
+                  "Finished training.")
           break
         if self.config.verbose:
+          avg_grad = self._get_avg_grad_val()
           itr_diff_time = time.time() - itr_start_time
           loss_val = float(self.itr_loss.detach())
-          print("Iteration %i out of %i (in %.2fs). Loss: %.5f" %
-                (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
-                end='\r')
+          print("Iteration %i out of %i (in %.2fs). Loss: %.5f. Stop iter: %i"%
+                (itr + 1, self.config.max_iters, itr_diff_time, loss_val,
+                 self._stop_iters), end='\r')
       if self.config.verbose:
         print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
               (itr + 1, self.config.max_iters, itr_diff_time, loss_val))
@@ -141,6 +192,11 @@ class InvertibleTransform(nn.Module):
     self.eval()
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
     return self
+
+  def sample(self, n_samples=1):
+    z_samples = self.base_dist.sample((n_samples,))
+    x_samples = self.inverse(z_samples)
+    return x_samples
 
 
 class ReverseTransform(InvertibleTransform):
@@ -442,10 +498,12 @@ _TFM_TYPES = {
     "scale_shift_coupling": ScaleShiftCouplingTransform,
     "fixed_linear": FixedLinearTransformation,
 }
-def make_transform(config, init_args=None):
+def make_transform(config, init_args=None, comp_config=None):
   if isinstance(config, list):
     tfm_list = [make_transform(cfg) for cfg in config]
-    return CompositionTransform(TfmConfig("composition"), tfm_list, init_args)
+    comp_config = (
+        TfmConfig("composition") if comp_config is None else comp_config)
+    return CompositionTransform(comp_config, tfm_list, init_args)
 
   if config.tfm_type not in _TFM_TYPES:
     raise TypeError(

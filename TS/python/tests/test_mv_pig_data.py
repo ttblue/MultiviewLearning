@@ -160,6 +160,8 @@ def default_RMAE_config(v_sizes):
   hidden_size = 16
   joint_code_size = 32
 
+  dropout_p = 0.0
+
   # Default Encoder config:
   output_size = hidden_size
   layer_units = [32] # [32, 64]
@@ -174,7 +176,7 @@ def default_RMAE_config(v_sizes):
     encoder_params[i] = torch_models.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
-        last_activation=last_activation, use_vae=use_vae)
+        last_activation=last_activation, use_vae=use_vae, dropout_p=dropout_p)
 
   input_size = joint_code_size
   layer_units = [32]  #[64, 32]
@@ -188,7 +190,7 @@ def default_RMAE_config(v_sizes):
     decoder_params[i] = torch_models.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
-      last_activation=last_activation, use_vae=use_vae)
+      last_activation=last_activation, use_vae=use_vae, dropout_p=dropout_p)
 
   input_size = hidden_size * len(v_sizes)
   output_size = joint_code_size
@@ -199,7 +201,7 @@ def default_RMAE_config(v_sizes):
   joint_coder_params = torch_models.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
-      last_activation=last_activation, use_vae=use_vae)
+      last_activation=last_activation, use_vae=use_vae, dropout_p=dropout_p)
 
   drop_scale = True
   zero_at_input = True
