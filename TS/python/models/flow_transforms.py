@@ -78,15 +78,18 @@ class InvertibleTransform(nn.Module):
   def inverse(self, y):
     raise NotImplementedError("Abstract class method")
 
+  def log_likelihood(self, x):
+    z, log_det = self(x, rtn_torch=True, rtn_logdet=True)
+    return self.base_log_likelihood(z) + log_det
+
   def loss_nll(self, z, log_jac_det):
     z_ll = self.base_log_likelihood(z)
-    # nll_orig = -torch.sum(log_jac_det + z_ll)
-    nll_orig = -torch.sum(z_ll)
+    nll_orig = -torch.mean(log_jac_det + z_ll)
     return nll_orig
 
   def loss_err(self, x_tfm, y, log_jac_det):
     recon_error = self.recon_criterion(x_tfm, y)
-    logdet_reg = -torch.sum(log_jac_det)
+    logdet_reg = -torch.mean(log_jac_det)
     loss_val = recon_error + self.config.reg_coeff * torch.abs(logdet_reg)
     return loss_val
 
@@ -112,11 +115,13 @@ class InvertibleTransform(nn.Module):
           if y is not None else
           # Generative model -- log likelihood loss
           self.loss_nll(x_tfm_batch, jac_logdet)
-      ) / x_batch.shape[0]
+      )
 
       loss_val.backward()
+      if np.isnan(float(self._get_avg_grad_val())):
+        IPython.embed()
       self.opt.step()
-      self.itr_loss += loss_val
+      self.itr_loss += loss_val * x_batch.shape[0]
     self.itr_loss /= self._npts
 
     curr_loss = float(self.itr_loss.detach())
@@ -164,6 +169,7 @@ class InvertibleTransform(nn.Module):
     self._prev_loss = np.inf
     self._stop_iters = 0
     try:
+      itr = -1
       for itr in range(self.config.max_iters):
         if self.config.verbose:
           itr_start_time = time.time()
@@ -184,7 +190,7 @@ class InvertibleTransform(nn.Module):
           print("Iteration %i out of %i (in %.2fs). Loss: %.5f. Stop iter: %i"%
                 (itr + 1, self.config.max_iters, itr_diff_time, loss_val,
                  self._stop_iters), end='\r')
-      if self.config.verbose:
+      if self.config.verbose and itr >= 0:
         print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
               (itr + 1, self.config.max_iters, itr_diff_time, loss_val))
     except KeyboardInterrupt:
@@ -228,7 +234,7 @@ class LeakyReLUTransform(InvertibleTransform):
     neg_slope = self.config.neg_slope
     self._relu_func = torch.nn.LeakyReLU(negative_slope=neg_slope)
     self._inv_func = torch.nn.LeakyReLU(negative_slope=(1. / neg_slope))
-    self._log_slope = np.log(neg_slope)
+    self._log_slope = np.log(np.abs(neg_slope))
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -287,7 +293,7 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
         input_size=self._fixed_dim, output_size=self._output_dim)
     self._scale_tfm = torch_models.MultiLayerNN(self.config.scale_config)
     self._shift_tfm = torch_models.MultiLayerNN(shift_config)
-    
+
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     y = torch.zeros_like(x)

@@ -8,7 +8,7 @@ from utils import math_utils
 ################################################################################
 # Transform related toy data:
 
-def coupled_scale_shift_tfm(X, bit_mask, W=None, gamma=0.1):
+def coupled_scale_shift_tfm(X, bit_mask, W=None, gamma=1):
   bit_mask = bit_mask.astype("bool")
   ndim = bit_mask.shape[0]
   nfixed = bit_mask.sum()

@@ -183,7 +183,6 @@ class RecurrentARM(AbstractLikelihood):
     # TODO: maybe just define RNN cell instead of using torch_utils?
     self._rnn_cell = None
 
-
   def g_func(self, x_i, h_prev, *args, **kwargs):
     if h_prev is None:
 
