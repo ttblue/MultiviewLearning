@@ -88,16 +88,13 @@ class SingleIterationNNSolver(nn.Module):
     self._norm_p = _TORCH_NORM_MAP.get(reg, reg)
     self._lambda_reg = self.config.lambda_reg
 
-    self._p_tfms = {}
+    self._p_tfms = nn.ModuleDict()
     self._p_last_layers = {}
     # Setup fixed-view projections
     for vi in self.trainable_views:
       vi_config = self.config.nn_config.copy()
       vi_config.set_sizes(input_size=self._view_data[vi].shape[1])
       vi_transform = torch_utils.MultiLayerNN(vi_config)
-      module_name = (
-          "new_transform" if vi == new_view_id else "fixed_transform_%i" % vi)
-      self.add_module(module_name, vi_transform)
       self._p_tfms[vi] = vi_transform
 
       vi_layer = vi_transform.get_layer_params(-1)

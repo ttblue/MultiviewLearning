@@ -316,16 +316,14 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
     self._lambda_group = self.config.lambda_group
 
     self.config.nn_config.set_sizes(output_size=self._dim)
-    self._p_tfms = {}
+    self._p_tfms = nn.ModuleDict()
     self._p_last_layers = {}
     for vi in self._rest_data:
       vi_config = self.config.nn_config.copy()
       vi_config.set_sizes(input_size=self._rest_data[vi].shape[1])
-      # IPython.embed()
       vi_transform = torch_models.MultiLayerNN(vi_config)
-
-      self.add_module("transform_%i" % vi, vi_transform)
       self._p_tfms[vi] = vi_transform
+
       vi_layer = vi_transform.get_layer_params(-1)
       # IPython.embed()
       if vi_layer.bias is None:

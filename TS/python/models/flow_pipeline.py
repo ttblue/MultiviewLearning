@@ -41,11 +41,10 @@ class MultiviewFlowTrainer(nn.Module):
     self._shared_tfm = flow_transforms.make_transform(
         self.config.shared_tfm_config_list, shared_tfm_init_args)
     self._nviews = len(self.config.view_tfm_config_lists)
-    self._view_tfms = {}
+    self._view_tfms = nn.ModuleDict()
     for vi, cfg_list in self.config.view_tfm_config_lists,items():
       init_args = view_tfm_init_args[vi]
       tfm = flow_transforms.make_transform(cfg_list, init_args)
-      self.add_module("view_%i_tfm" % vi, tfm)
       self._view_tfms[vi] = tfm
 
     # Likelihood initializations
@@ -63,7 +62,7 @@ class MultiviewFlowTrainer(nn.Module):
     }
     if rtn_logdet:
       log_jac_det = torch.sum(
-          torch.cat([z_vi[1] for z_vi in z_vs.values()], 1))
+          torch.cat([z_vi[1] for z_vi in z_vs.values()], 1), 1)
       z_vs = {vi: zvi[0] for vi, zvi in z_vs.items()}
     zvs_cat = self._cat_views(z_vs)
 

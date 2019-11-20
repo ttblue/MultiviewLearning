@@ -100,19 +100,14 @@ class MultiAutoEncoder(nn.Module):
 
   def _initialize_layers(self):
     # Encoder and decoder params
-    self._en_layers = {}
-    self._de_layers = {}
-
-    # Need to call "add_module" so the parameters are found.
-    def set_value(vdict, key, name, value):
-      self.add_module(name, value)
-      vdict[key] = value
+    self._en_layers = nn.ModuleDict()
+    self._de_layers = nn.ModuleDict()
 
     for vi in range(self._nviews):
-      set_value(self._en_layers, vi, "en_%i" % vi,
-                torch_models.MultiLayerNN(self.config.encoder_params[vi]))
-      set_value(self._de_layers, vi, "de_%i" % vi,
-                torch_models.MultiLayerNN(self.config.decoder_params[vi]))
+      self._en_layers[vi] = torch_models.MultiLayerNN(
+          self.config.encoder_params[vi])
+      self._de_layers[vi] = torch_models.MultiLayerNN(
+          self.config.decoder_params[vi])
 
   def _split_views(self, x, rtn_torch=True):
     if isinstance(x, torch.Tensor):

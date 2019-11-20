@@ -18,8 +18,8 @@ from torch import autograd
 from torch import nn
 from torch import optim
 
-import torch_utils as tu
-from torch_utils import _DTYPE, _TENSOR_FUNC
+from models import torch_models
+from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 
 import IPython
 
@@ -53,7 +53,7 @@ class MRNNAEConfig(object):
 #   activation = nn.functional.relu
 #   last_activation = None
 #   encoder_params = {
-#       i: tu.MNNConfig(
+#       i: torch_models.MNNConfig(
 #           input_size=v_sizes[i],
 #           output_size=output_size,
 #           layer_units=layer_units,
@@ -67,7 +67,7 @@ class MRNNAEConfig(object):
 #   is_encoder = False
 #   last_activation = nn.sigmoid
 #   decoder_params = {
-#       i: tu.MNNConfig(
+#       i: torch_models.MNNConfig(
 #           input_size=input_size,
 #           output_size=v_sizes[i],
 #           layer_units=layer_units,
@@ -111,8 +111,8 @@ class MultiRNNAutoEncoder(nn.Module):
 
   def _initialize_layers(self):
     # Initialize encoder:
-    self._encoder = {}
-    self._decoder = {}
+    self._encoder = nn.ModuleDict
+    self._decoder = nn.ModuleDict
     module_dict = {"enc":self._encoder, "dec":self._decoder}
     for vi in range(self._n_views):
       params = {
@@ -128,7 +128,6 @@ class MultiRNNAutoEncoder(nn.Module):
           all_ops.append(layer)
 
         module_op = nn.Sequential(*all_ops)
-        self.add_module("%s_%i" % (ptype, vi), module_op)
         module_dict[ptype][vi] = module_op
 
   # def _initialize_layers(self):
@@ -136,18 +135,13 @@ class MultiRNNAutoEncoder(nn.Module):
   #   # 1. RNN layers
   #   # 2. Pre-RNN feedforward NN layers
   #   # 3. Post-RNN feedforward NN layers
-  #   self._pre_en_layers = {}
-  #   self._en_rnn = {}
-  #   self._post_en_layers = {}
+  #   self._pre_en_layers = nn.ModuleDict()
+  #   self._en_rnn = nn.ModuleDict()
+  #   self._post_en_layers = nn.ModuleDict()
 
-  #   self._pre_de_layers = {}
-  #   self._de_rnn = {}
-  #   self._post_de_layers = {}
-
-  #   # Need to call "add_module" so the parameters are found.
-  #   def set_value(vdict, key, name, value):
-  #     self.add_module(name, value)
-  #     vdict[key] = value
+  #   self._pre_de_layers = nn.ModuleDict()
+  #   self._de_rnn = nn.ModuleDict()
+  #   self._post_de_layers = nn.ModuleDict()
 
   #   for vi in range(self._n_views):
   #     # TODO: For now, we don't want the pre-encoding/decoding stage to have
@@ -160,19 +154,19 @@ class MultiRNNAutoEncoder(nn.Module):
   #     # Over-ride individual layer info if not using vae
   #     self.config.post_en_params[vi].use_vae = self.config.use_vae
 
-  #     set_value(self._pre_en_layers, vi, "pre_en_%i" % vi,
-  #               tu.MultiLayerNN(self.config.pre_en_params[vi]))
-  #     set_value(self._en_rnn, vi, "en_rnn_%i" % vi,
-  #               tu.RNNWrapper(self.config.en_rnn_params[vi]))
-  #     set_value(self._post_en_layers, vi, "post_en_%i" % vi,
-  #               tu.MultiLayerNN(self.config.post_en_params[vi]))
+      self._pre_en_layers[vi] = torch_models.MultiLayerNN(
+          self.config.pre_en_params[vi])
+      self._en_rnn[vi]= torch_models.RNNWrapper(
+          self.config.en_rnn_params[vi])
+      self._post_en_layers[vi] = torch_models.MultiLayerNN(
+          self.config.post_en_params[vi])
 
-  #     set_value(self._pre_de_layers, vi, "pre_de_%i" % vi,
-  #               tu.MultiLayerNN(self.config.pre_de_params[vi]))
-  #     set_value(self._de_rnn, vi, "de_rnn_%i" % vi,
-  #               tu.RNNWrapper(self.config.de_rnn_params[vi]))
-  #     set_value(self._post_de_layers, vi, "post_de_%i" % vi,
-  #               tu.MultiLayerNN(self.config.post_de_params[vi]))
+      self._pre_de_layers[vi] = torch_models.MultiLayerNN(
+          self.config.pre_de_params[vi])
+      self._de_rnn[vi] = torch_models.RNNWrapper(
+          self.config.de_rnn_params[vi])
+      self._post_de_layers[vi] = torch_models.MultiLayerNN(
+          self.config.post_de_params[vi])
 
   def _setup_optimizer(self):
     self.opt = optim.Adam(self.parameters(), self.config.lr)

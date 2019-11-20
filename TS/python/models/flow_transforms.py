@@ -4,7 +4,7 @@ import torch
 from torch import nn, optim
 import time
 
-from models import torch_models
+from models import torch_models, flow_likelihood
 from models.model_base import ModelException, BaseConfig
 from utils import math_utils, torch_utils
 
@@ -27,6 +27,7 @@ import IPython
 # 1. Recurrent
 # 2. Recurrent Scale
 # 3. RNNCoupling
+_BASE_DISTS = ["gaussian"]
 
 class TfmConfig(BaseConfig):
   # General config object for all transforms
@@ -140,7 +141,7 @@ class InvertibleTransform(nn.Module):
     abs_sum_grad = sum([pg.abs().sum() for pg in p_grads])
     return abs_sum_grad / num_params
 
-  def fit(self, x, y=None):
+  def fit(self, x, y=None, lhood_model=None):
     # Simple fitting procedure for transforming x to y
     if self.config.verbose:
       all_start_time = time.time()
@@ -149,12 +150,18 @@ class InvertibleTransform(nn.Module):
     self._npts, self._dim = self._x.shape
 
     if y is None:
-      if self.config.base_dist != "gaussian":
-        raise NotImplementedError(
-            "Base dist. type %s not implemented." % self.config.base_dist)
+      if lhood_model is None:
+        if self.config.base_dist not in _BASE_DISTS:
+          raise NotImplementedError(
+              "Base dist. type %s not implemented and likelihood model"
+              " not provided." % self.config.base_dist)
+        else:
+          loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+          self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
+      else:
+        self.base_dist = lhood_model
+
       self.recon_criterion = None
-      loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
-      self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
       self.base_log_likelihood = self.base_dist.log_prob
     else:
       self.recon_criterion = nn.MSELoss(reduction="mean")
@@ -200,7 +207,7 @@ class InvertibleTransform(nn.Module):
     return self
 
   def sample(self, n_samples=1):
-    z_samples = self.base_dist.sample((n_samples,))
+    z_samples = self.base_dist.sample((n_samples, self._dim))
     x_samples = self.inverse(z_samples)
     return x_samples
 
@@ -453,9 +460,7 @@ class CompositionTransform(InvertibleTransform):
       self.initialize(tfm_list, init_args)
 
   def _set_transform_ordered_list(self, tfm_list):
-    self._tfm_list = tfm_list
-    for i, tfm in enumerate(tfm_list):
-      self.add_module("tfm_%i" % i, tfm)
+    self._tfm_list = nn.ModuleList(tfm_list)
 
   def initialize(self, tfm_list, init_args=None, *args, **kwargs):
     if tfm_list:

@@ -242,31 +242,23 @@ class SeqStarGAN(nn.Module):
     # D: Generator of reconstruction residual for each view
     # E: Discriminator of real data for each view
 
-    self._encoders = {}  # module A
-    self._decoders = {}  # module B
+    self._encoders = nn.ModuleDict()  # module A
+    self._decoders = nn.ModuleDict()  # module B
     if self.config.use_gen_dis:
-      self._generators = {}  # module D
-      self._discriminators = {}  # module E
+      self._generators = nn.ModuleDict()  # module D
+      self._discriminators = nn.ModuleDict()  # module E
 
     # Module C is common across all views
     self._classifier = LatentClassifier(self.config.classifier_params)
 
-    # Need to call "add_module" so the parameters are found.
-    def set_value(vdict, key, name, value):
-      self.add_module(name, value)
-      vdict[key] = value
-
     for vi in range(self._n_views):
-      set_value(self._encoders, vi, "_encoder_%i" % vi,
-                EncoderDecoder(self.config.encoder_params[vi]))
-      set_value(self._decoders, vi, "_decoder_%i" % vi,
-                EncoderDecoder(self.config.decoder_params[vi]))
+      self._encoders[vi] = EncoderDecoder(self.config.encoder_params[vi])
+      self._decoders[vi] = EncoderDecoder(self.config.decoder_params[vi])
 
       if self.config.use_gen_dis:
-        set_value(self._generators, vi, "_generator_%i" % vi,
-                  EncoderDecoder(self.config.generator_params[vi]))
-        set_value(self._discriminators, vi, "discriminator_%i" % vi,
-                  ViewDiscriminator(self.config.discriminator_params[vi]))
+        self._generators[vi] = EncoderDecoder(self.config.generator_params[vi])
+        self._discriminators[vi] = ViewDiscriminator(
+            self.config.discriminator_params[vi])
 
   def get_parameters(self, psets="all"):
     if not isinstance(psets, list):
