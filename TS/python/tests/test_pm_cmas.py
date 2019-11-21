@@ -368,7 +368,7 @@ def test_greedy(args):
   config.single_view_config.max_iters = args.max_iters
 
   config.parallel = False
-  config.single_view_config.parallel = False
+  config.single_view_config.parallel = True
   # config.lambda_global = 0  #1e-1
   # config.lambda_group = 0 #0.5  #1e-1
   # config.sp_eps = 5e-5
@@ -376,8 +376,6 @@ def test_greedy(args):
 
   model = greedy_multi_view_rl.GreedyMVRL(config)
   IPython.embed()
-  n_views = 3
-  tr_w_ffts2 = {vi: tr_w_ffts[vi] for i, vi in enumerate(tr_w_ffts.keys()) if vi < n_views}
   model.fit(tr_w_ffts)
   IPython.embed()
   # globals().update(locals())
