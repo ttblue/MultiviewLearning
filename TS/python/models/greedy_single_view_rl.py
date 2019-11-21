@@ -9,6 +9,7 @@ from torch import nn, optim
 from models.model_base import ModelException, BaseConfig
 from models.naive_single_view_rl import\
     AbstractSVSConfig, AbstractSingleViewSolver
+from models import torch_models
 from utils import cvx_utils, torch_utils, utils
 
 
@@ -94,8 +95,8 @@ class SingleIterationNNSolver(nn.Module):
     for vi in self.trainable_views:
       vi_config = self.config.nn_config.copy()
       vi_config.set_sizes(input_size=self._view_data[vi].shape[1])
-      vi_transform = torch_utils.MultiLayerNN(vi_config)
-      self._p_tfms[vi] = vi_transform
+      vi_transform = torch_models.MultiLayerNN(vi_config)
+      self._p_tfms["T%i"%vi] = vi_transform
 
       vi_layer = vi_transform.get_layer_params(-1)
       if vi_layer.bias is None:
@@ -112,7 +113,8 @@ class SingleIterationNNSolver(nn.Module):
   def _reconstruction(self, data=None):
     data = self._view_data if data is None else data
     p_recons = torch.stack(
-        [self._p_tfms[vi](data[vi]) for vi in self._p_tfms], dim=0)
+        [self._p_tfms["T%i"%vi](data[vi]) for vi in self.trainable_views],
+        dim=0)
     return torch.sum(p_recons, dim=0)
 
   def _error(self, data=None):
@@ -132,8 +134,8 @@ class SingleIterationNNSolver(nn.Module):
 
   def forward(self, data):
     # reconstruction = np.sum(
-    #     [self._p_tfms[vi](data[vi])
-    #      for vi in self._p_tfms if vi in data])
+    #     [self._p_tfms["T%i"%i](data[vi])
+    #      for vi in self.trainable_views])
     return self._reconstruction(data)
 
   def loss(self, base_view_data, recons):
@@ -278,6 +280,7 @@ class GreedyNNSolver(AbstractSingleViewSolver):
     result = pool.map_async(view_solve_func, solvers)
     pool.close()
     pool.join()
+
     result = result.get()
 
     obj_vals = [oval for oval, _ in result]

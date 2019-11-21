@@ -124,12 +124,11 @@ def fft_featurize_data(window_data):
     config = ts_fourier_featurization.FFConfig(
         ndim=_FFT_DIM, use_imag=False, verbose=True)
     _FFT_MODEL = ts_fourier_featurization.TimeSeriesFourierFeaturizer(config)
-    # if os.path.exists(fft_model_file):
-    #  print("Loading fft model.")
-    #  _FFT_MODEL.load_from_file(fft_model_file)
-    #  _FFT_MODEL.config.ndim = _FFT_DIM
-    #else:
-    if 1:
+    if os.path.exists(fft_model_file):
+      print("Loading fft model.")
+      _FFT_MODEL.load_from_file(fft_model_file)
+      _FFT_MODEL.config.ndim = _FFT_DIM
+    else:
       print("Training and saving fft model.")
       _FFT_MODEL.fit(feat, ts)
       _FFT_MODEL.save_to_file(fft_model_file)
@@ -366,20 +365,23 @@ def test_greedy(args):
   config = default_GMVRL_config(sv_type="nn")
   config.single_view_config.lambda_reg = 1e-2
   config.single_view_config.regularizer = "L1"
-  config.single_view_config.max_iters = 200
+  config.single_view_config.max_iters = args.max_iters
 
-  # IPython.embed()
   config.parallel = False
-  config.single_view_config.parallel = True
+  config.single_view_config.parallel = False
   # config.lambda_global = 0  #1e-1
   # config.lambda_group = 0 #0.5  #1e-1
   # config.sp_eps = 5e-5
   # config.n_solves = 1
 
   model = greedy_multi_view_rl.GreedyMVRL(config)
-  model.fit(tr_wdata)
+  IPython.embed()
+  n_views = 3
+  tr_w_ffts2 = {vi: tr_w_ffts[vi] for i, vi in enumerate(tr_w_ffts.keys()) if vi < n_views}
+  model.fit(tr_w_ffts)
+  IPython.embed()
   # globals().update(locals())
-  vlens = [data[vi].shape[1] for vi in range(len(data))]
+  vlens = [tr_w_ffts[vi].shape[1] for vi in range(len(data))]
   msplit_inds = np.cumsum(vlens)[:-1]
 
   # model.compute_projections(ng)
