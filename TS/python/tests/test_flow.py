@@ -58,6 +58,8 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
   stopping_eps = 1e-5
   num_stopping_iter = 1000
 
+  grad_clip = 2.
+
   verbose = True
 
   config = flow_transforms.TfmConfig(
@@ -66,7 +68,7 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
       bias_config=bias_config, has_bias=has_bias, reg_coeff=reg_coeff,
       base_dist=base_dist, lr=lr, batch_size=batch_size, max_iters=max_iters,
       stopping_eps=stopping_eps, num_stopping_iter=num_stopping_iter,
-      verbose=verbose)
+      grad_clip=grad_clip, verbose=verbose)
   return config
 
 
@@ -77,6 +79,7 @@ def default_likelihood_config(args):
 
   hidden_size = 32
   theta_nn_config = default_nn_config()
+  theta_nn_config.last_activation = torch.nn.Tanh
   cell_type = "LSTM"  # not needed for linear_arm
 
   verbose = True
@@ -93,7 +96,7 @@ def default_pipeline_config():
   pass
 
 
-def make_default_data(args):
+def make_default_data(args, split=False):
   tfm_types = [ "linear"]
   if args.dtype == "single_dim_copy":
     Z = np.concatenate([np.random.randn(args.npts, 1)] * args.ndim, axis=1)
@@ -105,11 +108,28 @@ def make_default_data(args):
     Z, X, tfm_args = flow_toy_data.simple_transform_data(
         args.npts, args.ndim, tfm_types)
 
-  split_frac = [0.8, 0.2]
-  (tr_Z, te_Z), inds = utils.split_data(Z, split_frac, get_inds=True)
-  tr_X, te_X = [X[idx] for idx in inds]
+  if split:
+    split_frac = [0.8, 0.2]
+    (tr_Z, te_Z), inds = utils.split_data(Z, split_frac, get_inds=True)
+    tr_X, te_X = [X[idx] for idx in inds]
 
-  return (tr_Z, te_Z), (tr_X, te_X), tfm_args
+    return (tr_Z, te_Z), (tr_X, te_X), tfm_args
+  return Z, X, tfm_args
+
+
+def make_default_data_X(args, split=False, normalize_scale=None):
+  # Z, X, tfm_args = flow_toy_data.simple_transform_data(
+  #     args.npts, args.ndim, tfm_types)  
+  X = np.random.randn(args.npts, args.ndim)
+  if normalize_scale is not None:
+    X_norm = np.linalg.norm(X, axis=1).reshape(-1, 1)
+    X = X / X_norm * normalize_scale
+
+  if split:
+    split_frac = [0.8, 0.2]
+    tr_X, te_X = utils.split_data(X, split_frac, get_inds=False)
+    return tr_X, te_X
+  return X
 
 
 def make_default_tfm(args, tfm_args=[]):
@@ -175,6 +195,8 @@ def make_default_tfm(args, tfm_args=[]):
 
 
 def make_default_likelihood_model(args):
+  if not args.use_ar:
+    return None
   config = default_likelihood_config(args)
   model = flow_likelihood.make_likelihood_model(config)
   model.initialize(args.ndim)
@@ -183,13 +205,13 @@ def make_default_likelihood_model(args):
 
 
 def simple_test_tfms(args):
-  (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args)
+  (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
   model = make_default_tfm(args, tfm_args)
   config = model.config
   config.batch_size = 1000
   config.lr = 1e-4
   config.reg_coeff = 0.1
-  config.max_iters = 50000
+  config.max_iters = args.max_iters
   config.stopping_eps = 1e-8
   # IPython.embed()
   if args.etype == "gen":
@@ -214,20 +236,47 @@ def simple_test_tfms(args):
     # noise = np.random.randn(*init_mat.shape) * eps
     # linear_tfm.initialize(dim)#, init_mat + noise)
     # model.fit(tr_X, tr_Y)
+  # X = np.r_[tr_X, te_X]
+  # Z = np.r_[tr_Z, te_Z]
+  # X_torch = torch_utils.numpy_to_torch(X)
+  # Z_pred = model(X_torch, True, False)
+  # Z_inv = model.inverse(Z, True)
 
-  X_torch = torch_utils.numpy_to_torch(X)
-  Z_pred = model(X_torch, True, False)
-  Z_inv = model.inverse(Z, True)
+  # IPython.embed()
+
+  # tsne = manifold.TSNE(2)
+  # n_test_samples = args.npts // 2
+  # # samples = np.concatenate(
+  # #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
+  # samples = model.sample(n_test_samples)
+  # X_pred = model.inverse(samples, rtn_torch=False)
+  # X_all = np.r_[X, X_pred]
+  # y = tsne.fit_transform(X_all)
+
+  # plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
+  # plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
+  # plt.show()
+  tr_Z_pred = model(tr_X, False, False)
+  te_Z_pred = model(te_X, False, False)
+  tr_Zinv_pred = model.inverse(tr_Z_pred, False)
+  te_Zinv_pred = model.inverse(te_Z_pred, False)
+
+  n_test_samples = args.npts // 2
+  samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
+  # samples = np.concatenate(
+  #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
+  X_samples = model.inverse(samples, rtn_torch=False)
+  X_all = np.r_[tr_X, te_X, X_samples]
+  Z_all = np.r_[tr_Zinv_pred, te_Zinv_pred, samples]
 
   IPython.embed()
 
   tsne = manifold.TSNE(2)
-  n_test_samples = args.npts // 2
-  samples = np.concatenate(
-      [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
-  X_pred = model.inverse(samples, rtn_torch=False)
-  X_all = np.r_[X, X_pred]
-  y = tsne.fit_transform(X_all)
+  y_x = tsne.fit_transform(X_all)
+  y_z = tsne.fit_transform(Z_all)
+  plot_data = {"x": y_x, "z": y_z}
+  pdtype = "z"
+  y = plot_data[pdtype]
 
   plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
   plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
@@ -235,20 +284,53 @@ def simple_test_tfms(args):
 
 
 def simple_test_tfms_and_likelihood(args):
-  (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args)
-  model = make_default_tfm(args, tfm_args)
+  # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(
+  #     args, split=True, normalize_scale=5)
+  nscale = 5.
+  tr_X, te_X = make_default_data_X(args, split=True, normalize_scale=nscale)
+  model = make_default_tfm(args, tfm_args=[])
   lhood_model = make_default_likelihood_model(args)
 
   config = model.config
   config.batch_size = 1000
   config.lr = 1e-4
   config.reg_coeff = 0.1
-  config.max_iters = 10000
+  config.max_iters = args.max_iters
   config.stopping_eps = 1e-8
 
   model.fit(tr_X, lhood_model=lhood_model)
+  if lhood_model is None:
+    lhood_model = model.base_dist
+
+  IPython.embed()
+  tr_Z_pred = model(tr_X, False, False)
+  te_Z_pred = model(te_X, False, False)
+  tr_Zinv_pred = model.inverse(tr_Z_pred, False)
+  te_Zinv_pred = model.inverse(te_Z_pred, False)
+
+  n_test_samples = args.npts // 2
+  samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
+  # samples = np.concatenate(
+  #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
+  X_samples = model.inverse(samples, rtn_torch=False)
+  X_all = np.r_[tr_X, te_X, X_samples]
+  Z_all = np.r_[tr_Zinv_pred, te_Zinv_pred, samples]
+
   IPython.embed()
 
+  tsne = manifold.TSNE(2)
+  y_x = tsne.fit_transform(X_all)
+  y_z = tsne.fit_transform(Z_all)
+  plot_data = {"x": y_x, "z": y_z}
+  pdtype = "z"
+  y = plot_data[pdtype]
+
+  plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
+  plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
+  plt.show()
+
+  plt.scatter(y[:tr_X.shape[0], 0], y[:tr_X.shape[0], 1], color="b")
+  plt.scatter(y[tr_X.shape[0]:args.npts, 0], y[tr_X.shape[0]:args.npts, 1], color="r")
 
 def test_pipeline(args):
   pass
@@ -267,12 +349,14 @@ if __name__ == "__main__":
       ("dtype", str, "Data type (random/single_dim_copy)", "random"),
       ("npts", int, "Number of points", 1000),
       ("ndim", int, "Dimensions", 10),
+      ("max_iters", int, "Number of iters for opt.", 50000),
       ("num_ss_tfm", int, "Number of shift-scale tfms", 1),
       ("num_lin_tfm", int, "Number of linear tfms", 1),
       ("use_leaky_relu", bool, "Flag for using leaky relu tfm", False),
       ("use_reverse", bool, "Flag for using reverse tfm", False),
       ("dist_type", str, "Base dist. type (gaussian/laplace/logistic)",
        "gaussian"),
+      ("use_ar", bool, "Flag for base dist being an AR model", False),
       ("n_components", int, "Number of components for likelihood MM", 5),
       ]
   args = utils.get_args(options)

@@ -25,7 +25,11 @@ def get_args(options=[]):
   for aname, atype, ahelp, adefault in options:
     if aname[:2] != "--":
       aname = "--" + aname
-    parser.add_argument(aname, type=atype, help=ahelp, default=adefault)
+    if atype is bool:
+      action = "store_false" if adefault else "store_true"
+      parser.add_argument(aname, help=ahelp, default=adefault, action=action)
+    else:
+      parser.add_argument(aname, type=atype, help=ahelp, default=adefault)
   return parser.parse_args()
 
 

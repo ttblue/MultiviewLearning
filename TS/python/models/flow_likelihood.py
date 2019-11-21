@@ -47,7 +47,7 @@ class AbstractLikelihood(nn.Module):
 
 _TORCH_DISTRIBUTIONS = {
     "gaussian": torch.distributions.Normal,
-    "laplace": torch.distributions.Cauchy,
+    "laplace": torch.distributions.Laplace,
     "logistic": torch.distributions.LogisticNormal,
 }
 class SimpleDistributions(nn.Module):
@@ -111,6 +111,7 @@ class ARMixtureModel(AbstractLikelihood):
           "Base dist. type %s not available." % config.dist_type)
 
     self._dim = dim
+    self._torch_dist = _TORCH_DISTRIBUTIONS[self.config.dist_type]
     # The MM parameters are wts, mus, lsigmas (3 sets)
     self.config.theta_nn_config.set_sizes(
         input_size=self.config.hidden_size,
@@ -132,6 +133,7 @@ class ARMixtureModel(AbstractLikelihood):
     # wts: N x d x ncomp of (unnormalized) weights of components
     # mus: N x d x ncomp of component mus
     # lsigmas: N x d x ncomp of component lsigmas
+    x = torch_utils.numpy_to_torch(x)
     N = x.shape[0]
     wts = []
     mus = []
@@ -181,9 +183,37 @@ class ARMixtureModel(AbstractLikelihood):
 
     return log_probs
 
-  def sample(self, shape):
-    if len(shape) == 1 and self._dim > 1:
-      shape = (shape[0], self._dim)
+  def _sample_MM(self, wts, mus, sigmas):
+    samples = []
+    for wts_c, mus_c, sigmas_c in zip(wts, mus, sigmas):
+      # First sample mm component
+      comp_idx = torch.distributions.Categorical(wts_c).sample()
+      # Then sample from component
+      mu, sigma = mus_c[comp_idx], sigmas_c[comp_idx]
+      samples.append(self._torch_dist(mu, sigma).sample())
+    return torch.tensor(samples).view(-1, 1)
+
+  def sample(self, n, rtn_torch=True):
+    dim = self._dim
+    if isinstance(n, tuple) and len(n) > 1:
+      n = n[0]
+      dim = min(self._dim, dim)
+
+    h_i = None
+    z_samples = torch.empty((n, 0))
+    for i in range(dim):
+      # Computing next state from covariates till ith dim and previous state
+      h_i = self.g_func(z_samples, h_i)
+
+      # Computing MM parameters as a function of hidden state
+      wts_i, mus_i, lsigmas_i = self.theta_func(h_i)
+      wts_i = self._normalize_wts(wts_i)
+      sigmas_i = torch.exp(lsigmas_i)
+
+      samples_c = self._sample_MM(wts_i, mus_i, sigmas_i)
+      z_samples = torch.cat([z_samples, samples_c], dim=1)
+
+    return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
 
 
 class LinearARM(ARMixtureModel):

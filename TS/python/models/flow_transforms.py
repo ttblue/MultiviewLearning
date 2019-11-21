@@ -35,7 +35,7 @@ class TfmConfig(BaseConfig):
       self, tfm_type="scale_shift_coupling", neg_slope=0.01, scale_config=None,
       shift_config=None, shared_wts=False, ltfm_config=None, bias_config=None,
       has_bias=True, base_dist="gaussian", reg_coeff=.1, lr=1e-3, batch_size=50,
-      max_iters=1000, stopping_eps=1e-5, num_stopping_iter=10,
+      max_iters=1000, stopping_eps=1e-5, num_stopping_iter=10, grad_clip=5.,
       *args, **kwargs):
     super(TfmConfig, self).__init__(*args, **kwargs)
 
@@ -63,6 +63,7 @@ class TfmConfig(BaseConfig):
     self.max_iters = max_iters
     self.stopping_eps = stopping_eps
     self.num_stopping_iter = num_stopping_iter
+    self.grad_clip = grad_clip
 
 
 class InvertibleTransform(nn.Module):
@@ -79,12 +80,12 @@ class InvertibleTransform(nn.Module):
   def inverse(self, y):
     raise NotImplementedError("Abstract class method")
 
-  def log_likelihood(self, x):
+  def log_prob(self, x):
     z, log_det = self(x, rtn_torch=True, rtn_logdet=True)
-    return self.base_log_likelihood(z) + log_det
+    return self.base_log_prob(z) + log_det
 
   def loss_nll(self, z, log_jac_det):
-    z_ll = self.base_log_likelihood(z)
+    z_ll = self.base_log_prob(z)
     nll_orig = -torch.mean(log_jac_det + z_ll)
     return nll_orig
 
@@ -119,9 +120,11 @@ class InvertibleTransform(nn.Module):
       )
 
       loss_val.backward()
-      if np.isnan(float(self._get_avg_grad_val())):
-        IPython.embed()
+      self._avg_grad = self._get_avg_grad_val()
+      self._max_grad = self._get_max_grad_val()
+      nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
+
       self.itr_loss += loss_val * x_batch.shape[0]
     self.itr_loss /= self._npts
 
@@ -140,6 +143,11 @@ class InvertibleTransform(nn.Module):
     num_params = sum([pg.numel() for pg in p_grads])
     abs_sum_grad = sum([pg.abs().sum() for pg in p_grads])
     return abs_sum_grad / num_params
+
+  def _get_max_grad_val(self):
+    # Just for debugging
+    p_grads = [p.grad for p in self.parameters()]
+    return max([pg.abs().max() for pg in p_grads])
 
   def fit(self, x, y=None, lhood_model=None):
     # Simple fitting procedure for transforming x to y
@@ -162,10 +170,11 @@ class InvertibleTransform(nn.Module):
         self.base_dist = lhood_model
 
       self.recon_criterion = None
-      self.base_log_likelihood = self.base_dist.log_prob
+      self.base_log_prob = (
+          lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
     else:
       self.recon_criterion = nn.MSELoss(reduction="mean")
-      self.base_log_likelihood = None
+      self.base_log_prob = None
 
     self.opt = optim.Adam(self.parameters(), self.config.lr)
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
@@ -191,25 +200,31 @@ class InvertibleTransform(nn.Module):
                   "Finished training.")
           break
         if self.config.verbose:
-          avg_grad = self._get_avg_grad_val()
           itr_diff_time = time.time() - itr_start_time
           loss_val = float(self.itr_loss.detach())
-          print("Iteration %i out of %i (in %.2fs). Loss: %.5f. Stop iter: %i"%
+          print("Iteration %i out of %i (in %.2fs). Loss: %.5f. "
+                "Avg/Max grad: %.5f / %.5f. Stop iter: %i" %
                 (itr + 1, self.config.max_iters, itr_diff_time, loss_val,
-                 self._stop_iters), end='\r')
+                  self._avg_grad, self._max_grad, self._stop_iters),
+                end='\r')
       if self.config.verbose and itr >= 0:
-        print("\nIteration %i out of %i (in %.2fs). Loss: %.5f" %
-              (itr + 1, self.config.max_iters, itr_diff_time, loss_val))
+        print("Iteration %i out of %i (in %.2fs). Loss: %.5f. Avg grad: %.5f."
+              "Stop iter: %i" % (itr + 1, self.config.max_iters,
+                  itr_diff_time, loss_val, self._avg_grad, self._stop_iters))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
     self.eval()
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
     return self
 
-  def sample(self, n_samples=1):
-    z_samples = self.base_dist.sample((n_samples, self._dim))
-    x_samples = self.inverse(z_samples)
-    return x_samples
+  def sample(self, n_samples=1, inverted=True, rtn_torch=False):
+    if isinstance(n_samples, tuple):
+      z_samples = self.base_dist.sample(*n_samples)
+    else:
+      z_samples = self.base_dist.sample((n_samples, self._dim))
+    if inverted:
+      return self.inverse(z_samples, rtn_torch)
+    return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
 
 
 class ReverseTransform(InvertibleTransform):
