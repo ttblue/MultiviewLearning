@@ -286,7 +286,7 @@ def simple_test_tfms(args):
 def simple_test_tfms_and_likelihood(args):
   # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(
   #     args, split=True, normalize_scale=5)
-  nscale = 5.
+  nscale = 50.
   tr_X, te_X = make_default_data_X(args, split=True, normalize_scale=nscale)
   model = make_default_tfm(args, tfm_args=[])
   lhood_model = make_default_likelihood_model(args)
@@ -302,35 +302,40 @@ def simple_test_tfms_and_likelihood(args):
   if lhood_model is None:
     lhood_model = model.base_dist
 
+  try:
+    # IPython.embed()
+    tr_Z_pred = model(tr_X, False, False)
+    te_Z_pred = model(te_X, False, False)
+    tr_Zinv_pred = model.inverse(tr_Z_pred, False)
+    te_Zinv_pred = model.inverse(te_Z_pred, False)
+
+    n_test_samples = args.npts // 2
+    samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
+    # samples = np.concatenate(
+    #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
+    X_samples = model.inverse(samples, rtn_torch=False)
+    X_all = np.r_[tr_X, te_X, X_samples]
+    Z_all = np.r_[tr_Z_pred, te_Z_pred, samples]
+    Zinv_all = np.r_[tr_Zinv_pred, te_Zinv_pred, X_samples]
+
+    tsne = manifold.TSNE(2)
+    y_x = tsne.fit_transform(X_all)
+    y_z = tsne.fit_transform(Z_all)
+    y_zi = tsne.fit_transform(Zinv_all)
+    plot_data = {"x": y_x, "z": y_z, "zi": y_zi}
+    pdtype = "z"
+    y = plot_data[pdtype]
+
+    plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
+    plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
+    plt.show()
+
+    plt.scatter(y[:tr_X.shape[0], 0], y[:tr_X.shape[0], 1], color="b")
+    plt.scatter(y[tr_X.shape[0]:args.npts, 0], y[tr_X.shape[0]:args.npts, 1], color="r")
+  except:
+    IPython.embed()
   IPython.embed()
-  tr_Z_pred = model(tr_X, False, False)
-  te_Z_pred = model(te_X, False, False)
-  tr_Zinv_pred = model.inverse(tr_Z_pred, False)
-  te_Zinv_pred = model.inverse(te_Z_pred, False)
 
-  n_test_samples = args.npts // 2
-  samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
-  # samples = np.concatenate(
-  #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
-  X_samples = model.inverse(samples, rtn_torch=False)
-  X_all = np.r_[tr_X, te_X, X_samples]
-  Z_all = np.r_[tr_Zinv_pred, te_Zinv_pred, samples]
-
-  IPython.embed()
-
-  tsne = manifold.TSNE(2)
-  y_x = tsne.fit_transform(X_all)
-  y_z = tsne.fit_transform(Z_all)
-  plot_data = {"x": y_x, "z": y_z}
-  pdtype = "z"
-  y = plot_data[pdtype]
-
-  plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
-  plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
-  plt.show()
-
-  plt.scatter(y[:tr_X.shape[0], 0], y[:tr_X.shape[0], 1], color="b")
-  plt.scatter(y[tr_X.shape[0]:args.npts, 0], y[tr_X.shape[0]:args.npts, 1], color="r")
 
 def test_pipeline(args):
   pass

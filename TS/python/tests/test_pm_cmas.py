@@ -181,7 +181,7 @@ def test_nn(args):
   dsets = {"Train": tr_wdata, "Test": te_wdata}
 
   config = default_NGSRL_config(sv_type="nn")
-  config.n_jobs = None if args.n_jobs == -1 else args.n_jobs
+  config.njobs = None if args.njobs == -1 else args.njobs
   if npts > 0:
     tr_w_ffts = {vi: d[:npts] for vi, d in tr_w_ffts.items()}
 
@@ -189,7 +189,7 @@ def test_nn(args):
   config.single_view_config.lambda_global = 1e-3
   config.single_view_config.lambda_group = 0 # 1e-1
   config.single_view_config.sp_eps = 5e-5
-  config.single_view_config.max_iters = args.n_iters
+  config.single_view_config.max_iters = args.max_iters
 
   model = naive_multi_view_rl.NaiveBlockSparseMVRL(config)
   # try:
@@ -262,7 +262,7 @@ def test_rmae(args):
   zero_at_input = True
 
   window_size = args.wsize
-  npts = args.n_pts
+  npts = args.npts
   win_data, cmas_data = load_cmas_data(window_size=window_size)
 
   # Fit model.
@@ -281,7 +281,7 @@ def test_rmae(args):
   config = default_RMAE_config(v_sizes)
   config.drop_scale = drop_scale
   config.zero_at_input = zero_at_input
-  config.max_iters = args.n_iters
+  config.max_iters = args.max_iters
 
   model = robust_multi_ae.RobustMultiAutoEncoder(config)
   # try:
@@ -403,10 +403,10 @@ if __name__ == "__main__":
   np.set_printoptions(linewidth=1000, precision=3, suppress=True)
   torch.set_printoptions(precision=3)
   options = [
-      ("n_pts", int, "Number of points", 1000),
-      ("w_size", int, "Number of t-steps per window", 20),
-      ("n_jobs", int, "Number of processes to run in parallel", 3),
-      ("n_iters", int, "Number of iterations of training", 1000),
+      ("npts", int, "Number of points", 1000),
+      ("wsize", int, "Number of t-steps per window", 20),
+      ("njobs", int, "Number of processes to run in parallel", 3),
+      ("max_iters", int, "Number of iterations of training", 1000),
       ]
   args = utils.get_args(options)
   

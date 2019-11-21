@@ -322,7 +322,7 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
       vi_config = self.config.nn_config.copy()
       vi_config.set_sizes(input_size=self._rest_data[vi].shape[1])
       vi_transform = torch_models.MultiLayerNN(vi_config)
-      self._p_tfms[vi] = vi_transform
+      self._p_tfms["T%i"%vi] = vi_transform
 
       vi_layer = vi_transform.get_layer_params(-1)
       # IPython.embed()
@@ -344,7 +344,7 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
   def _reconstruction(self, data=None):
     data = self._rest_data if data is None else data
     p_recons = torch.stack(
-        [self._p_tfms[vi](data[vi]) for vi in self._p_tfms], dim=0)
+        [self._p_tfms["T%i"%vi](data[vi]) for vi in data], dim=0)
     return torch.sum(p_recons, dim=0)
 
   def _error(self):
@@ -367,8 +367,8 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
 
   def forward(self, data):
     # reconstruction = np.sum(
-    #     [self._p_tfms[vi](data[vi])
-    #      for vi in self._p_tfms if vi in data])
+    #     [self._p_tfms["T%i"%vi](data[vi])
+    #      for vi in data if "T%i"%vi in self._p_tfms])
     return self._reconstruction(data)
 
   def loss(self, vi_data, recons):
