@@ -124,11 +124,12 @@ def fft_featurize_data(window_data):
     config = ts_fourier_featurization.FFConfig(
         ndim=_FFT_DIM, use_imag=False, verbose=True)
     _FFT_MODEL = ts_fourier_featurization.TimeSeriesFourierFeaturizer(config)
-    if os.path.exists(fft_model_file):
-      print("Loading fft model.")
-      _FFT_MODEL.load_from_file(fft_model_file)
-      _FFT_MODEL.config.ndim = _FFT_DIM
-    else:
+    # if os.path.exists(fft_model_file):
+    #  print("Loading fft model.")
+    #  _FFT_MODEL.load_from_file(fft_model_file)
+    #  _FFT_MODEL.config.ndim = _FFT_DIM
+    #else:
+    if 1:
       print("Training and saving fft model.")
       _FFT_MODEL.fit(feat, ts)
       _FFT_MODEL.save_to_file(fft_model_file)
@@ -376,7 +377,7 @@ def test_greedy(args):
   # config.n_solves = 1
 
   model = greedy_multi_view_rl.GreedyMVRL(config)
-  model.fit(data)
+  model.fit(tr_wdata)
   # globals().update(locals())
   vlens = [data[vi].shape[1] for vi in range(len(data))]
   msplit_inds = np.cumsum(vlens)[:-1]

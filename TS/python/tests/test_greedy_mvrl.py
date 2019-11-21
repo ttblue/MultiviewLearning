@@ -6,7 +6,7 @@ from torch import nn
 
 from models import greedy_multi_view_rl, greedy_single_view_rl, torch_models
 from synthetic import multimodal_systems as ms
-
+from utils import torch_utils
 
 try:
   import matplotlib.pyplot as plt
@@ -86,7 +86,7 @@ def default_GMVRL_config(sv_type="nn", as_dict=False):
     # layer_args = None
     bias = False
     dropout_p = 0.
-    layer_types, layer_args = torch_models.generate_linear_types_args(
+    layer_types, layer_args = torch_utils.generate_linear_types_args(
           input_size, layer_units, output_size, bias)
     nn_config = torch_models.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
