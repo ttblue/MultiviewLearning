@@ -295,7 +295,6 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
     self._npts, self._dim = self._view_data.shape
     self._rest_data = {
         vi: vd for vi, vd in self._data_torch.items() if vi != self.view_id}
-
     self._initialized = False
     self._has_data = True
 
@@ -344,7 +343,8 @@ class NNSolver(AbstractSingleViewSolver, nn.Module):
   def _reconstruction(self, data=None):
     data = self._rest_data if data is None else data
     p_recons = torch.stack(
-        [self._p_tfms["T%i"%vi](data[vi]) for vi in data], dim=0)
+        [self._p_tfms["T%i"%vi](data[vi]) for vi in data
+         if vi != self.view_id], dim=0)
     return torch.sum(p_recons, dim=0)
 
   def _error(self):

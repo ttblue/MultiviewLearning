@@ -39,8 +39,9 @@ def plot_windows(
     ndisp = nwin * wsize
 
   if shuffle and ndisp > 0:
-    shuffle_inds = np.random.permutation(plot_ts[0].shape[0])[:ndisp]
-    plot_ts = [win[shuffle_inds] for win in plot_ts]
+    IPython.embed()
+    shuffle_inds = [np.random.permutation(p.shape[0])[:ndisp] for p in plot_ts]
+    plot_ts = [win[inds] for win, inds in zip(plot_ts, shuffle_inds)]
 
   if ndisp > 0:
     plot_ts = [win[:ndisp] for win in plot_ts]
@@ -310,7 +311,7 @@ def test_rmae(args):
   nrows = 6
   ncols = 4
 
-  n_channels = len(tr_w_ffts)
+  n_channels = len(tr_preds)
   nwin = 5
   wsize = window_size
   ndisp = -1
@@ -334,10 +335,9 @@ def test_rmae(args):
         ax = axs[row, col]
 
       tvals = [plt_ts[:, :, [i]], plt_pred_ts[i]]
-
+      print(ndisp)
       plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax)
     fig.suptitle("Dataset: %s" % dset_used)
-
   # lnum = valid_labels[0]
   # fl = "nmat_lbl_%i_opt.npy" % lnum
   # idx = 0 
