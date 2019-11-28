@@ -221,7 +221,7 @@ class InvertibleTransform(nn.Module):
     if isinstance(n_samples, tuple):
       z_samples = self.base_dist.sample(*n_samples)
     else:
-      z_samples = self.base_dist.sample((n_samples, self._dim))
+      z_samples = self.base_dist.sample(n_samples)
     if inverted:
       return self.inverse(z_samples, rtn_torch)
     return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
