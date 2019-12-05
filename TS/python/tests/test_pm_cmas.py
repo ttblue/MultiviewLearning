@@ -125,7 +125,7 @@ def fft_featurize_data(window_data):
     config = ts_fourier_featurization.FFConfig(
         ndim=_FFT_DIM, use_imag=False, verbose=True)
     _FFT_MODEL = ts_fourier_featurization.TimeSeriesFourierFeaturizer(config)
-    if os.path.exists(fft_model_file):
+    if False: #os.path.exists(fft_model_file):
       print("Loading fft model.")
       _FFT_MODEL.load_from_file(fft_model_file)
       _FFT_MODEL.config.ndim = _FFT_DIM
