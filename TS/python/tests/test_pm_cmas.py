@@ -39,7 +39,7 @@ def plot_windows(
     ndisp = nwin * wsize
 
   if shuffle and ndisp > 0:
-    IPython.embed()
+    # IPython.embed()
     shuffle_inds = [np.random.permutation(p.shape[0])[:ndisp] for p in plot_ts]
     plot_ts = [win[inds] for win, inds in zip(plot_ts, shuffle_inds)]
 
@@ -311,7 +311,7 @@ def test_rmae(args):
   nrows = 6
   ncols = 4
 
-  n_channels = len(tr_preds)
+  n_channels = dsets_ts["Train"].shape[-1]
   nwin = 5
   wsize = window_size
   ndisp = -1
@@ -399,6 +399,7 @@ _TEST_FUNCS = {
     0: test_nn,
     1: test_rmae,
     2: test_greedy,
+    -1: None,
 }
 if __name__ == "__main__":
   np.set_printoptions(linewidth=1000, precision=3, suppress=True)
@@ -412,4 +413,8 @@ if __name__ == "__main__":
   args = utils.get_args(options)
   
   func = _TEST_FUNCS.get(args.expt, test_nn)
-  func(args)
+  if func is None:
+    dsets_ts, dsets_pred_ts, window_size = np.load("tmp.npy").tolist()
+    IPython.embed()
+  else:
+    func(args)

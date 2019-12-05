@@ -104,9 +104,9 @@ class MultiAutoEncoder(nn.Module):
     self._de_layers = nn.ModuleDict()
 
     for vi in range(self._nviews):
-      self._en_layers[vi] = torch_models.MultiLayerNN(
+      self._en_layers["E%i"%vi] = torch_models.MultiLayerNN(
           self.config.encoder_params[vi])
-      self._de_layers[vi] = torch_models.MultiLayerNN(
+      self._de_layers["D%i"%vi] = torch_models.MultiLayerNN(
           self.config.decoder_params[vi])
 
   def _split_views(self, x, rtn_torch=True):
@@ -123,7 +123,7 @@ class MultiAutoEncoder(nn.Module):
     return x_v
 
   def _encode_view(self, xv, vi):
-    return self._en_layers[vi](xv)
+    return self._en_layers["E%i"%vi](xv)
 
   def encode(self, x):
     xvs = self._split_views(x, rtn_torch=True)
@@ -144,7 +144,7 @@ class MultiAutoEncoder(nn.Module):
     return codes.mul(var).add_(mu)
 
   def _decode_view(self, z, vi):
-    return self._de_layers[vi](z)
+    return self._de_layers["D%i"%vi](z)
 
   def decode(self, z, vi_out=None):
     # Not assuming tied weights yet

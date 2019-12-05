@@ -53,7 +53,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
   def _encode_view(self, xv, vi):
     if not isinstance(xv, torch.Tensor):
       xv = torch.from_numpy(xv).type(_DTYPE).requires_grad_(False)
-    return self._en_layers[vi](xv)
+    return self._en_layers["E%i"%vi](xv)
 
   def _encode_missing_view(self, vi, npts):
     if self.config.zero_at_input:
@@ -87,7 +87,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     return self._encode_joint(view_codes) if return_joint else view_codes
 
   def _decode_view(self, z, vi):
-    return self._de_layers[vi](z)
+    return self._de_layers["D%i"%vi](z)
 
   def decode(self, z, vi_out=None):
     # Not assuming tied weights yet
