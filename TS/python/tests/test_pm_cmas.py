@@ -125,7 +125,7 @@ def fft_featurize_data(window_data):
     config = ts_fourier_featurization.FFConfig(
         ndim=_FFT_DIM, use_imag=False, verbose=True)
     _FFT_MODEL = ts_fourier_featurization.TimeSeriesFourierFeaturizer(config)
-    if False: #os.path.exists(fft_model_file):
+    if os.path.exists(fft_model_file):
       print("Loading fft model.")
       _FFT_MODEL.load_from_file(fft_model_file)
       _FFT_MODEL.config.ndim = _FFT_DIM
@@ -216,8 +216,6 @@ def test_nn(args):
 
   # For plotting:
   globals().update(locals())
-  nrows = 6
-  ncols = 4
 
   n_channels = dsets_ts["Train"].shape[2]
   nwin = 5
@@ -226,6 +224,8 @@ def test_nn(args):
   labels = ["Ground Truth", "Recon."]
   title = ""
   for dset_used in dsets_ts:
+    # nrows = 5 if dset_used == "train" else 7
+    ncols = 2
     fig, axs = plt.subplots(nrows, ncols)
     mng = plt.get_current_fig_manager()
     mng.window.showMaximized()
@@ -337,7 +337,8 @@ def test_rmae(args):
       tvals = [plt_ts[:, :, [i]], plt_pred_ts[i]]
       print(ndisp)
       plot_windows(tvals, labels, ndisp, title, nwin, wsize, ax)
-    fig.suptitle("Dataset: %s" % dset_used)
+      plt.legend()
+    fig.suptitle("MVCCA -- Dataset: %s" % dset_used)
   # lnum = valid_labels[0]
   # fl = "nmat_lbl_%i_opt.npy" % lnum
   # idx = 0 
@@ -414,7 +415,8 @@ if __name__ == "__main__":
   
   func = _TEST_FUNCS.get(args.expt, test_nn)
   if func is None:
-    dsets_ts, dsets_pred_ts, window_size = np.load("tmp.npy").tolist()
+    # dsets_ts, dsets_pred_ts, window_size = np.load("tmp.npy").tolist()
+    dsets_ts, dsets_pred_ts, window_size, tr_serr, te_serr = np.load("tmp_rmae.npy")
     IPython.embed()
   else:
     func(args)

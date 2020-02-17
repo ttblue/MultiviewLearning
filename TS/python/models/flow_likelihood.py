@@ -15,14 +15,12 @@ import IPython
 class LikelihoodConfig(BaseConfig):
   # General config for likelihood models
   def __init__(
-    self, model_type="linear_arm", dist_type="gaussian", n_components=5,
-    *args, **kwargs):
+    self, model_type="linear_arm", dist_type="gaussian", *args, **kwargs):
     super(LikelihoodConfig, self).__init__(*args, **kwargs)
 
     self.model_type = model_type.lower()
     # Mixture model params:
     self.dist_type = dist_type.lower()
-    self.n_components = n_components
 
 
 class AbstractLikelihood(nn.Module):
@@ -40,44 +38,60 @@ class AbstractLikelihood(nn.Module):
   def log_prob(self, x, *args, **kwargs):
     raise NotImplementedError("Abstract class method")
 
-  def nll_loss(self, x, *args, **kwargs):
-    lls = self.log_prob(x, *args, **kwargs)
-    return -torch.mean(lls)
+  def nll(self, x, aggregate=None, *args, **kwargs):
+    x_nll = -self.log_prob(x, *args, **kwargs)
+    if aggregate == "sum":
+      return x_nll.sum()
+    elif aggregate == "mean":
+      return x_nll.mean()
+    return x_nll
 
 
+BASE_DISTS = ["mv_gaussian"] #, "laplace", "logistic"]
 _TORCH_DISTRIBUTIONS = {
+    "mv_gaussian": torch.distributions.MultivariateNormal,
     "gaussian": torch.distributions.Normal,
     "laplace": torch.distributions.Laplace,
     "logistic": torch.distributions.LogisticNormal,
 }
-class SimpleDistributions(nn.Module):
+
+class BaseDistribution(AbstractLikelihood):
   # Simple likelihoods
   def __init__(self, config):
-    self.config = config
-    super(SimpleDistributions, self).__init__()
+    super(BaseDistribution, self).__init__(config)
 
-  def initialize(self, dim):
+  def initialize(self, dim, loc=None, scale=None):
     self._dim = dim
-    if self.config.dist_type not in _TORCH_DISTRIBUTIONS:
+    if self.config.dist_type not in BASE_DISTS:
       raise ModelException(
           "Base dist. type %s not available." % config.dist_type)
-    loc = 0.0
-    scale = 1.0
+
+    loc = torch.zeros(dim) if loc is None else loc
+    if scale is None:
+      scale = (
+          torch.eye(dim) if self.config.dist_type == "mv_gaussian" else
+          torch.ones(dim))
     self._base_dist = _TORCH_DISTRIBUTIONS[self.config.dist_type](loc, scale)
 
   def sample(self, shape, rtn_torch=True):
-    if len(shape) == 1 and self._dim > 1:
-      shape = (shape[0], self._dim)
-    samples = self._base_dist.sample(*shape)
+    # IPython.embed()
+    if isinstance(shape, int):
+      shape = (shape,)
+    # elif len(shape) == 1 and self._dim > 1:
+    #   shape = (shape[0], self._dim)
+    samples = self._base_dist.sample(shape)
     return samples if rtn_torch else torch_utils.torch_to_numpy(samples)
 
   def log_prob(self, x, rtn_torch=True):
-    log_prob = self._base_dist.log_prob(x).sum(1)
+    log_prob = self._base_dist.log_prob(x)
     return log_prob if rtn_torch else torch_utils.torch_to_numpy(log_prob)
 
-  def nll_loss(self, x, rtn_torch=True):
-    lls = self.log_prob(x, rtn_torch=rtn_torch)
-    return -lls.mean()
+
+def make_base_distribution(dist_type, dim, loc=None, scale=None):
+  config = LikelihoodConfig(model_type="base_dist", dist_type=dist_type)
+  base_dist = BaseDistribution(config)
+  base_dist.initialize(dim, loc, scale)
+  return base_dist
 
 
 ################################################################################
@@ -88,8 +102,9 @@ class ARMMConfig(LikelihoodConfig):
       self, model_type="linear_arm", dist_type="gaussian", n_components=5,
       hidden_size=32, theta_nn_config=None, cell_type="LSTM", *args, **kwargs):
     super(ARMMConfig, self).__init__(
-        model_type=model_type, dist_type=dist_type, n_components=n_components,
-        arg=args, kwargs=kwargs)
+        model_type=model_type, dist_type=dist_type, arg=args, kwargs=kwargs)
+
+    self.n_components = n_components
 
     # AR model mm-parameter function params
     self.hidden_size = hidden_size
@@ -174,14 +189,14 @@ class ARMixtureModel(AbstractLikelihood):
 
     return log_norm_consts, log_kernel
 
-  def log_prob(self, x):
+  def log_prob(self, x, rtn_torch=True):
     wts, mus, lsigmas = self.compute_mm_params(x)
     wts = self._normalize_wts(wts)
     log_norm_consts, log_kernel = self._compute_dist_logterms(x, mus, lsigmas)
     log_exp_terms = log_kernel + log_norm_consts + wts
     log_probs = torch.logsumexp(log_exp_terms, 1).sum(1)
 
-    return log_probs
+    return log_probs if rtn_torch else torch_utils.torch_to_numpy(log_probs)
 
   def _sample_MM(self, wts, mus, sigmas):
     samples = []
@@ -195,9 +210,10 @@ class ARMixtureModel(AbstractLikelihood):
 
   def sample(self, n, rtn_torch=True):
     dim = self._dim
-    if isinstance(n, tuple) and len(n) > 1:
+    if isinstance(n, tuple):
+      if len(n) > 1:
+        dim = min(self._dim, n[1])
       n = n[0]
-      dim = min(self._dim, dim)
 
     h_i = None
     z_samples = torch.empty((n, 0))
@@ -269,10 +285,13 @@ _LIKELIHOOD_TYPES = {
     "linear_arm": LinearARM,
     "recurrent_arm": RecurrentARM,
 }
-def make_likelihood_model(config):
+def make_likelihood_model(config, dim=None):
   if config.model_type not in _LIKELIHOOD_TYPES:
     raise TypeError(
         "%s not a valid likelihood model. Available models: %s" %
         (config.model_type, _LIKELIHOOD_TYPES))
 
-  return _LIKELIHOOD_TYPES[config.model_type](config)
+  lhood_model = _LIKELIHOOD_TYPES[config.model_type](config)
+  if dim is not None:
+    lhood_model.initialize(dim)
+  return lhood_model

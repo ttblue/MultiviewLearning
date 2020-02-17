@@ -364,20 +364,25 @@ def error_func(true_data, pred):
   return np.sum([np.linalg.norm(true_data[vi] - pred[vi]) for vi in pred])
 
 
-def all_subset_accuracy(model, data):
-  view_range = list(range(len(data)))
+def all_subset_accuracy(model, data, max_subs=1000):
+  n_views = len(data)
+  view_range = np.arange(n_views)
   all_errors = {}
   subset_errors = {}
   for nv in view_range:
+    stime = time.time()
     s_error = []
-    for subset in itertools.combinations(view_range, nv + 1):
+    subsets = list(itertools.combinations(view_range, nv + 1))
+    random_inds = np.random.permutation(len(subsets))[:max_subs]
+    for rind in random_inds:
+      subset = subsets[rind]
       input_data = {vi:data[vi] for vi in subset}
       pred = model.predict(input_data)
       err = error_func(data, pred)
       s_error.append(err)
       all_errors[subset] = err
     subset_errors[(nv + 1)] = np.mean(s_error)
-
+    print("%i/%i in %.2fs" % (nv + 1, n_views, time.time() - stime), end="\r")
   return subset_errors, all_errors
 
 

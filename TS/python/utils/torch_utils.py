@@ -12,7 +12,6 @@ import IPython
 _DTYPE = torch.float32
 _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
-
 # For RNNs.
 _BATCH_FIRST = False
 

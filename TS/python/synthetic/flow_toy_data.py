@@ -154,6 +154,65 @@ def sinusoidal_mesh(
   return X if center else (X + X_center)
 
 
+_3D_SHAPES = ["sphere", "cube", "diamond"]
+def shaped_3d_manifold(npts, shape="sphere", scale=1.0):
+  if shape not in _3D_SHAPES:
+    raise ValueError("Shape must be one of %s"%_3D_SHAPES)
+
+  pts = np.random.randn(npts, 3)
+  if shape == "sphere":
+    pts = pts / np.linalg.norm(pts, axis=1)[:, None]
+  elif shape == "cube":
+    pts[pts > 1] = 1
+    pts[pts < -1] = -1
+
+    abs_pts = np.abs(pts)
+    argmax_pts = np.argmax(abs_pts, axis=1)
+    pts[np.arange(npts), argmax_pts] /= abs_pts[np.arange(npts), argmax_pts]
+  elif shape == "diamond":
+    pts = pts / np.sum(np.abs(pts), axis=1)[:, None] 
+
+  return pts
+
+
+def multiview_lifted_3d_manifold(
+    npts, shape="sphere", scale=1.0, nviews=3, view_dim=3, noise_eps=1e-3):
+
+  pts_base = shaped_3d_manifold(npts, shape, scale)
+  ptfms = {}
+
+  # Base is 3 dimensional.
+  if nviews > 3:
+    R = math_utils.random_unitary_matrix(nviews)
+    pts_padded = np.c_[pts_base, np.zeros((npts, nviews - 3))]
+    pts = pts_padded.dot(R)
+
+    ptfms["all"] = R
+  else:
+    pts = np.copy(pts_base)
+
+  # Could do this or standard normal, idk.
+  if noise_eps > 0:
+    unit_scale_noise = (np.random.rand(*pts.shape) - 0.5) * 2
+    pts += unit_scale_noise * noise_eps
+
+  # Just a little bit of a hack for minimum dimensionality:
+  pts_dim = pts.shape[1]
+  view_dim = max(view_dim, pts_dim - 1)
+  pad_dim = view_dim - pts_dim + 1
+  view_data = {}
+  for vi in range(nviews):
+    view_pts = np.r_[pts[:, :vi], pts[:, vi+1:]]
+    padded_vpts = np.c_[view_pts, np.zeros((npts, pad_dim))]
+    R = math_utils.random_unitary_matrix(view_dim)
+    t = np.random.randn(view_dim) * scale
+
+    view_data[vi] = padded_vpts.dot(R) + t
+    ptfms[vi] = (R, t)
+
+  return view_data, ptfms
+
+
 if __name__ == "__main__":
   import matplotlib.pyplot as plt
 

@@ -70,6 +70,7 @@ class InvertibleTransform(nn.Module):
   def __init__(self, config):
     super(InvertibleTransform, self).__init__()
     self.config = config
+    self._dim = None
 
   def initialize(self, *args, **kwargs):
     raise NotImplementedError("Abstract class method")
@@ -401,8 +402,8 @@ class FixedLinearTransformation(InvertibleTransform):
     y_b_t = y_b.transpose(0, 1) if len(y_b.shape) > 1 else y_b
     # Torch solver for triangular system of equations
     # IPython.embed()
-    sol_L = torch.trtrs(y_b_t, L, upper=False, unitriangular=True)[0]
-    x_t = torch.trtrs(sol_L, U, upper=True)[0]
+    sol_L = torch.triangular_solve(y_b_t, L, upper=False, unitriangular=True)[0]
+    x_t = torch.triangular_solve(sol_L, U, upper=True)[0]
     # trtrs always returns 2-D output, even if input is 1-D. So we do this:
     x = x_t.transpose(0, 1) if len(y.shape) > 1 else x_t.squeeze()
     x = x if rtn_torch else torch_utils.torch_to_numpy(x)
@@ -477,6 +478,14 @@ class CompositionTransform(InvertibleTransform):
   def _set_transform_ordered_list(self, tfm_list):
     self._tfm_list = nn.ModuleList(tfm_list)
 
+  def _set_dim(self):
+    # Check dims:
+    dims = [tfm._dim for tfm in self._tfm_list if tfm._dim is not None]
+    if len(dims) > 0:
+      if any([dim != dims[0] for dim in dims]):
+        raise ModelException("Not all transforms have the same dimension.")
+      self._dim = dims[0]
+
   def initialize(self, tfm_list, init_args=None, *args, **kwargs):
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
@@ -486,6 +495,7 @@ class CompositionTransform(InvertibleTransform):
           tfm.initialize(*arg)
         else:
           tfm.initialize(arg)
+    self._set_dim()
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)

@@ -16,6 +16,15 @@ class UtilsException(Exception):
   pass
 
 
+def safe_load_numpy(fname, tolist=True):
+  try:
+    data = np.load(fname, allow_pickle=False)
+  except ValueError:
+    data = np.load(fname, allow_pickle=True)
+
+  return data.tolist() if tolist else data
+
+
 def get_args(options=[]):
   # Arguments from command line using parser (usually for testing)
   # options is a list of (<name>, <type>, <help>, <default>) tuples

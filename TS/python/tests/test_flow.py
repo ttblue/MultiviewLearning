@@ -5,11 +5,11 @@ import scipy
 from sklearn import manifold
 import torch
 from torch import nn
+import umap
 
-from models import flow_transforms, flow_likelihood#, flow_pipeline
-from models import torch_models
-from synthetic import flow_toy_data
-from utils import utils, torch_utils
+from models import flow_transforms, flow_likelihood, flow_pipeline, torch_models
+from synthetic import flow_toy_data, multimodal_systems
+from utils import math_utils, torch_utils, utils
 
 import matplotlib.pyplot as plt
 
@@ -72,10 +72,18 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
   return config
 
 
+class ArgsCopy:
+  def __init__(self, args):
+    self.num_ss_tfm = args.num_ss_tfm
+    self.num_lin_tfm = args.num_lin_tfm
+    self.use_leaky_relu = args.use_leaky_relu
+    self.use_reverse = args.use_reverse
+
+
 def default_likelihood_config(args):
   model_type = "linear_arm"
   n_components = args.n_components
-  dist_type = args.dist_type
+  dist_type = "gaussian" if args.dist_type == "mv_gaussian" else args.dist_type
 
   hidden_size = 32
   theta_nn_config = default_nn_config()
@@ -90,10 +98,6 @@ def default_likelihood_config(args):
       cell_type=cell_type, verbose=verbose)
 
   return config
-
-
-def default_pipeline_config():
-  pass
 
 
 def make_default_data(args, split=False):
@@ -132,7 +136,102 @@ def make_default_data_X(args, split=False, normalize_scale=None):
   return X
 
 
-def make_default_tfm(args, tfm_args=[]):
+def default_overlapping_data(args):
+  npts = args.npts
+  nviews = args.nviews
+  ndim = args.ndim
+  perturb_eps = args.peps
+
+  scale = 1
+  centered = True
+  overlap = True
+  gen_D_alpha = False
+
+  data, ptfms = multimodal_systems.generate_redundant_multiview_data(
+      npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
+      overlap=overlap, gen_D_alpha=gen_D_alpha, perturb_eps=perturb_eps)
+
+  return data, ptfms
+
+
+def default_overlapping_data2(args):
+  npts = args.npts
+  nviews = args.nviews
+  ndim = args.ndim
+  perturb_eps = args.peps
+
+  scale = 1
+  centered = True
+  overlap = True
+
+  data, ptfms = multimodal_systems.generate_local_overlap_multiview_data(
+      npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
+      perturb_eps=perturb_eps)
+
+  return data, ptfms
+
+
+def rotate_and_shift_data(data, ndim, scale):
+  R = math_utils.random_unitary_matrix(ndim)
+  t = np.random.randn(ndim) * scale
+  data = data.dot(R) + t
+  ptfm = R, t
+
+  return data, ptfm
+
+
+def default_independent_data(args, rotate_and_shift=True):
+  npts = args.npts
+  nviews = args.nviews
+  ndim = args.ndim
+  perturb_eps = args.peps
+  scale = args.scale
+
+  centered = True
+
+  if nviews > ndim:
+    raise ValueError(
+        "Number of views (%i) should be <= number of dims (%i)."%
+        (nviews, ndim))
+
+  cat_data = np.random.randn(npts, ndim) * scale
+  ptfm = None
+  if rotate_and_shift:
+    cat_data, ptfm = rotate_and_shift_data(cat_data, ndim, scale)
+
+  data = {
+    vi:vdat for vi, vdat in enumerate(np.array_split(cat_data, nviews, 1))}
+  return data, ptfm
+
+
+def default_shape_data(args):
+  npts = args.npts
+  nviews = args.nviews
+  ndim = args.ndim
+  noise_eps = args.peps
+  scale = args.scale
+  shape = args.shape
+
+  centered = True
+
+  if nviews > ndim:
+    raise ValueError(
+        "Number of views (%i) should be <= number of dims (%i)."%
+        (nviews, ndim))
+
+  view_dim = ndim // nviews
+
+  data, ptfm = flow_toy_data.multiview_lifted_3d_manifold(
+      npts, scale=scale, nviews=nviews, view_dim=view_dim, shape=shape, noise_eps=noise_eps)
+  ptfm = None
+  if rotate_and_shift:
+    data, ptfm = rotate_and_shift_data(data, ndim, scale)
+
+  data = {
+    vi:vdat for vi, vdat in enumerate(np.array_split(data, nviews, 1))}
+  return data, ptfm
+
+def make_default_tfm(args, tfm_args=[], rtn_args=False):
   dim = args.ndim
   num_ss_tfm = args.num_ss_tfm
   num_lin_tfm = args.num_lin_tfm
@@ -188,10 +287,48 @@ def make_default_tfm(args, tfm_args=[]):
     tfm_configs.append(reverse_config)
     tfm_inits.append(None)
   #################################################
+  if rtn_args:
+    return tfm_configs, tfm_inits
+
   comp_config = default_tfm_config("composition")
   model = flow_transforms.make_transform(tfm_configs, tfm_inits, comp_config)
 
   return model
+
+
+def default_pipeline_config(args, view_sizes={}):
+  tot_dim = sum(view_sizes.values())
+  shared_args = ArgsCopy(args)
+  shared_args.ndim = tot_dim
+  shared_tfm_config_list, shared_tfm_inits = make_default_tfm(
+      shared_args, rtn_args=True)
+
+  view_tfm_config_lists = {}
+  view_tfm_inits = {}
+  for vi, vdim in view_sizes.items():
+    vi_args = ArgsCopy(args)
+    vi_args.ndim = vdim
+    vi_cfg_list, vi_init = make_default_tfm(vi_args, rtn_args=True)
+
+    view_tfm_config_lists[vi] = vi_cfg_list
+    view_tfm_inits[vi] = vi_init
+
+  likelihood_config = default_likelihood_config(args) if args.use_ar else None
+  base_dist = "mv_gaussian"
+
+  batch_size = 50
+  lr = 1e-3
+  max_iters = args.max_iters
+  verbose = True
+
+  config = flow_pipeline.MFTConfig(
+      shared_tfm_config_list=shared_tfm_config_list,
+      view_tfm_config_lists=view_tfm_config_lists,
+      likelihood_config=likelihood_config, base_dist=base_dist,
+      batch_size=batch_size, lr=lr, max_iters=max_iters,
+      verbose=verbose)
+
+  return config, shared_tfm_inits, view_tfm_inits
 
 
 def make_default_likelihood_model(args):
@@ -244,7 +381,7 @@ def simple_test_tfms(args):
 
   # IPython.embed()
 
-  # tsne = manifold.TSNE(2)
+  # tsne = umap.UMAP(2)
   # n_test_samples = args.npts // 2
   # # samples = np.concatenate(
   # #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
@@ -271,7 +408,7 @@ def simple_test_tfms(args):
 
   IPython.embed()
 
-  tsne = manifold.TSNE(2)
+  tsne = umap.UMAP(2)
   y_x = tsne.fit_transform(X_all)
   y_z = tsne.fit_transform(Z_all)
   plot_data = {"x": y_x, "z": y_z}
@@ -301,7 +438,6 @@ def simple_test_tfms_and_likelihood(args):
   model.fit(tr_X, lhood_model=lhood_model)
   if lhood_model is None:
     lhood_model = model.base_dist
-
   try:
     # IPython.embed()
     tr_Z_pred = model(tr_X, False, False)
@@ -318,7 +454,7 @@ def simple_test_tfms_and_likelihood(args):
     Z_all = np.r_[tr_Z_pred, te_Z_pred, samples]
     Zinv_all = np.r_[tr_Zinv_pred, te_Zinv_pred, X_samples]
 
-    tsne = manifold.TSNE(2)
+    tsne = umap.UMAP(2)
     y_x = tsne.fit_transform(X_all)
     y_z = tsne.fit_transform(Z_all)
     y_zi = tsne.fit_transform(Zinv_all)
@@ -337,30 +473,97 @@ def simple_test_tfms_and_likelihood(args):
   IPython.embed()
 
 
+_MV_DATAFUNCS = {
+    "o1": default_overlapping_data,
+    "o2": default_overlapping_data2,
+    "ind": default_independent_data,
+    "sh": default_shape_data,
+}
 def test_pipeline(args):
-  pass
+  data_func = _MV_DATAFUNCS.get(args.dtype, default_overlapping_data)
+  train_data, ptfms = data_func(args)
 
+  view_sizes = {vi: vdat.shape[1] for vi, vdat in train_data.items()}
+
+  # IPython.embed()
+  config, shared_tfm_inits, view_tfm_inits = default_pipeline_config(
+      args, view_sizes=view_sizes)
+  model = flow_pipeline.MultiviewFlowTrainer(config)
+  model.initialize(shared_tfm_inits, view_tfm_inits)
+
+  model.fit(train_data)
+  n_test_samples = args.npts // 2
+  sample_data = model.sample(n_test_samples, rtn_torch=False)
+
+  IPython.embed()
+
+  tsne = umap.UMAP(2)
+  compare_dat = {}
+  for vi, tr_view in train_data.items():
+    sample_view = sample_data[vi]
+    all_view = np.r_[tr_view, sample_view]
+    all_comp = tsne.fit_transform(all_view)
+
+    compare_dat[vi] = {
+        "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
+
+  train_z = torch_utils.torch_to_numpy(model(train_data, False)) #, rtn_torch=False)
+  sample_z = torch_utils.torch_to_numpy(model(sample_data, False)) #, rtn_torch=False)
+  all_z = np.r_[train_z, sample_z]
+  all_comp = tsne.fit_transform(all_z)
+  compare_dat["z"] = {
+        "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
+
+  IPython.embed()
+
+  fig = plt.figure()
+  ax = fig.add_subplot(111, projection='3d')
+  ax.scatter(xpts3[:, 0], xpts3[:, 1], xpts3[:,2])
+  plt.show()
+
+  for vi, vdat in compare_dat.items():
+    tr_dat = vdat["true"]
+    sample_dat = vdat["sample"]
+    plt.figure()
+    plt.scatter(tr_dat[:, 0], tr_dat[:, 1], color="b", label="True")
+    plt.scatter(sample_dat[:, 0], sample_dat[:, 1], color="r", label="Sampled")
+    plt.title("Train vs. sampled data -- View %s"%vi)
+    plt.legend()
+    plt.show()
+    plt.pause(1.0)
+
+  plt.scatter(all_comp2[:args.npts, 0], all_comp2[:args.npts, 1], color="b", label="True")
+  plt.scatter(all_comp2[args.npts:, 0], all_comp2[args.npts:, 1], color="r", label="Samples")
+  plt.legend()
+  plt.show()
 
 _TEST_FUNCS = {
     0: simple_test_tfms,
     1: simple_test_tfms_and_likelihood,
-    # 2: test_pipeline
+    2: test_pipeline
 }
+
+
 if __name__ == "__main__":
   np.set_printoptions(linewidth=1000, precision=3, suppress=True)
   torch.set_printoptions(precision=3)
   options = [
       ("etype", str, "Expt. type (gen/rec)", "gen"),
-      ("dtype", str, "Data type (random/single_dim_copy)", "random"),
+      ("dtype", str, "Data type (random/single_dim_copy/o1/o2/ind/sh)", "ind"),
+      ("nviews", int, "Number of views", 3),
       ("npts", int, "Number of points", 1000),
       ("ndim", int, "Dimensions", 10),
-      ("max_iters", int, "Number of iters for opt.", 50000),
+      ("peps", float, "Perturb epsilon", 0.),
+      ("scale", float, "Scale of the data.", 1.),
+      ("shape", str, "Shape of toy data.", "cube"),
+      ("max_iters", int, "Number of iters for opt.", 10000),
+      ("batch_size", int, "Batch size for opt.", 100),
       ("num_ss_tfm", int, "Number of shift-scale tfms", 1),
       ("num_lin_tfm", int, "Number of linear tfms", 1),
       ("use_leaky_relu", bool, "Flag for using leaky relu tfm", False),
       ("use_reverse", bool, "Flag for using reverse tfm", False),
-      ("dist_type", str, "Base dist. type (gaussian/laplace/logistic)",
-       "gaussian"),
+      ("dist_type", str, "Base dist. type ([mv_]gaussian/laplace/logistic)",
+       "mv_gaussian"),
       ("use_ar", bool, "Flag for base dist being an AR model", False),
       ("n_components", int, "Number of components for likelihood MM", 5),
       ]
@@ -368,3 +571,4 @@ if __name__ == "__main__":
   
   func = _TEST_FUNCS.get(args.expt, simple_test_tfms)
   func(args)
+ 

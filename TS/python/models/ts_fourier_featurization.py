@@ -174,7 +174,7 @@ class TimeSeriesFourierFeaturizer(object):
       np.save(fh, data)
 
   def load_from_file(self, fname):
-    data = np.load(fname).tolist()
+    data = utils.safe_load_numpy(fname)
     [basis, mu, S] = map(_convert_dict_to_numpy, data[:-1])
     config = FFConfig(**data[-1])
 
