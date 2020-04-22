@@ -12,6 +12,7 @@ from synthetic import flow_toy_data, multimodal_systems
 from utils import math_utils, torch_utils, utils
 
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 import IPython
 
@@ -221,15 +222,12 @@ def default_shape_data(args):
 
   view_dim = ndim // nviews
 
-  data, ptfm = flow_toy_data.multiview_lifted_3d_manifold(
-      npts, scale=scale, nviews=nviews, view_dim=view_dim, shape=shape, noise_eps=noise_eps)
-  ptfm = None
-  if rotate_and_shift:
-    data, ptfm = rotate_and_shift_data(data, ndim, scale)
+  data, ptfms = flow_toy_data.multiview_lifted_3d_manifold(
+      npts, scale=scale, nviews=nviews, view_dim=view_dim, shape=shape,
+      noise_eps=noise_eps)
 
-  data = {
-    vi:vdat for vi, vdat in enumerate(np.array_split(data, nviews, 1))}
   return data, ptfm
+
 
 def make_default_tfm(args, tfm_args=[], rtn_args=False):
   dim = args.ndim
@@ -491,13 +489,15 @@ def test_pipeline(args):
   model = flow_pipeline.MultiviewFlowTrainer(config)
   model.initialize(shared_tfm_inits, view_tfm_inits)
 
+  IPython.embed()
+
   model.fit(train_data)
   n_test_samples = args.npts // 2
   sample_data = model.sample(n_test_samples, rtn_torch=False)
 
   IPython.embed()
 
-  tsne = umap.UMAP(2)
+  tsne = umap.UMAP(n_components=2)
   compare_dat = {}
   for vi, tr_view in train_data.items():
     sample_view = sample_data[vi]
@@ -515,11 +515,16 @@ def test_pipeline(args):
         "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
 
   IPython.embed()
-
-  fig = plt.figure()
-  ax = fig.add_subplot(111, projection='3d')
-  ax.scatter(xpts3[:, 0], xpts3[:, 1], xpts3[:,2])
-  plt.show()
+  
+  # shape = "cube"
+  # shape_data = flow_toy_data.shaped_3d_manifold(1000, shape=shape, scale=1.0)
+  # fig = plt.figure()
+  # ax = fig.add_subplot(111, projection='3d')
+  # ax.scatter(shape_data[:, 0], shape_data[:, 1], shape_data[:, 2])
+  # plt.show()
+  # ax.scatter(all_comp2[:args.npts, 0], all_comp2[:args.npts, 1], all_comp2[:args.npts,2])
+  # ax.scatter(all_comp2[args.npts:, 0], all_comp2[args.npts:, 1], all_comp2[args.npts:,2])
+  # plt.show()
 
   for vi, vdat in compare_dat.items():
     tr_dat = vdat["true"]
@@ -532,6 +537,8 @@ def test_pipeline(args):
     plt.show()
     plt.pause(1.0)
 
+  # For 3D viewing:
+  tsne = umap.UMAP(n_components=3)
   plt.scatter(all_comp2[:args.npts, 0], all_comp2[:args.npts, 1], color="b", label="True")
   plt.scatter(all_comp2[args.npts:, 0], all_comp2[args.npts:, 1], color="r", label="Samples")
   plt.legend()

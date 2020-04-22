@@ -47,6 +47,7 @@ _SINGLE_VIEW_SOLVERS = _SOLVERS
 
     # self.verbose = verbose
 
+
 class NBSMVRLConfig(BaseConfig):
   def __init__(
       self, single_view_solver_type, single_view_config, parallel, n_jobs,

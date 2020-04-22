@@ -161,21 +161,26 @@ def shaped_3d_manifold(npts, shape="sphere", scale=1.0):
 
   pts = np.random.randn(npts, 3)
   if shape == "sphere":
-    pts = pts / np.linalg.norm(pts, axis=1)[:, None]
+    norms = np.linalg.norm(pts, axis=1)
+    norms[norms < 1.0] = 1.0
+    pts = pts / norms[:, None]
   elif shape == "cube":
     pts[pts > 1] = 1
     pts[pts < -1] = -1
-
-    abs_pts = np.abs(pts)
-    argmax_pts = np.argmax(abs_pts, axis=1)
-    pts[np.arange(npts), argmax_pts] /= abs_pts[np.arange(npts), argmax_pts]
+    # abs_pts = np.abs(pts)
+    # argmax_pts = np.argmax(abs_pts, axis=1)
+    # pts[np.arange(npts), argmax_pts] /= abs_pts[np.arange(npts), argmax_pts]
   elif shape == "diamond":
-    pts = pts / np.sum(np.abs(pts), axis=1)[:, None] 
+    norms = np.sum(np.abs(pts), axis=1)
+    norms[norms < 1.0] = 1.0
+    pts = pts / norms[:, None]
+
+  pts *= scale
 
   return pts
 
 
-def multiview_lifted_3d_manifold(
+def multiview_lifted_lowdim_manifold(
     npts, shape="sphere", scale=1.0, nviews=3, view_dim=3, noise_eps=1e-3):
 
   pts_base = shaped_3d_manifold(npts, shape, scale)

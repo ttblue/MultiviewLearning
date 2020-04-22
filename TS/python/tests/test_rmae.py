@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from models import robust_multi_ae, torch_models
+from models import robust_multi_ae
 from synthetic import multimodal_systems as ms
 from utils import torch_utils as tu
 from utils import utils
@@ -66,7 +66,7 @@ def default_RMAE_config(v_sizes):
     input_size = v_sizes[i]
     layer_types, layer_args = tu.generate_linear_types_args(
         input_size, layer_units, output_size)
-    encoder_params[i] = torch_models.MNNConfig(
+    encoder_params[i] = tu.MNNConfig(
         input_size=input_size, output_size=output_size, layer_types=layer_types,
         layer_args=layer_args, activation=activation,
         last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
@@ -74,14 +74,14 @@ def default_RMAE_config(v_sizes):
   input_size = joint_code_size
   layer_units = [32]  #[64, 32]
   use_vae = False
-  last_activation = torch_models.Identity
+  last_activation = tu.Identity
   dropout_p = 0.
   decoder_params = {}
   for i in range(n_views):
     output_size = v_sizes[i]
     layer_types, layer_args = tu.generate_linear_types_args(
         input_size, layer_units, output_size)
-    decoder_params[i] = torch_models.MNNConfig(
+    decoder_params[i] = tu.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
@@ -92,7 +92,7 @@ def default_RMAE_config(v_sizes):
   layer_types, layer_args = tu.generate_linear_types_args(
       input_size, layer_units, output_size)
   use_vae = False
-  joint_coder_params = torch_models.MNNConfig(
+  joint_coder_params = tu.MNNConfig(
       input_size=input_size, output_size=output_size, layer_types=layer_types,
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
@@ -217,7 +217,7 @@ def test_RMAE(
 
   config.drop_scale = drop_scale
   config.zero_at_input = zero_at_input
-  config.max_iters = 2000
+  config.max_iters = 10000
 
   # IPython.embed()
   model = robust_multi_ae.RobustMultiAutoEncoder(config)
