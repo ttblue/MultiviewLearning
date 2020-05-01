@@ -4,10 +4,9 @@ import numpy as np
 import torch
 from torch import nn
 
-from models import robust_multi_ae
+from models import robust_multi_ae, torch_models
 from synthetic import multimodal_systems as ms
-from utils import torch_utils as tu
-from utils import utils
+from utils import torch_utils, utils
 
 try:
   import matplotlib.pyplot as plt
