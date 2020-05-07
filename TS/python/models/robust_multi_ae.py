@@ -14,6 +14,9 @@ from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 import IPython
 
 
+torch.autograd.set_detect_anomaly(True)
+
+
 class RMAEConfig(multi_ae.MAEConfig):
   def __init__(
       self, joint_coder_params, drop_scale=False, zero_at_input=True,
@@ -54,7 +57,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
   def _encode_missing_view(self, vi, npts):
     if self.config.zero_at_input:
       vi_zeros = torch.zeros(npts, self.config.v_sizes[vi])
-      vi_code, _ = self._encode_view(vi_zeros, vi)
+      vi_code = self._en_layers["E%i"%vi](vi_zeros)
     else:
       vi_code = torch.zeros(npts, self.config.encoder_params[vi].output_size)
     return vi_code
@@ -62,14 +65,17 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
   def _encode_view(self, xv, vi):
     npts = len(xv)
     valid_inds = [i for i in range(npts) if xv[i] is not None]
+    invalid_inds = [i for i in range(npts) if xv[i] is None]
 
-    IPython.embed()
+    # IPython.embed()
     xv_valid = np.array([xv[i] for i in valid_inds])
     xv_valid = torch_utils.numpy_to_torch(xv_valid)
     valid_code = self._en_layers["E%i"%vi](xv_valid)
+    missing_code = self._encode_missing_view(vi, len(invalid_inds))
 
-    code = self._encode_missing_view(vi, npts)
+    code = torch.zeros(npts, self.config.encoder_params[vi].output_size)
     code[valid_inds] = valid_code
+    code[invalid_inds] = missing_code
 
     return code, valid_inds
 
@@ -95,16 +101,28 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
       if vi in xvs:
         view_codes[vi], valid_inds = self._encode_view(xvs[vi], vi)
 
-        invalid_inds = np.ones(npts)
-        invalid_inds[valid_inds] = 0
+        invalid_inds = np.ones(npts).astype(bool)
+        invalid_inds[valid_inds] = False
         n_available_views[invalid_inds] -= 1
+
       elif include_missing:
         view_codes[vi] = self._encode_missing_view(vi, npts)
+      # print(invalid_inds)
+      # print(n_available_views, len(n_available_views))
 
-    scaling = (
-        self._nviews / n_available_views if self.config.drop_scale else 1.0)
-    view_codes *= scaling
-    return self._encode_joint(view_codes) if return_joint else view_codes
+    valid_pts = (n_available_views > 0).nonzero()[0]
+    scaling = torch_utils.numpy_to_torch(
+        self._nviews / n_available_views[valid_pts]
+        if self.config.drop_scale else 1.0).view(-1, 1)
+    # IPython.embed()
+    for vi in view_codes:
+      # IPython.embed()
+      view_codes[vi] = view_codes[vi][valid_pts]
+      if vi in xvs:
+        view_codes[vi] = view_codes[vi] * scaling
+    return \
+      (self._encode_joint(view_codes) if return_joint else view_codes),\
+      valid_pts
 
   def _decode_view(self, z, vi):
     return self._de_layers["D%i"%vi](z)
@@ -125,19 +143,23 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     #   # Assuming it is numpy arry
     #   x = torch.from_numpy(x)
     # x.requires_grad_(False)
-    zs = self.encode(xvs, include_missing=True, return_joint=True)
+    zs, valid_pts = self.encode(xvs, include_missing=True, return_joint=True)
     # sampled_zs = [self._sample_codes(*z) for z in zs]
     # This is, for every encoded view, the reconstruction of every view
     recons = self.decode(zs)
     # recons = {}
     # for vi in range(self._n_views):
     #   recons[vi] = self.decode(sampled_zs[vi])
-    return zs, recons
+    return zs, recons, valid_pts
 
-  def loss(self, xvs, recons, zs):
-    obj = 0.
+  def loss(self, xvs, recons, zs, valid_pts):
+    xvs = {
+        vi: [xvi[i] for i in valid_pts] for vi, xvi in xvs.items()
+    }
     npts = len(xvs[utils.get_any_key(xvs)])
     common_views = [vi for vi in recons if vi in xvs]
+
+    obj = 0.
     for vi in common_views:
       xvi = xvs[vi]
       valid_inds = [i for i in range(npts) if xvi[i] is not None]
@@ -182,8 +204,8 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
       xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
 
       self.opt.zero_grad()
-      zs, recons = self.forward(xvs_dropped_batch)
-      loss_val = self.loss(xvs_batch, recons, zs)
+      zs, recons, valid_pts = self.forward(xvs_dropped_batch)
+      loss_val = self.loss(xvs_batch, recons, zs, valid_pts)
       loss_val.backward()
       self.opt.step()
       self.itr_loss += loss_val
@@ -226,7 +248,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     #       for vi, xv in xvs.items()
     #   }
 
-    zs = self.encode(xvs, include_missing=True, return_joint=True)
+    zs, valid_pts = self.encode(xvs, include_missing=True, return_joint=True)
     preds = self.decode(zs, vi_out)
     if not rtn_torch:
       preds = {vo: p.detach().numpy() for vo, p in preds.items()}
