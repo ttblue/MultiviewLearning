@@ -90,7 +90,8 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     joint_code = self._joint_coder(joint_code_input)
     return joint_code
 
-  def encode(self, xvs, include_missing=True, return_joint=True):
+  def encode(
+      self, xvs, include_missing=True, return_joint=True, *args, **kwargs):
     view_codes = {}
     npts = len(xvs[utils.get_any_key(xvs)])
     

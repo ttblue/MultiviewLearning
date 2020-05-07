@@ -243,21 +243,21 @@ def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
 
   # IPython.embed()
   max_iters = 1
-  # rmae_model = setup_RMAE(
-  #     v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
+  rmae_model = setup_RMAE(
+      v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
   # IPython.embed()
   imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
   cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
   # IPython.embed()
-  # rmae_model.fit(tr_data)
+  rmae_model.fit(tr_data)
   imae_model.fit(tr_data)
   cmae_tr, cmae_te = {0: tr_cat}, {0: te_cat}
   cmae_model.fit(cmae_tr)
 
   model = imae_model
   IPython.embed()
-  tr_x, _ = model.encode(tr_data)
-  te_x, _ = model.encode(te_data)
+  tr_x, _ = model.encode(tr_data, aggregate="mean")
+  te_x, _ = model.encode(te_data, aggregate="mean")
   tr_y, te_y = labels[split_inds[0]], labels[split_inds[1]]
   tr_x, te_x = torch_utils.torch_to_numpy(tr_x), torch_utils.torch_to_numpy(te_x)
 

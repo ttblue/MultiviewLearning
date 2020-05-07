@@ -138,11 +138,11 @@ class MultiAutoEncoder(nn.Module):
   def _encode_view(self, xv, vi):
     return self._en_layers["E%i"%vi](xv)
 
-  def encode(self, xvs, aggregate=None):
+  def encode(self, xvs, aggregate=None, *args, **kwargs):
     xvs_valid, valid_inds = self._get_valid(xvs)
     codes = {vi:self._encode_view(xv, vi) for vi, xv in xvs_valid.items()}
     if aggregate == "mean":
-      npts = len(xvs_valid[utils.get_any_key(xvs_valid)])
+      npts = len(xvs[utils.get_any_key(xvs)])
       navailable = torch.zeros(npts, 1)
       agg_codes = torch.zeros(npts, self.config.code_size)
       for vi in range(self._nviews):
