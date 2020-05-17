@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 
 from utils import tfm_utils
 
+# Probably should come up with a better way to generate features, other than
+# just random gaussian samples
+
 
 def flatten(list_of_lists):
   return [a for b in list_of_lists for a in b]
@@ -16,6 +19,18 @@ def padded_identity(n, m, idx):
   #  I_{m x m};
   #  0_{(n-idx-m) x m}]
   return np.r_[np.zeros((idx, m)), np.identity(m), np.zeros(((n - idx - m), m))]
+
+
+def subset_redundancy_data(
+    npts, n_views, subsets, s_dim, scale=1., tfm_final=False, noise_eps=1e-3):
+  view_data = {vi: [] for vi in range(n_views)}
+  for subset in subsets:
+    sub_dat = np.random.randn(npts, s_dim) * scale
+    for vi in subset:
+      vi_sub_dat = sub_dat + np.random.randn(npts, s_dim) * noise_eps
+      view_data[vi].append(vi_sub_dat)
+
+
 
 
 def generate_LDS_data_with_two_observation_models(

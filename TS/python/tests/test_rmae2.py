@@ -173,7 +173,7 @@ def all_subset_accuracy(model, data):
 def evaluate_downstream_task(tr_x, tr_y, te_x, te_y):
   # Logreg
   # Keep same model?
-  kwargs = {'C': 1e2}
+  kwargs = {'C': 1e2, "max_iter": 500}#, "solver": "newton-cg"}
   model = LogisticRegression(**kwargs)
   mtype = "Logreg"
 
@@ -224,6 +224,37 @@ def setup_cat_ae(v_sizes, max_iters=1000):
   return model
 
 
+def make_proper_dset(xvs, ys):
+  npts = len(xvs[utils.get_any_key(xvs)])
+  valid_pts = np.zeros(npts)
+  for vi, xv in xvs.items():
+    vi_valid = np.array([i for i in range(npts) if xv[i] is not None])
+    valid_pts[vi_valid] += 1
+  valid_inds = valid_pts.nonzero()[0]
+
+  xvs_valid = {vi: [xv[i] for i in valid_inds] for vi, xv in xvs.items()}
+  ys_valid = np.array([ys[i] for i in valid_inds])
+
+  return xvs_valid, ys_valid
+
+
+def fill_missing(xvs, v_sizes):
+  npts = len(xvs[utils.get_any_key(xvs)])
+  xvs_filled = {}
+  for vi in v_sizes:
+    vdim = v_sizes[vi]
+    if vi in xvs:
+      xv = xvs[vi]
+      vzeros = np.zeros(vdim)
+      xv_filled = np.array([
+          (x if x is not None else vzeros) for x in xv])
+    else:
+      xv_filled = np.zeros((npts, vdim))
+    xvs_filled[vi] = xv_filled
+  return xvs_filled
+
+
+
 def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
   if ndims_red is not None:
     data, v_sizes, labels, projs, means = load_3news(ndims_reds, rtn_proj_mean=True)
@@ -242,13 +273,13 @@ def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
   te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
 
   # IPython.embed()
-  max_iters = 1
+  max_iters = 3000
   rmae_model = setup_RMAE(
       v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
   # IPython.embed()
   imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
   cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
-  # IPython.embed()
+  # IPython.embed()2
   rmae_model.fit(tr_data)
   imae_model.fit(tr_data)
   cmae_tr, cmae_te = {0: tr_cat}, {0: te_cat}
@@ -256,36 +287,90 @@ def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
 
   model = imae_model
   IPython.embed()
-  tr_x, _ = model.encode(tr_data, aggregate="mean")
-  te_x, _ = model.encode(te_data, aggregate="mean")
+
+
+  # Everything together
   tr_y, te_y = labels[split_inds[0]], labels[split_inds[1]]
-  tr_x, te_x = torch_utils.torch_to_numpy(tr_x), torch_utils.torch_to_numpy(te_x)
+
+  rtr_x, _ = rmae_model.encode(tr_data, aggregate="mean")
+  rte_x, _ = rmae_model.encode(te_data, aggregate="mean")
+  rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+
+  itr_x, _ = imae_model.encode(tr_data, aggregate="mean")
+  ite_x, _ = imae_model.encode(te_data, aggregate="mean")
+  itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+
+  ctr_x, _ = cmae_model.encode(cmae_tr, aggregate="mean")
+  cte_x, _ = cmae_model.encode(cmae_te, aggregate="mean")
+  ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
 
   tr_cat = multiview_datasets.fill_missing(tr_data, cat_dims=True)
   te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
 
-  print("RMAE")
-  evaluate_downstream_task(tr_x, tr_y, te_x, te_y)
+  print("\n\nRMAE: Robust Multi-view AE")
+  evaluate_downstream_task(rtr_x, tr_y, rte_x, te_y)
 
-  print("simple CAT")
+  print("\n\nIMAE: Intersection Multi-view AE")
+  evaluate_downstream_task(itr_x, tr_y, ite_x, te_y)
+
+  print("\n\nCAE: Concatenated AE")
+  evaluate_downstream_task(ctr_x, tr_y, cte_x, te_y)
+
+  print("\n\nCAT: Simple concatenation")
   evaluate_downstream_task(tr_cat, tr_y, te_cat, te_y)
 
-  nviews = len(v_sizes)
+  # Only one view
+  # model = rmae_model
+  # nviews = len(v_sizes)
   for vi in range(nviews):
-    tr_vi = {vi:[x for x in tr_data[vi] if x is not None]}
-    te_vi = {vi:[x for x in te_data[vi] if x is not None]}
+    tr_vi = {vi:tr_data[vi]}
+    te_vi = {vi:te_data[vi]}
+    tr_vi_x, tr_vi_y = make_proper_dset(tr_vi, tr_y)
+    te_vi_x, te_vi_y = make_proper_dset(te_vi, te_y)
 
-    ntr = len(tr_vi[vi])
-    nte = len(te_vi[vi])
-    trv_x, _ = model.encode(tr_vi)
-    trv_y = [l for i, l in enumerate(tr_y) if tr_data[vi][i] is not None]
-    tev_x, _ = model.encode(te_vi)
-    tev_y = [l for i, l in enumerate(te_y) if te_data[vi][i] is not None]
-    trv_x, tev_x = torch_utils.torch_to_numpy(trv_x), torch_utils.torch_to_numpy(tev_x)
+    ntr = len(tr_vi_x[vi])
+    nte = len(te_vi_x[vi])
+    tr_vi_with_None = {
+        vj: tr_vi_x[vi] if vj == vi else [None] * ntr
+        for vj in range(nviews)
+    }
+    te_vi_with_None = {
+        vj: te_vi_x[vi] if vj == vi else [None] * nte
+        for vj in range(nviews)
+    }
+    tr_vi_cat = {0: fill_missing(tr_vi_with_None, cat_dims=True)}
+    # te_vi_cat = {0: multiview_datasets.fill_missing(te_vi_with_None, cat_dims=True)}
+    # tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vj != vi}
+    # te_vi = {vj:te_data[vj] for vj in range(nviews) if vj != vi}
 
-    print("View %i" % vi)
-    print("RMAE")
-    evaluate_downstream_task(trv_x, trv_y, tev_x, tev_y)
+    rtr_x, _ = rmae_model.encode(tr_vi_x, aggregate="mean")
+    rte_x, _ = rmae_model.encode(te_vi_x, aggregate="mean")
+    rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+
+    itr_x, _ = imae_model.encode(tr_vi_x, aggregate="mean")
+    ite_x, _ = imae_model.encode(te_vi_x, aggregate="mean")
+    itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+
+    # ctr_x, _ = cmae_model.encode(tr_vi_cat, aggregate="mean")
+    # cte_x, _ = cmae_model.encode(te_vi_cat, aggregate="mean")
+    # ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+
+
+    print("\n\n\nView %i" % vi)
+    print("\n\nRMAE")
+    evaluate_downstream_task(rtr_x, tr_y, rte_x, te_y)
+
+    print("\n\nIMAE")
+    evaluate_downstream_task(itr_x, tr_y, ite_x, te_y)
+
+    # print("\n\nCMAE")
+    # evaluate_downstream_task(ctr_x, tr_y, cte_x, te_y)
+
+    # print("\n\nsimple CAT")
+    # evaluate_downstream_task(tr_cat, tr_y, te_cat, te_y)
+
+  # Leave one out
+
 
     # for ovi in range(nviews):
     #   if ovi != vi:
@@ -306,6 +391,12 @@ def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
   # plt.xlabel("Available views", fontsize=18)
   # plt.ylabel("Error", fontsize=18)
 
+
+# Synthetic dataset:
+# 3 views, 7-subspaces in all subsets of intersections of venn diagrams
+
+# Motivation:
+# Why do multi-view AEs tend to go toward intersections?
 
 
 if __name__ == "__main__":
