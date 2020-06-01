@@ -474,12 +474,43 @@ def all_subset_accuracy_cat(model, data):
   return subset_errors, all_errors
 
 
+def spaghetti_evals_single_view(
+    n_views, error_evals, start_view=0, max_curves=100, rtn_orders=False):
+  other_views = [vi for vi in range(n_views) if vi != start_view]
+
+  def get_subset_error(subset):
+    sorted_subset = tuple(sorted(subset))
+    return error_evals[sorted_subset]
+
+  # Need to be careful if there are too many views:
+  view_orders = list(itertools.permutations(other_views, n_views - 2))
+  n_view_orders = len(view_orders)
+  shuffled_orders = [
+      view_orders[i] for i in np.random.permutation(n_view_orders)[:max_curves]]
+
+  error_curves = []
+  all_error = get_subset_error(np.arange(n_views))
+  start_error = get_subset_error([start_view])
+  for vorder in shuffled_orders:
+    v_list = [start_view]
+    err_curve = [start_error]
+    for vi in vorder:
+      v_list.append(vi)
+      err_curve.append(get_subset_error(v_list))
+    err_curve.append(all_error)
+    error_curves.append(err_curve)
+
+  if rtn_orders:
+    return error_curves, shuffled_orders
+  return error_curves
+
+
 # Synthetic dataset:
 # 3 views, 7-subspaces in all subsets of intersections of venn diagrams
 def test_RMAE_synthetic_subset_redundancy(args):
   drop_scale = args.drop_scale
   zero_at_input = args.zero_at_input
-  n_views = args.n_views
+  n_views = args.nviews
 
   data, ptfms, corrs = make_synthetic_data(args)
   v_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
@@ -510,15 +541,22 @@ def test_RMAE_synthetic_subset_redundancy(args):
   savemodels = False
   if savemodels:
     rnum = np.random.randn()
-    torch.save(rmae_model.state_dict(), "rmae_model_synth%.2f" % rnum)
-    torch.save(imae_model.state_dict(), "imae_model_synth%.2f" % rnum)
-    torch.save(cmae_model.state_dict(), "cmae_model_synth%.2f" % rnum)
+    torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i_%.4f" % (n_views, rnum))
+    torch.save(imae_model.state_dict(), "imae_model_synth_nv%i_%.4f" % (n_views, rnum))
+    torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i_%.4f" % (n_views, rnum))
     np.save("synth_data%.2f" % rnum, [tr_data, te_data])
 
   # loadmodels = False
   # if loadmodels:
   #   rmae_model
 
+  IPython.embed()
+  r_sub_tr, r_all_tr = all_subset_accuracy(rmae_model, tr_data)
+  r_sub_te, r_all_te = all_subset_accuracy(rmae_model, te_data)
+  i_sub_tr, i_all_tr = all_subset_accuracy(imae_model, tr_data)
+  i_sub_te, i_all_te = all_subset_accuracy(imae_model, te_data)
+  c_sub_tr, c_all_tr = all_subset_accuracy_cat(cmae_model, tr_data)
+  c_sub_te, c_all_te = all_subset_accuracy_cat(cmae_model, te_data)
   # plot_stuff
   # Training:'
   plt.rcParams.update({'font.size': 30})
