@@ -6,6 +6,7 @@ from torch import nn
 
 from dataprocessing import multiview_datasets
 from models import robust_multi_ae, torch_models, multi_ae
+from synthetic import multimodal_systems
 from utils import torch_utils, utils
 
 try:
@@ -34,9 +35,9 @@ def load_3news(ndims_red=None, rtn_proj_mean=True):
       multiview_datasets.load_3sources_dataset())
   if ndims_red:
     proj_base_data, projs, means = multiview_datasets.dim_reduce(
-        view_data, ndims=ndims, fill=False, rtn_proj_mean=True)
+        view_data, ndims=ndims_red, fill=False, rtn_proj_mean=True)
     if rtn_proj_mean:
-      return proj_base_data, view_sizes, labels, proj, means
+      return proj_base_data, view_sizes, labels, projs, means
     return proj_base_data, view_sizes, labels
   return view_data, view_sizes, labels
 
@@ -255,9 +256,14 @@ def fill_missing(xvs, v_sizes):
 
 
 
-def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
+def test_3news(args):
+  ndims_red = args.ndims_red
+  drop_scale = args.drop_scale
+  zero_at_input = args.zero_at_input
+
   if ndims_red is not None:
-    data, v_sizes, labels, projs, means = load_3news(ndims_reds, rtn_proj_mean=True)
+    data, v_sizes, labels, projs, means = load_3news(
+        ndims_red, rtn_proj_mean=True)
   else:
     data, v_sizes, labels = load_3news()
 
@@ -287,7 +293,6 @@ def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
 
   model = imae_model
   IPython.embed()
-
 
   # Everything together
   tr_y, te_y = labels[split_inds[0]], labels[split_inds[1]]
@@ -391,27 +396,198 @@ def test_RMAE(ndims_red=None, drop_scale=True, zero_at_input=True):
   # plt.xlabel("Available views", fontsize=18)
   # plt.ylabel("Error", fontsize=18)
 
+def make_synthetic_data(args):
+  npts = args.npts
+  n_views = args.nviews  
+  s_dim = args.s_dim
+  scale = args.scale
+  noise_eps = args.noise_eps
+  peps = args.peps
+
+  # n_views = 3
+  # subsets = [(0, 1), (1, 2), (2, 0)]
+  # subsets = [(i, (i + 1) % n_views) for i in range(n_views)]
+  subsets = [
+      [j for j in range(n_views) if j != i] for i in range(n_views)]
+
+  tfm_final = False
+  rtn_correspondences = True
+  view_data, ptfms, corrs = multimodal_systems.subset_redundancy_data(
+      npts=npts, n_views=n_views, subsets=subsets, s_dim=s_dim,
+      noise_eps=noise_eps, tfm_final=tfm_final, peps=peps,
+      rtn_correspondences=rtn_correspondences)
+
+  return view_data, ptfms, corrs
+
+
+def error_func(true_data, pred, rtn_mean=True):
+  denom = len(true_data[utils.get_any_key(true_data)]) if rtn_mean else 1.
+  return np.sum(
+      [np.linalg.norm(true_data[vi] - pred[vi]) for vi in pred]) / denom
+
+
+def all_subset_accuracy(model, data):
+  view_range = list(range(len(data)))
+  all_errors = {}
+  subset_errors = {}
+  for nv in view_range:
+    s_error = []
+    for subset in itertools.combinations(view_range, nv + 1):
+      input_data = {vi:data[vi] for vi in subset}
+      pred = model.predict(input_data)
+      err = error_func(data, pred)
+      s_error.append(err)
+      all_errors[subset] = err
+    subset_errors[(nv + 1)] = np.mean(s_error)
+  return subset_errors, all_errors
+
+
+def all_subset_accuracy_cat(model, data):
+  data = {vi:np.array(vdat) for vi, vdat in data.items()}
+  view_range = list(range(len(data)))
+  npts = data[0].shape[0]
+  v_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
+  zero_pads = {vi: np.zeros((npts, vs)) for vi, vs in v_sizes.items()}
+
+  v_splits = np.cumsum([v_sizes[vi] for vi in view_range[:-1]])
+
+  all_errors = {}
+  subset_errors = {}
+  
+  for nv in view_range:
+    s_error = []
+    for subset in itertools.combinations(view_range, nv + 1):
+      input_data = np.concatenate([
+          (data[vi] if vi in subset else zero_pads[vi])
+          for vi in view_range
+          ], axis=1)
+      # IPython.embed()
+      pred = model.predict({0:input_data})
+
+      pred_split = np.array_split(pred[0], v_splits, axis=1)
+      pred_dict = {vi: pred_split[vi] for vi in view_range}
+
+      err = error_func(data, pred_dict)
+      s_error.append(err)
+      all_errors[subset] = err
+    subset_errors[(nv + 1)] = np.mean(s_error)
+  return subset_errors, all_errors
+
 
 # Synthetic dataset:
 # 3 views, 7-subspaces in all subsets of intersections of venn diagrams
+def test_RMAE_synthetic_subset_redundancy(args):
+  drop_scale = args.drop_scale
+  zero_at_input = args.zero_at_input
+  n_views = args.n_views
+
+  data, ptfms, corrs = make_synthetic_data(args)
+  v_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
+
+  #   data = {vi: d[:npts] for vi, d in data.items()}
+  tr_frac = 0.8
+  split_frac = [tr_frac, 1. - tr_frac]
+  (tr_data, te_data), split_inds = multiview_datasets. split_data(
+      data, split_frac, get_inds=True)
+
+  tr_cat = multiview_datasets.fill_missing(tr_data, cat_dims=True)
+  te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
+
+  # IPython.embed()
+  max_iters = args.max_iters
+  rmae_model = setup_RMAE(
+      v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
+  # IPython.embed()
+  imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
+  cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
+
+  rmae_model.fit(tr_data)
+  imae_model.fit(tr_data)
+  cmae_tr, cmae_te = {0: tr_cat}, {0: te_cat}
+  cmae_model.fit(cmae_tr)
+  IPython.embed()
+
+  savemodels = False
+  if savemodels:
+    rnum = np.random.randn()
+    torch.save(rmae_model.state_dict(), "rmae_model_synth%.2f" % rnum)
+    torch.save(imae_model.state_dict(), "imae_model_synth%.2f" % rnum)
+    torch.save(cmae_model.state_dict(), "cmae_model_synth%.2f" % rnum)
+    np.save("synth_data%.2f" % rnum, [tr_data, te_data])
+
+  # loadmodels = False
+  # if loadmodels:
+  #   rmae_model
+
+  # plot_stuff
+  # Training:'
+  plt.rcParams.update({'font.size': 30})
+  vr = np.arange(1, n_views + 1)
+  # r_tr_vals = [r_sub_tr[vi] for vi in vr]
+  # i_tr_vals = [i_sub_tr[vi] for vi in vr]
+  # c_tr_vals = [c_sub_tr[n_views - vi + 1] for vi in vr]
+  # r_te_vals = [r_sub_te[vi] for vi in vr]
+  # i_te_vals = [i_sub_te[vi] for vi in vr]
+  # c_te_vals = [c_sub_te[n_views - vi + 1] for vi in vr]
+  plt.plot(vr, r_te_vals, label="Robust MAE")
+  plt.plot(vr, i_te_vals, label="Intersect MAE")
+  plt.plot(vr, c_te_vals, label="Concat AE")
+  plt.legend()
+  plt.xlabel("Number of available views")
+  plt.xticks(vr)
+  plt.ylabel("Average reconstruction error")
+  plt.title("4 Views: Test error vs. available views")
+  plt.show()
+  # plt.rcParams.update({'font.size': 22})
+
+
+  # All views:
+  
+    
 
 # Motivation:
 # Why do multi-view AEs tend to go toward intersections?
 
 
-if __name__ == "__main__":
-  import sys
-  drop_scale = True
-  zero_at_input = True
-  ndims_red = None
-  try:
-    drop_scale = bool(sys.argv[1])
-    zero_at_input = bool(sys.argv[2])
-    ndims_red = int(sys.argv[2])
-  except:
-    pass
-  print("Drop scale: %s" % drop_scale)
-  print("Zero at input: %s" % zero_at_input)
-  print("Reduced dims: %s" % ndims_red)
+_TEST_FUNCS = {
+    0: test_3news,
+    1: test_RMAE_synthetic_subset_redundancy,
+}
 
-  test_RMAE(ndims_red, drop_scale, zero_at_input)
+
+if __name__ == "__main__":
+  # import sys
+  # drop_scale = True
+  # zero_at_input = True
+  # ndims_red = None
+  # try:
+  #   drop_scale = bool(sys.argv[1])
+  #   zero_at_input = bool(sys.argv[2])
+  #   ndims_red = int(sys.argv[2])
+  # except:
+  #   pass
+  # print("Drop scale: %s" % drop_scale)
+  # print("Zero at input: %s" % zero_at_input)
+  # print("Reduced dims: %s" % ndims_red)
+
+  # test_RMAE(ndims_red, drop_scale, zero_at_input)
+
+  np.set_printoptions(linewidth=1000, precision=3, suppress=True)
+  torch.set_printoptions(precision=3)
+  options = [
+      ("ndims_red", int, "Reduced dims for data", 50),
+      ("nviews", int, "Number of views", 3),
+      ("npts", int, "Number of points", 1000),
+      ("s_dim", int, "View subset dimensions", 3),
+      ("peps", float, "Perturb epsilon", 1e-3),
+      ("noise_eps", float, "Noise epsilon", 1e-3),
+      ("scale", float, "Scale of the data.", 1.),
+      ("zero_at_input", bool, "RMAE: flag for zero at input (or code)", True),
+      ("drop_scale", bool, "RMAE: drop-out like scaling for missing views", True),
+      ("max_iters", int, "Number of iters for opt.", 1000),
+      ("batch_size", int, "Batch size for opt.", 100),
+      ]
+  args = utils.get_args(options)
+
+  func = _TEST_FUNCS.get(args.expt, test_RMAE_synthetic_subset_redundancy)
+  func(args)

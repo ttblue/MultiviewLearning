@@ -2,7 +2,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-from utils import tfm_utils
+from utils import tfm_utils, math_utils
 
 # Probably should come up with a better way to generate features, other than
 # just random gaussian samples
@@ -22,15 +22,41 @@ def padded_identity(n, m, idx):
 
 
 def subset_redundancy_data(
-    npts, n_views, subsets, s_dim, scale=1., tfm_final=False, noise_eps=1e-3):
+    npts, n_views, subsets, s_dim, scale=1., noise_eps=1e-3, tfm_final=False,
+    peps=1e-3, rtn_correspondences=True):
+  # noise_eps -- for gaussian noise
+  # peps (perturb_eps) -- for angle of rotation transformation
+
   view_data = {vi: [] for vi in range(n_views)}
-  for subset in subsets:
+  corrs = {vi: [] for vi in range(n_views)}
+
+  for sub_i, subset in enumerate(subsets):
     sub_dat = np.random.randn(npts, s_dim) * scale
     for vi in subset:
-      vi_sub_dat = sub_dat + np.random.randn(npts, s_dim) * noise_eps
+      vi_sub_dat = sub_dat
       view_data[vi].append(vi_sub_dat)
+      corrs[vi].extend([sub_i] * s_dim)
 
+  for vi in range(n_views):
+    view_data[vi] = np.concatenate(view_data[vi], axis=1)
+    corrs[vi] = np.array(corrs[vi])
 
+  ptfms = None
+  if tfm_final:
+    ptfms = {}
+    for vi in range(n_views):
+      v_dat = view_data[vi]
+      v_dim = v_dat.shape[1]
+      v_mu = vdat.mean(0)
+      # center data -> rotate it -> translate back
+      vdat_pert, R = tfm_utils.perturb_matrix(v_dat - v_mu, peps)
+      view_data[vi] = (
+          vdat_pert + v_mu + np.random.randn(npts, v_dim) * noise_eps)
+      ptfms[vi] = R, v_mu
+
+  if rtn_correspondences:
+    return view_data, ptfms, corrs
+  return view_data, ptfms
 
 
 def generate_LDS_data_with_two_observation_models(
@@ -116,7 +142,7 @@ def generate_LDS_data_with_two_observation_models_train_test(
   # Generate testing data.
   for i in xrange(n_te):
     small_theta = np.random.uniform(0, theta_max_pert)
-    small_rot = util.random_rotation(D_obs, small_theta)
+    small_rot = math_utils.random_rotation(D_obs, small_theta)
     C = small_rot.dot(C_train)
     lds = models.DefaultLDS(D_obs, D_latent, C=C)
     xs, _ = lds.generate(T)

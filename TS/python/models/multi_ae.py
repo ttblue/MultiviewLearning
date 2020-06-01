@@ -7,6 +7,7 @@ from torch import nn
 from torch import optim
 import time
 
+from models.model_base import BaseConfig
 from models import torch_models
 from utils import torch_utils, utils
 from utils.torch_utils import _DTYPE, _TENSOR_FUNC
@@ -14,15 +15,21 @@ from utils.torch_utils import _DTYPE, _TENSOR_FUNC
 import IPython
 
 
-class MAEConfig(object):
+class MAEConfig(BaseConfig):
   def __init__(
       self, v_sizes, code_size, encoder_params, decoder_params,
-      code_sample_noise_var, max_iters, batch_size, lr, verbose):
+      code_sample_noise_var, max_iters, batch_size, lr, verbose,
+      *args, **kwargs):
+
+    super(MAEConfig, self).__init__(*args, **kwargs)
+
     self.code_size = code_size
     self.v_sizes = v_sizes
     self.encoder_params = encoder_params
     self.decoder_params = decoder_params
     self.code_sample_noise_var = code_sample_noise_var
+
+    # self.view_dropout = view_dropout
 
     self.max_iters = max_iters
     self.batch_size = batch_size
@@ -31,7 +38,8 @@ class MAEConfig(object):
     self.verbose = verbose
 
 
-def default_MAE_config(v_sizes, dropout_p=0.5, code_size=10):
+def default_MAE_config(
+    v_sizes, dropout_p=0.5, code_size=10, view_dropout=False):
   n_views = len(v_sizes)
 
   # Default Encoder config:
@@ -75,6 +83,7 @@ def default_MAE_config(v_sizes, dropout_p=0.5, code_size=10):
       encoder_params=encoder_params,
       decoder_params=decoder_params,
       code_sample_noise_var=code_sample_noise_var,
+      # view_dropout=view_dropout,
       max_iters=max_iters,
       batch_size=batch_size,
       lr=lr,
@@ -145,7 +154,7 @@ class MultiAutoEncoder(nn.Module):
       npts = len(xvs[utils.get_any_key(xvs)])
       navailable = torch.zeros(npts, 1)
       agg_codes = torch.zeros(npts, self.config.code_size)
-      for vi in range(self._nviews):
+      for vi in xvs_valid:
         view_codes = torch.zeros(npts, self.config.code_size)
         view_codes[valid_inds[vi]] = codes[vi]
         navailable[valid_inds[vi]] += 1

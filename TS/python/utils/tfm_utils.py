@@ -177,7 +177,7 @@ def gram_schmidt(B):
   return Bgs
 
 
-# Function to perturn matrix by an angle theta about vector v
+# Function to rotate matrix with random unitary rotation by angle eps
 def perturb_matrix(X, eps=1e-2):
   M = np.eye(X.shape[1])
 
