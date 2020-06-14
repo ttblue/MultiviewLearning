@@ -500,9 +500,55 @@ def spaghetti_evals_single_view(
     err_curve.append(all_error)
     error_curves.append(err_curve)
 
+  error_curves = np.array(error_curves)
   if rtn_orders:
     return error_curves, shuffled_orders
   return error_curves
+
+
+def get_all_start_view_spaghets(n_views, error_evals, max_curves=100):
+  v_error_curves = {}
+  for vi in range(n_views):
+    v_error_curves[vi] = spaghetti_evals_single_view(
+        n_views, error_evals, start_view=vi, max_curves=max_curves,
+        rtn_orders=False)
+  return v_error_curves
+
+
+def error_mat(model, data):
+  nv = len(data)
+  view_range = list(range(nv))
+  errors = np.empty((nv, nv))
+  for vi in view_range:
+    v_error = {}
+    input_data = {vi:data[vi]}
+    pred = model.predict(input_data)
+    for vj in view_range:
+      errors[vi, vj] = error_func(data, {vj:pred[vj]})
+  return errors
+
+
+def error_mat_cat(model, data):
+  nv = len(data)
+  view_range = list(range(nv))
+
+  data = {vi:np.array(vdat) for vi, vdat in data.items()}
+  npts = data[0].shape[0]
+  v_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
+  zero_pads = {vi: np.zeros((npts, vs)) for vi, vs in v_sizes.items()}
+  v_splits = np.cumsum([v_sizes[vi] for vi in view_range[:-1]])
+
+  errors = np.empty((nv, nv))
+  for vi in view_range:
+    input_data = np.concatenate(
+        [(data[vi] if vj == vi else zero_pads[vj]) for vj in view_range],
+        axis=1)
+    pred = model.predict({0:input_data})
+    pred_split = np.array_split(pred[0], v_splits, axis=1)
+    pred_dict = {vi: pred_split[vi] for vi in view_range}
+    for vj in view_range:
+      errors[vi, vj] = error_func(data, {vj:pred_dict[vj]})
+  return errors
 
 
 # Synthetic dataset:
@@ -538,9 +584,9 @@ def test_RMAE_synthetic_subset_redundancy(args):
   cmae_model.fit(cmae_tr)
   IPython.embed()
 
-  savemodels = False
+  savemodels = True
+  rnum = np.random.randn()
   if savemodels:
-    rnum = np.random.randn()
     torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i_%.4f" % (n_views, rnum))
     torch.save(imae_model.state_dict(), "imae_model_synth_nv%i_%.4f" % (n_views, rnum))
     torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i_%.4f" % (n_views, rnum))
@@ -550,13 +596,34 @@ def test_RMAE_synthetic_subset_redundancy(args):
   # if loadmodels:
   #   rmae_model
 
-  IPython.embed()
+  # IPython.embed()
+  # rnum = np.random.randn()
   r_sub_tr, r_all_tr = all_subset_accuracy(rmae_model, tr_data)
   r_sub_te, r_all_te = all_subset_accuracy(rmae_model, te_data)
   i_sub_tr, i_all_tr = all_subset_accuracy(imae_model, tr_data)
   i_sub_te, i_all_te = all_subset_accuracy(imae_model, te_data)
   c_sub_tr, c_all_tr = all_subset_accuracy_cat(cmae_model, tr_data)
   c_sub_te, c_all_te = all_subset_accuracy_cat(cmae_model, te_data)
+
+  err_matr_tr, err_matr_te = error_mat(rmae_model, tr_data), error_mat(rmae_model, te_data)
+  err_mati_tr, err_mati_te = error_mat(imae_model, tr_data), error_mat(imae_model, te_data)
+  err_matc_tr, err_matc_te = error_mat_cat(cmae_model, tr_data), error_mat_cat(cmae_model, te_data)
+
+  torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i_%.4f" % (n_views, rnum))
+  torch.save(imae_model.state_dict(), "imae_model_synth_nv%i_%.4f" % (n_views, rnum))
+  torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i_%.4f" % (n_views, rnum))
+  np.save("synth_data%.2f" % rnum, [tr_data, te_data])
+  np.save("synth_nv%i_all_dat_%.4f" % (n_views, rnum),
+      [tr_data, te_data,
+       r_sub_tr, r_all_tr, r_sub_te, r_all_te,
+       c_sub_tr, c_all_tr, c_sub_te, c_all_te,
+       i_sub_tr, i_all_tr, i_sub_te, i_all_te,
+       err_matr_tr, err_matr_te,
+       err_mati_tr, err_mati_te,
+       err_matc_tr, err_matc_te,
+       ]
+  )
+  # [tr_data, te_data, r_sub_tr, r_all_tr, r_sub_te, r_all_te, c_sub_tr, c_all_tr, c_sub_te, c_all_te, i_sub_tr, i_all_tr, i_sub_te, i_all_te]
   # plot_stuff
   # Training:'
   plt.rcParams.update({'font.size': 30})

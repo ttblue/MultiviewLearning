@@ -43,7 +43,7 @@ def plot_spaghet(
   # ax.fill_between(x, (y-ci), (y+ci), color='b', alpha=.1)
 
   for y in ys:
-    plt.plot(x, ys, color=color)
+    plt.plot(x, y, color=color)
 
   if plot_mean:
     y_mu = ys.mean(0)
