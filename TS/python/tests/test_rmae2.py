@@ -406,9 +406,9 @@ def make_synthetic_data(args):
 
   # n_views = 3
   # subsets = [(0, 1), (1, 2), (2, 0)]
-  # subsets = [(i, (i + 1) % n_views) for i in range(n_views)]
-  subsets = [
-      [j for j in range(n_views) if j != i] for i in range(n_views)]
+  subsets = [(i, (i + 1) % n_views) for i in range(n_views)]
+  # subsets = [
+  #     [j for j in range(n_views) if j != i] for i in range(n_views)]
 
   tfm_final = False
   rtn_correspondences = True
@@ -584,45 +584,46 @@ def test_RMAE_synthetic_subset_redundancy(args):
   cmae_model.fit(cmae_tr)
   IPython.embed()
 
-  savemodels = True
-  rnum = np.random.randn()
-  if savemodels:
-    torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i_%.4f" % (n_views, rnum))
-    torch.save(imae_model.state_dict(), "imae_model_synth_nv%i_%.4f" % (n_views, rnum))
-    torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i_%.4f" % (n_views, rnum))
-    np.save("synth_data%.2f" % rnum, [tr_data, te_data])
+  # savemodels = True
+  # rnum = np.random.randn()
+  # if savemodels:
+  #   torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i.tmdl" % (n_views, rnum))
+  #   torch.save(imae_model.state_dict(), "imae_model_synth_nv%i_%.4f" % (n_views, rnum))
+  #   torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i_%.4f" % (n_views, rnum))
+    # np.save("synth_data%.2f" % rnum, [tr_data, te_data])
 
   # loadmodels = False
   # if loadmodels:
   #   rmae_model
-
-  # IPython.embed()
   # rnum = np.random.randn()
-  r_sub_tr, r_all_tr = all_subset_accuracy(rmae_model, tr_data)
-  r_sub_te, r_all_te = all_subset_accuracy(rmae_model, te_data)
-  i_sub_tr, i_all_tr = all_subset_accuracy(imae_model, tr_data)
-  i_sub_te, i_all_te = all_subset_accuracy(imae_model, te_data)
-  c_sub_tr, c_all_tr = all_subset_accuracy_cat(cmae_model, tr_data)
-  c_sub_te, c_all_te = all_subset_accuracy_cat(cmae_model, te_data)
+  def save_data():
+    r_sub_tr, r_all_tr = all_subset_accuracy(rmae_model, tr_data)
+    r_sub_te, r_all_te = all_subset_accuracy(rmae_model, te_data)
+    i_sub_tr, i_all_tr = all_subset_accuracy(imae_model, tr_data)
+    i_sub_te, i_all_te = all_subset_accuracy(imae_model, te_data)
+    c_sub_tr, c_all_tr = all_subset_accuracy_cat(cmae_model, tr_data)
+    c_sub_te, c_all_te = all_subset_accuracy_cat(cmae_model, te_data)
 
-  err_matr_tr, err_matr_te = error_mat(rmae_model, tr_data), error_mat(rmae_model, te_data)
-  err_mati_tr, err_mati_te = error_mat(imae_model, tr_data), error_mat(imae_model, te_data)
-  err_matc_tr, err_matc_te = error_mat_cat(cmae_model, tr_data), error_mat_cat(cmae_model, te_data)
+    err_matr_tr, err_matr_te = error_mat(rmae_model, tr_data), error_mat(rmae_model, te_data)
+    err_mati_tr, err_mati_te = error_mat(imae_model, tr_data), error_mat(imae_model, te_data)
+    err_matc_tr, err_matc_te = error_mat_cat(cmae_model, tr_data), error_mat_cat(cmae_model, te_data)
 
-  torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i_%.4f" % (n_views, rnum))
-  torch.save(imae_model.state_dict(), "imae_model_synth_nv%i_%.4f" % (n_views, rnum))
-  torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i_%.4f" % (n_views, rnum))
-  np.save("synth_data%.2f" % rnum, [tr_data, te_data])
-  np.save("synth_nv%i_all_dat_%.4f" % (n_views, rnum),
-      [tr_data, te_data,
-       r_sub_tr, r_all_tr, r_sub_te, r_all_te,
-       c_sub_tr, c_all_tr, c_sub_te, c_all_te,
-       i_sub_tr, i_all_tr, i_sub_te, i_all_te,
-       err_matr_tr, err_matr_te,
-       err_mati_tr, err_mati_te,
-       err_matc_tr, err_matc_te,
-       ]
-  )
+    torch.save(rmae_model.state_dict(), "rmae_model_synth_nv%i.tmdl" % (n_views))
+    torch.save(imae_model.state_dict(), "imae_model_synth_nv%i.tmdl" % (n_views))
+    torch.save(cmae_model.state_dict(), "cmae_model_synth_nv%i.tmdl" % (n_views))
+    # np.save("synth_data%.2f" % rnum, [tr_data, te_data])
+    np.save("synth_nv%i_all_dat" % (n_views),
+        [tr_data, te_data,
+         r_sub_tr, r_all_tr, r_sub_te, r_all_te,
+         c_sub_tr, c_all_tr, c_sub_te, c_all_te,
+         i_sub_tr, i_all_tr, i_sub_te, i_all_te,
+         err_matr_tr, err_matr_te,
+         err_mati_tr, err_mati_te,
+         err_matc_tr, err_matc_te,
+         ]
+    )
+
+  IPython.embed()
   # [tr_data, te_data, r_sub_tr, r_all_tr, r_sub_te, r_all_te, c_sub_tr, c_all_tr, c_sub_te, c_all_te, i_sub_tr, i_all_tr, i_sub_te, i_all_te]
   # plot_stuff
   # Training:'
