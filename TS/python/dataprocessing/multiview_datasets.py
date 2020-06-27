@@ -15,7 +15,6 @@ DATA_DIR = os.getenv("DATA_DIR")
 
 # 3 sources dataset
 THREE_SOURCE_NEWS_DIR = os.path.join(DATA_DIR, "3SourceNews")
-
 def load_3sources_dataset():
   news_sources = ["bbc", "guardian", "reuters"]
 
@@ -96,6 +95,60 @@ def load_3sources_dataset():
          terms_dat
 
 
+# NUS-WIDE-LITE
+# https://lms.comp.nus.edu.sg/wp-content/uploads/2019/research/nuswide/NUS-WIDE.html
+NWL_DIR = os.path.join(DATA_DIR, "NUS-WIDE-LITE")
+def make_label_files():
+  l_dir = os.path.join(NWL_DIR, "NUS-WIDE-Lite_groundtruth")
+  with open(os.path.join(NWL_DIR, "Concepts81.txt")) as fh:
+    concepts = [c.strip() for c in fh.readlines()]
+  # # Train:
+  # tr_labels = np.loadtxt(os.path.join(l_dir, "Lite_GT_Train.txt"), dtype=int)
+  # np.save(os.path.join(l_dir, "tr_labels"), tr_labels)
+
+  for ttype in ["Train", "Test"]:
+    t_labels = None
+    for concept in concepts:
+      cfile = os.path.join(l_dir, "Lite_Labels_%s_%s.txt" % (concept, ttype))
+      c_labels = np.loadtxt(cfile).reshape(-1, 1)
+      t_labels = c_labels if t_labels is None else np.c_[t_labels, c_labels]
+    np.save(os.path.join(l_dir, "%s_labels" % ttype), t_labels)
+
+
+def load_nus_wide_lite():
+  f_dir = os.path.join(NWL_DIR, "NUS-WIDE-Lite_features")
+  l_dir = os.path.join(NWL_DIR, "NUS-WIDE-Lite_groundtruth")
+  f_types = ["CH", "CM55", "CORR", "EDH", "WT"]
+
+  # train_f = {}
+  # test_f = {}
+  # for f_type in f_types:
+  #   f_base_name = "Normalized_%s_Lite_" % f_type + "%s.dat"
+  #   tr_file_name = os.path.join(f_dir, f_base_name % ("Train"))
+  #   te_file_name = os.path.join(f_dir, f_base_name % ("Test"))
+  #   train_f[f_type] = np.loadtxt(tr_file_name)
+  #   test_f[f_type] = np.loadtxt(te_file_name)
+  # feats = {"train": train_f, "test": test_f}
+  # np.save(os.path.join(f_dir, "all_feats"), feats)
+
+  fts = np.load(os.path.join(f_dir, "all_feats.npy"), allow_pickle=True).tolist()
+
+  with open(os.path.join(NWL_DIR, "Concepts81.txt")) as fh:
+    concepts = [c.strip() for c in fh.readlines()]
+
+  labels = {}
+  for ttype in ["Train", "Test"]:
+    labels[ttype] = np.load(os.path.join(NWL_DIR, "%s_labels.npy"))
+
+
+  return feats, labels, concepts
+
+
+
+
+
+
+################################################################################
 # Data utilities:
 def cat_views(view_data):
   nviews = len(view_data)
