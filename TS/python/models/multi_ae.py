@@ -40,13 +40,14 @@ class MAEConfig(BaseConfig):
 
 
 def default_MAE_config(
-    v_sizes, dropout_p=0.5, code_size=10, view_dropout=False):
+    v_sizes, dropout_p=0.5, code_size=10, view_dropout=False, lunits=None):
   n_views = len(v_sizes)
 
+  lunits = [256, 128] if lunits is None else lunits
   # Default Encoder config:
   code_sample_noise_var = 0.0
   output_size = code_size
-  layer_units = [256, 128]
+  layer_units = lunits
   use_vae = False
   activation = nn.ReLU
   last_activation = torch_models.Identity
@@ -61,7 +62,7 @@ def default_MAE_config(
         last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   input_size = code_size
-  layer_units = [128, 256]
+  layer_units = lunits[::-1]
   use_vae = False
   last_activation = nn.Sigmoid
   decoder_params = {}

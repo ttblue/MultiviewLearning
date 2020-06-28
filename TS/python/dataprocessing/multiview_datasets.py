@@ -261,6 +261,25 @@ def split_data(view_data, fracs=[0.8, 0.2], shuffle=True, get_inds=True):
   return dsets
 
 
+def stratified_sample(view_data, labels, frac=0.2, get_inds=True):
+  ltypes = np.unique(labels)
+  idx_set = []
+  for l in ltypes:
+    linds = (labels == l).nonzero()[0]
+    num_l = len(linds)
+    num_sampled_l = int(np.round(frac * num_l))
+    idx_set += [linds[i] for i in np.random.permutation(num_l)[:num_sampled_l]]
+
+  np.random.shuffle(idx_set)
+
+  labels_sampled = labels[idx_set]
+  view_data_sampled = {vi: vdat[idx_set] for vi, vdat in view_data.items()}
+
+  if get_inds:
+    return view_data_sampled, labels_sampled, idx_set
+  return view_data_sampled, labels_sampled
+
+
 def get_view_subdatasets(view_data, labels, split_inds=None):
   npts = len(view_data[0])
   if split_inds is None:

@@ -43,22 +43,56 @@ def load_3news(ndims_red=None, rtn_proj_mean=True):
   return view_data, view_sizes, labels
 
 
-def load_nuswidelite(ndims_red=None, rtn_proj_mean=True):
+def extract_label_subsets(view_data, labels, label_subset, downsample_frac=0.2):
+  subset_dsets = {}
+  subset_inds = {}
+  for output_label in label_subset:
+    ds_data, ds_labels, ds_inds = {}, {}, {}
+    for ttype in ["train", "test"]:
+      y = labels[ttype][:, output_label]
+      ds_data[ttype], ds_labels[ttype], ds_inds[ttype] = multiview_datasets.stratified_sample(
+          view_data[ttype], y, downsample_frac, True)
+    subset_dsets[output_label] = (ds_data, ds_labels)
+    subset_inds[output_label] = ds_inds
+
+  return subset_dsets, subset_inds
+
+
+def load_nuswidelite(concept_set=None, downsample=0.3, ndims_red=None, rtn_proj_mean=True):
   view_data, labels, view_sizes, concepts, f_types = multiview_datasets.load_nus_wide_lite()
+  if "Train" in labels:
+    labels = {"train": labels["Train"], "test": labels["Test"]}
+
+  concept_inds = [concepts.index(cpt) for cpt in concept_set]
+  all_data, all_inds = extract_label_subsets(view_data, labels, concept_inds, downsample)
+
   if ndims_red:
+    nviews = len(view_data["train"])
     proj_data = {}
-    proj_data["train"], projs, means = multiview_datasets.dim_reduce(
-          view_data["train"], ndims=ndims_red, fill=False, rtn_proj_mean=True)
+    proj_labels = {}
+    projs = {}
+    means = {}
+    idx = 1
+    for cind, (cdat, cy) in all_data.items():
+      print("Dim reduce %i/%i" % (idx, len(concept_set)))
+      idx += 1
+      proj_data[cind] = {}
+      tr_proj, projs[cind], means[cind] = multiview_datasets.dim_reduce(
+            cdat["train"], ndims=ndims_red, fill=False, rtn_proj_mean=True)
 
-    proj_data["test"] = {}
-    for vi, ft in view_data["train"].items():
-      proj_data["test"][vi] = proj[vi].dot(ft - mean[vi])
+      proj_data[cind]["train"] = {vi: np.array(pdat) for vi, pdat in tr_proj.items()}
+      proj_data[cind]["test"] = {}
+      for vi, ft in cdat["test"].items():
+        proj_data[cind]["test"][vi] = (ft - means[cind][vi]).dot(projs[cind][vi].T)
 
-    view_sizes = {i: projs_data["train"][i].shape[0] for i in view_data}
+      proj_labels[cind] = cy
+
+    view_sizes = {i: proj_data[cind]["train"][i].shape[1] for i in range(nviews)}
     if rtn_proj_mean:
-      return proj_data, view_sizes, labels, projs, means, concepts, f_types
-    return proj_data, view_sizes, labels, concepts, f_types
-  return view_data, view_sizes, labels, concepts, f_types
+       proj_data, view_sizes, proj_labels, projs, means, concepts, f_types
+    return proj_data, view_sizes, proj_labels, concepts, f_types
+
+  return all_data, view_sizes, labels, concepts, f_types
 
 
 def load_nmnist(ndims_red=None, rtn_proj_mean=True):
@@ -79,12 +113,14 @@ def load_nmnist(ndims_red=None, rtn_proj_mean=True):
   return view_data, view_sizes, labels, concepts, n_types
 
 
-def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
+def default_RMAE_config(
+    v_sizes, hidden_size=16, joint_code_size=32, lunits=None, lunits_joint=None):
   n_views = len(v_sizes)
 
+  lunits = [32, 64] if lunits is None else lunits
   # Default Encoder config:
   output_size = hidden_size
-  layer_units = [32, 64]
+  layer_units = lunits
   use_vae = False
   activation = nn.ReLU  # nn.functional.relu
   last_activation = nn.Sigmoid  # functional.sigmoid
@@ -100,7 +136,7 @@ def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
         last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   input_size = joint_code_size
-  layer_units = [32, 64]
+  layer_units = lunits[::-1] #[32, 64]
   use_vae = False
   last_activation = torch_models.Identity
   dropout_p = 0.2
@@ -116,7 +152,7 @@ def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
 
   input_size = hidden_size * len(v_sizes)
   output_size = joint_code_size
-  layer_units = [64, 128]  #[64, 64]
+  layer_units = [64, 128] if lunits_joint is None else lunits_joint  #[64, 64]
   layer_types, layer_args = torch_utils.generate_linear_types_args(
       input_size, layer_units, output_size)
   use_vae = False
@@ -208,12 +244,21 @@ def all_subset_accuracy(model, data):
   return subset_errors, all_errors
 
 
-def evaluate_downstream_task(tr_x, tr_y, te_x, te_y):
+models = {
+    "logreg": LogisticRegression,
+    "svc": SVC,
+}
+m_args = {
+    "logreg": {'C': 1e2, "max_iter": 500},
+    "svc": {'C': 1.0},
+
+}
+
+def evaluate_downstream_task(tr_x, tr_y, te_x, te_y, mtype="logreg"):
   # Logreg
   # Keep same model?
-  kwargs = {'C': 1e2, "max_iter": 500}#, "solver": "newton-cg"}
-  model = LogisticRegression(**kwargs)
-  mtype = "Logreg"
+  kwargs = m_args[mtype]#{'C': 1e2, "max_iter": 500}#, "solver": "newton-cg"}
+  model = models[mtype](**kwargs)
 
   ntrain, ntest = tr_x.shape[0], te_x.shape[0]
 
@@ -225,13 +270,17 @@ def evaluate_downstream_task(tr_x, tr_y, te_x, te_y):
   train_acc = (tr_pred == tr_y).sum() / ntrain
   test_acc = (te_pred == te_y).sum() / ntest
   print("  [%s] All views:\nTrain accuracy: %.3f\nTest accuracy: %.3f" % (mtype, train_acc, test_acc))
+  return train_acc, test_acc
 
 
 def setup_RMAE(v_sizes, drop_scale=True, zero_at_input=False, max_iters=1000):
-  hidden_size = 64
+  lunits = [64, 128]
+  hidden_size = 128
+  lunits_joint = [128, 256]
   joint_code_size = 256
   config = default_RMAE_config(
-      v_sizes, hidden_size=hidden_size, joint_code_size=joint_code_size)
+      v_sizes, hidden_size=hidden_size, joint_code_size=joint_code_size,
+      lunits=lunits, lunits_joint=lunits_joint)
 
   config.drop_scale = drop_scale
   config.zero_at_input = zero_at_input
@@ -243,8 +292,9 @@ def setup_RMAE(v_sizes, drop_scale=True, zero_at_input=False, max_iters=1000):
 
 def setup_intersection_mae(v_sizes, max_iters=1000):
   code_size = 256
+  lunits = [64, 128, 256]
   config = multi_ae.default_MAE_config(
-      v_sizes, code_size=code_size, dropout_p=0.2)
+      v_sizes, code_size=code_size, dropout_p=0.2, lunits=lunits)
   config.max_iters = max_iters
 
   model = multi_ae.MultiAutoEncoder(config)
@@ -253,11 +303,12 @@ def setup_intersection_mae(v_sizes, max_iters=1000):
 
 def setup_cat_ae(v_sizes, max_iters=1000):
   cat_dim = np.sum([sz for sz in v_sizes.values()])
+  lunits = [150, 200, 256]
   code_size = 256
 
   cat_vsizes = {0: cat_dim}
   config = multi_ae.default_MAE_config(
-      cat_vsizes, code_size=code_size, dropout_p=0.2)
+      cat_vsizes, code_size=code_size, dropout_p=0.2, lunits=lunits)
   config.max_iters = max_iters  
 
   model = multi_ae.MultiAutoEncoder(config)
@@ -280,6 +331,7 @@ def make_proper_dset(xvs, ys):
 
 def fill_missing(xvs, v_sizes, cat_dims=False):
   npts = len(xvs[utils.get_any_key(xvs)])
+  nviews = len(v_sizes)
   xvs_filled = {}
   for vi in v_sizes:
     vdim = v_sizes[vi]
@@ -293,7 +345,7 @@ def fill_missing(xvs, v_sizes, cat_dims=False):
     xvs_filled[vi] = xv_filled
   if cat_dims:
     cat_data = np.concatenate(
-      [xvs_filled[vi] for vi in range(nviews)], axis=1)
+      [xvs_filled[vi] for vi in xvs_filled], axis=1)
     return cat_data
   return xvs_filled
 
@@ -368,8 +420,7 @@ def test_3news(args):
 
   # Only one view
   # model = rmae_model
-  # nviews = len(v_sizes)
-
+  nviews = len(v_sizes)
   for vi in range(nviews):
     globals().update(locals())
     tr_vi = {vi:tr_data[vi]}
@@ -427,64 +478,89 @@ def test_3news(args):
     evaluate_downstream_task(tr_scat, tr_vi_y, te_scat, te_vi_y)
 
   # Without single view
-  for vi in range(nviews):
-    globals().update(locals())
-    tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vi != vj}
-    te_vi = {vj:te_data[vj] for vj in range(nviews) if vi != vj}
-    tr_vi_x, tr_vi_y = make_proper_dset(tr_vi, tr_y)
-    te_vi_x, te_vi_y = make_proper_dset(te_vi, te_y)
+  n_expts = 10
+  all_res = {"rmae": {}, "cmae": {}, "imae": {}, "cat": {}}
+  all_subsets = {}
+  avg_res = {"rmae": {}, "cmae": {}, "imae": {}, "cat": {}}
+  view_range = list(range(nviews))
+  for nv in range(1, nviews + 1):
+    nv_res = {"rmae": [], "cmae": [], "imae": [], "cat": []}
+    all_subsets[nv] = []
+    subsets = list(itertools.combinations(view_range, nv))
+    np.random.shuffle(subsets)
+    for i, subset in enumerate(subsets):
+      if i >= n_expts:
+        break
+      tr_vi = {vj:tr_data[vj] for vj in subset}
+      te_vi = {vj:te_data[vj] for vj in subset}
+      tr_vi_x, tr_vi_y = make_proper_dset(tr_vi, tr_y)
+      te_vi_x, te_vi_y = make_proper_dset(te_vi, te_y)
 
-    globals().update(locals())
-    vj = 0 if vi != 0 else 1
-    ntr = len(tr_vi_x[vj])
-    nte = len(te_vi_x[vj])
-    globals().update(locals())
-    tr_vi_with_None = {
-        vj: tr_vi_x[vj] if vj != vi else [None] * ntr
-        for vj in range(nviews)
-    }
-    te_vi_with_None = {
-        vj: te_vi_x[vj] if vj != vi else [None] * nte
-        for vj in range(nviews)
-    }
-    tr_vi_cat = {0: fill_missing(tr_vi_with_None, v_sizes, cat_dims=True)}
-    te_vi_cat = {0: fill_missing(te_vi_with_None, v_sizes, cat_dims=True)}
+      globals().update(locals())
+      ntr = len(tr_vi_x[subset[0]])
+      nte = len(te_vi_x[subset[0]])
+      globals().update(locals())
+      tr_vi_with_None = {
+          vj: tr_vi_x[vj] if vj in subset else [None] * ntr
+          for vj in range(nviews)
+      }
+      te_vi_with_None = {
+          vj: te_vi_x[vj] if vj in subset else [None] * nte
+          for vj in range(nviews)
+      }
+      tr_vi_cat = {0: fill_missing(tr_vi_with_None, v_sizes, cat_dims=True)}
+      te_vi_cat = {0: fill_missing(te_vi_with_None, v_sizes, cat_dims=True)}
 
-    vs_scat = {vj:vsj for vj, vsj in v_sizes.items() if vj != vi}
-    globals().update(locals())
-    tr_scat = fill_missing(tr_vi_x, vs_scat, cat_dims=True)
-    te_scat = fill_missing(te_vi_x, vs_scat, cat_dims=True)
-    # tr_scat, tr_scat_y = make_proper_dset({0: tr_vi[vi]}, tr_y) #fill_missing(tr_vi_with_None, v_sizes)}
-    # te_scat, te_scat_y = make_proper_dset({0: te_vi[vi]}, te_y)
-    # te_vi_cat = {0: multiview_datasets.fill_missing(te_vi_with_None, cat_dims=True)}
-    # tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vj != vi}
-    # te_vi = {vj:te_data[vj] for vj in range(nviews) if vj != vi}
-    globals().update(locals())
-    rtr_x, _ = rmae_model.encode(tr_vi_x, aggregate="mean")
-    rte_x, _ = rmae_model.encode(te_vi_x, aggregate="mean")
-    rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+      vs_scat = {vj:vsj for vj, vsj in v_sizes.items() if vj in subset}
+      globals().update(locals())
+      tr_scat = fill_missing(tr_vi_x, vs_scat, cat_dims=True)
+      te_scat = fill_missing(te_vi_x, vs_scat, cat_dims=True)
+      # tr_scat, tr_scat_y = make_proper_dset({0: tr_vi[vi]}, tr_y) #fill_missing(tr_vi_with_None, v_sizes)}
+      # te_scat, te_scat_y = make_proper_dset({0: te_vi[vi]}, te_y)
+      # te_vi_cat = {0: multiview_datasets.fill_missing(te_vi_with_None, cat_dims=True)}
+      # tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vj != vi}
+      # te_vi = {vj:te_data[vj] for vj in range(nviews) if vj != vi}
+      globals().update(locals())
+      rtr_x, _ = rmae_model.encode(tr_vi_x, aggregate="mean")
+      rte_x, _ = rmae_model.encode(te_vi_x, aggregate="mean")
+      rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
 
-    itr_x, _ = imae_model.encode(tr_vi_x, aggregate="mean")
-    ite_x, _ = imae_model.encode(te_vi_x, aggregate="mean")
-    itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+      itr_x, _ = imae_model.encode(tr_vi_x, aggregate="mean")
+      ite_x, _ = imae_model.encode(te_vi_x, aggregate="mean")
+      itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
 
-    ctr_x, _ = cmae_model.encode(tr_vi_cat, aggregate="mean")
-    cte_x, _ = cmae_model.encode(te_vi_cat, aggregate="mean")
-    ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+      ctr_x, _ = cmae_model.encode(tr_vi_cat, aggregate="mean")
+      cte_x, _ = cmae_model.encode(te_vi_cat, aggregate="mean")
+      ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
 
-    globals().update(locals())
-    print("\n\n\nWithout View %i" % vi)
-    print("\n\nRMAE")
-    evaluate_downstream_task(rtr_x, tr_vi_y, rte_x, te_vi_y)
+      globals().update(locals())
+      print("\n\nView subset %s" % (subset,))
+      print("\n\nRMAE")
+      tr_acc, te_acc = evaluate_downstream_task(rtr_x, tr_vi_y, rte_x, te_vi_y)
+      nv_res["rmae"].append((tr_acc, te_acc))
 
-    print("\n\nIMAE")
-    evaluate_downstream_task(itr_x, tr_vi_y, ite_x, te_vi_y)
+      print("\n\nIMAE")
+      tr_acc, te_acc = evaluate_downstream_task(itr_x, tr_vi_y, ite_x, te_vi_y)
+      nv_res["imae"].append((tr_acc, te_acc))
 
-    print("\n\nCMAE")
-    evaluate_downstream_task(ctr_x, tr_vi_y, cte_x, te_vi_y)
+      print("\n\nCMAE")
+      tr_acc, te_acc = evaluate_downstream_task(ctr_x, tr_vi_y, cte_x, te_vi_y)
+      nv_res["cmae"].append((tr_acc, te_acc))
 
-    print("\n\nsimple CAT")
-    evaluate_downstream_task(tr_scat, tr_scat_y, te_scat, te_scat_y)
+      print("\n\nsimple CAT")
+      tr_acc, te_acc = evaluate_downstream_task(tr_scat, tr_vi_y, te_scat, te_vi_y)
+      nv_res["cat"].append((tr_acc, te_acc))
+
+      all_subsets[nv].append(subset)
+
+    # compute avgs
+    nv_n_expts = len(all_subsets[nv])
+    for alg, accs in nv_res.items():
+      tr_avg_acc = np.mean([a[0] for a in accs])
+      te_avg_acc = np.mean([a[1] for a in accs])
+      avg_res[alg][nv] = (tr_avg_acc, te_avg_acc)
+      all_res[alg][nv] = accs
+
 
   # Leave one out
 
@@ -514,9 +590,11 @@ def test_nuswidelite(args):
   drop_scale = args.drop_scale
   zero_at_input = args.zero_at_input
 
+  concept_set = ["lake", "person", "sunset"]
+  downsample_frac = 0.2
   if ndims_red > 0:
     data, view_sizes, labels, projs, means, concepts, f_types = load_nuswidelite(
-        ndims_red, rtn_proj_mean=True)
+        concept_set, downsample_frac, ndims_red, rtn_proj_mean=True)
   else:
     data, view_sizes, labels, concepts, f_types = load_nuswidelite(None)
         # ndims_red, rtn_proj_mean=True)
