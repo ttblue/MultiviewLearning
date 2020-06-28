@@ -21,7 +21,8 @@ class RMAEConfig(multi_ae.MAEConfig):
   def __init__(
       self, joint_coder_params, drop_scale=False, zero_at_input=True,
       *args, **kwargs):
-    super(RMAEConfig, self).__init__(*args, **kwargs)
+    lm = 0.
+    super(RMAEConfig, self).__init__(lm=lm, *args, **kwargs)
 
     self.joint_coder_params = joint_coder_params
     self.drop_scale = drop_scale
@@ -70,6 +71,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
     # IPython.embed()
     xv_valid = np.array([xv[i] for i in valid_inds])
     xv_valid = torch_utils.numpy_to_torch(xv_valid)
+    # IPython.embed()
     valid_code = self._en_layers["E%i"%vi](xv_valid)
     missing_code = self._encode_missing_view(vi, len(invalid_inds))
 
@@ -234,6 +236,7 @@ class RobustMultiAutoEncoder(multi_ae.MultiAutoEncoder):
           print("Iteration %i took %0.2fs." % (itr + 1, itr_duration))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
+    self.eval()
     self._trained = True
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
 

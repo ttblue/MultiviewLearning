@@ -36,10 +36,47 @@ def load_3news(ndims_red=None, rtn_proj_mean=True):
   if ndims_red:
     proj_base_data, projs, means = multiview_datasets.dim_reduce(
         view_data, ndims=ndims_red, fill=False, rtn_proj_mean=True)
+    view_sizes = {i: projs[i].shape[0] for i in view_data}
     if rtn_proj_mean:
       return proj_base_data, view_sizes, labels, projs, means
     return proj_base_data, view_sizes, labels
   return view_data, view_sizes, labels
+
+
+def load_nuswidelite(ndims_red=None, rtn_proj_mean=True):
+  view_data, labels, view_sizes, concepts, f_types = multiview_datasets.load_nus_wide_lite()
+  if ndims_red:
+    proj_data = {}
+    proj_data["train"], projs, means = multiview_datasets.dim_reduce(
+          view_data["train"], ndims=ndims_red, fill=False, rtn_proj_mean=True)
+
+    proj_data["test"] = {}
+    for vi, ft in view_data["train"].items():
+      proj_data["test"][vi] = proj[vi].dot(ft - mean[vi])
+
+    view_sizes = {i: projs_data["train"][i].shape[0] for i in view_data}
+    if rtn_proj_mean:
+      return proj_data, view_sizes, labels, projs, means, concepts, f_types
+    return proj_data, view_sizes, labels, concepts, f_types
+  return view_data, view_sizes, labels, concepts, f_types
+
+
+def load_nmnist(ndims_red=None, rtn_proj_mean=True):
+  view_data, view_sizes, labels, n_types = multiview_datasets.load_nmnist()
+  if ndims_red:
+    proj_data = {}
+    proj_data["train"], projs, means = multiview_datasets.dim_reduce(
+          view_data["train"], ndims=ndims_red, fill=False, rtn_proj_mean=True)
+
+    proj_data["test"] = {}
+    for vi, ft in view_data["train"].items():
+      proj_data["test"][vi] = proj[vi].dot(ft - mean[vi])
+
+    view_sizes = {i: projs_data["train"][i].shape[0] for i in view_data}
+    if rtn_proj_mean:
+      return proj_data, view_sizes, labels, projs, means, n_types
+    return proj_data, view_sizes, labels, concepts, n_types
+  return view_data, view_sizes, labels, concepts, n_types
 
 
 def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
@@ -47,11 +84,11 @@ def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
 
   # Default Encoder config:
   output_size = hidden_size
-  layer_units = [32] # [32, 64]
+  layer_units = [32, 64]
   use_vae = False
   activation = nn.ReLU  # nn.functional.relu
   last_activation = nn.Sigmoid  # functional.sigmoid
-  dropout_p = 0
+  dropout_p = 0.2
   encoder_params = {}
   for i in range(n_views):
     input_size = v_sizes[i]
@@ -63,10 +100,10 @@ def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
         last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   input_size = joint_code_size
-  layer_units = [32]  #[64, 32]
+  layer_units = [32, 64]
   use_vae = False
   last_activation = torch_models.Identity
-  dropout_p = 0.
+  dropout_p = 0.2
   decoder_params = {}
   for i in range(n_views):
     output_size = v_sizes[i]
@@ -79,7 +116,7 @@ def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
 
   input_size = hidden_size * len(v_sizes)
   output_size = joint_code_size
-  layer_units = [64]  #[64, 64]
+  layer_units = [64, 128]  #[64, 64]
   layer_types, layer_args = torch_utils.generate_linear_types_args(
       input_size, layer_units, output_size)
   use_vae = False
@@ -89,7 +126,7 @@ def default_RMAE_config(v_sizes, hidden_size=16, joint_code_size=32):
       last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
   drop_scale = True
-  zero_at_input = True
+  zero_at_input = False
 
   code_sample_noise_var = 0.
   max_iters = 1000
@@ -191,8 +228,8 @@ def evaluate_downstream_task(tr_x, tr_y, te_x, te_y):
 
 
 def setup_RMAE(v_sizes, drop_scale=True, zero_at_input=False, max_iters=1000):
-  hidden_size = 32
-  joint_code_size = 64
+  hidden_size = 64
+  joint_code_size = 256
   config = default_RMAE_config(
       v_sizes, hidden_size=hidden_size, joint_code_size=joint_code_size)
 
@@ -205,8 +242,9 @@ def setup_RMAE(v_sizes, drop_scale=True, zero_at_input=False, max_iters=1000):
 
 
 def setup_intersection_mae(v_sizes, max_iters=1000):
-  code_size = 64
-  config = multi_ae.default_MAE_config(v_sizes, code_size=code_size)
+  code_size = 256
+  config = multi_ae.default_MAE_config(
+      v_sizes, code_size=code_size, dropout_p=0.2)
   config.max_iters = max_iters
 
   model = multi_ae.MultiAutoEncoder(config)
@@ -215,10 +253,11 @@ def setup_intersection_mae(v_sizes, max_iters=1000):
 
 def setup_cat_ae(v_sizes, max_iters=1000):
   cat_dim = np.sum([sz for sz in v_sizes.values()])
-  code_size = 64
+  code_size = 256
 
   cat_vsizes = {0: cat_dim}
-  config = multi_ae.default_MAE_config(cat_vsizes, code_size=code_size)
+  config = multi_ae.default_MAE_config(
+      cat_vsizes, code_size=code_size, dropout_p=0.2)
   config.max_iters = max_iters  
 
   model = multi_ae.MultiAutoEncoder(config)
@@ -239,7 +278,7 @@ def make_proper_dset(xvs, ys):
   return xvs_valid, ys_valid
 
 
-def fill_missing(xvs, v_sizes):
+def fill_missing(xvs, v_sizes, cat_dims=False):
   npts = len(xvs[utils.get_any_key(xvs)])
   xvs_filled = {}
   for vi in v_sizes:
@@ -252,8 +291,11 @@ def fill_missing(xvs, v_sizes):
     else:
       xv_filled = np.zeros((npts, vdim))
     xvs_filled[vi] = xv_filled
+  if cat_dims:
+    cat_data = np.concatenate(
+      [xvs_filled[vi] for vi in range(nviews)], axis=1)
+    return cat_data
   return xvs_filled
-
 
 
 def test_3news(args):
@@ -261,7 +303,7 @@ def test_3news(args):
   drop_scale = args.drop_scale
   zero_at_input = args.zero_at_input
 
-  if ndims_red is not None:
+  if ndims_red > 0:
     data, v_sizes, labels, projs, means = load_3news(
         ndims_red, rtn_proj_mean=True)
   else:
@@ -279,13 +321,229 @@ def test_3news(args):
   te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
 
   # IPython.embed()
-  max_iters = 3000
+  max_iters = args.max_iters
   rmae_model = setup_RMAE(
       v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
   # IPython.embed()
   imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
   cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
-  # IPython.embed()2
+  IPython.embed()
+  rmae_model.fit(tr_data)
+  imae_model.fit(tr_data)
+  cmae_tr, cmae_te = {0: tr_cat}, {0: te_cat}
+  cmae_model.fit(cmae_tr)
+
+  model = imae_model
+  IPython.embed()
+  # Everything together
+
+  tr_y, te_y = labels[split_inds[0]], labels[split_inds[1]]
+
+  rtr_x, _ = rmae_model.encode(tr_data, aggregate="mean")
+  rte_x, _ = rmae_model.encode(te_data, aggregate="mean")
+  rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+
+  itr_x, _ = imae_model.encode(tr_data, aggregate="mean")
+  ite_x, _ = imae_model.encode(te_data, aggregate="mean")
+  itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+
+  ctr_x, _ = cmae_model.encode(cmae_tr, aggregate="mean")
+  cte_x, _ = cmae_model.encode(cmae_te, aggregate="mean")
+  ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+
+  tr_cat = multiview_datasets.fill_missing(tr_data, cat_dims=True)
+  te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
+
+  print("\n\nRMAE: Robust Multi-view AE")
+  evaluate_downstream_task(rtr_x, tr_y, rte_x, te_y)
+
+  print("\n\nIMAE: Intersection Multi-view AE")
+  evaluate_downstream_task(itr_x, tr_y, ite_x, te_y)
+
+  print("\n\nCAE: Concatenated AE")
+  evaluate_downstream_task(ctr_x, tr_y, cte_x, te_y)
+
+  print("\n\nCAT: Simple concatenation")
+  evaluate_downstream_task(tr_cat, tr_y, te_cat, te_y)
+
+  # Only one view
+  # model = rmae_model
+  # nviews = len(v_sizes)
+
+  for vi in range(nviews):
+    globals().update(locals())
+    tr_vi = {vi:tr_data[vi]}
+    te_vi = {vi:te_data[vi]}
+    tr_vi_x, tr_vi_y = make_proper_dset(tr_vi, tr_y)
+    te_vi_x, te_vi_y = make_proper_dset(te_vi, te_y)
+
+    globals().update(locals())
+    ntr = len(tr_vi_x[vi])
+    nte = len(te_vi_x[vi])
+    globals().update(locals())
+    tr_vi_with_None = {
+        vj: tr_vi_x[vi] if vj == vi else [None] * ntr
+        for vj in range(nviews)
+    }
+    te_vi_with_None = {
+        vj: te_vi_x[vi] if vj == vi else [None] * nte
+        for vj in range(nviews)
+    }
+    tr_vi_cat = {0: fill_missing(tr_vi_with_None, v_sizes, cat_dims=True)}
+    te_vi_cat = {0: fill_missing(te_vi_with_None, v_sizes, cat_dims=True)}
+    # tr_scat, tr_scat_y = make_proper_dset({0: tr_vi[vi]}, tr_y) #fill_missing(tr_vi_with_None, v_sizes)}
+    # te_scat, te_scat_y = make_proper_dset({0: te_vi[vi]}, te_y)
+    # globals().update(locals())
+    tr_scat = np.array(tr_vi_x[vi])
+    te_scat = np.array(te_vi_y[vi])
+    # te_vi_cat = {0: multiview_datasets.fill_missing(te_vi_with_None, cat_dims=True)}
+    # tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vj != vi}
+    # te_vi = {vj:te_data[vj] for vj in range(nviews) if vj != vi}
+    globals().update(locals())
+    rtr_x, _ = rmae_model.encode(tr_vi_x, aggregate="mean")
+    rte_x, _ = rmae_model.encode(te_vi_x, aggregate="mean")
+    rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+
+    itr_x, _ = imae_model.encode(tr_vi_x, aggregate="mean")
+    ite_x, _ = imae_model.encode(te_vi_x, aggregate="mean")
+    itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+
+    ctr_x, _ = cmae_model.encode(tr_vi_cat, aggregate="mean")
+    cte_x, _ = cmae_model.encode(te_vi_cat, aggregate="mean")
+    ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+
+    globals().update(locals())
+    print("\n\n\nView %i" % vi)
+    print("\n\nRMAE")
+    evaluate_downstream_task(rtr_x, tr_vi_y, rte_x, te_vi_y)
+
+    print("\n\nIMAE")
+    evaluate_downstream_task(itr_x, tr_vi_y, ite_x, te_vi_y)
+
+    print("\n\nCMAE")
+    evaluate_downstream_task(ctr_x, tr_vi_y, cte_x, te_vi_y)
+
+    print("\n\nsimple CAT")
+    evaluate_downstream_task(tr_scat, tr_vi_y, te_scat, te_vi_y)
+
+  # Without single view
+  for vi in range(nviews):
+    globals().update(locals())
+    tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vi != vj}
+    te_vi = {vj:te_data[vj] for vj in range(nviews) if vi != vj}
+    tr_vi_x, tr_vi_y = make_proper_dset(tr_vi, tr_y)
+    te_vi_x, te_vi_y = make_proper_dset(te_vi, te_y)
+
+    globals().update(locals())
+    vj = 0 if vi != 0 else 1
+    ntr = len(tr_vi_x[vj])
+    nte = len(te_vi_x[vj])
+    globals().update(locals())
+    tr_vi_with_None = {
+        vj: tr_vi_x[vj] if vj != vi else [None] * ntr
+        for vj in range(nviews)
+    }
+    te_vi_with_None = {
+        vj: te_vi_x[vj] if vj != vi else [None] * nte
+        for vj in range(nviews)
+    }
+    tr_vi_cat = {0: fill_missing(tr_vi_with_None, v_sizes, cat_dims=True)}
+    te_vi_cat = {0: fill_missing(te_vi_with_None, v_sizes, cat_dims=True)}
+
+    vs_scat = {vj:vsj for vj, vsj in v_sizes.items() if vj != vi}
+    globals().update(locals())
+    tr_scat = fill_missing(tr_vi_x, vs_scat, cat_dims=True)
+    te_scat = fill_missing(te_vi_x, vs_scat, cat_dims=True)
+    # tr_scat, tr_scat_y = make_proper_dset({0: tr_vi[vi]}, tr_y) #fill_missing(tr_vi_with_None, v_sizes)}
+    # te_scat, te_scat_y = make_proper_dset({0: te_vi[vi]}, te_y)
+    # te_vi_cat = {0: multiview_datasets.fill_missing(te_vi_with_None, cat_dims=True)}
+    # tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vj != vi}
+    # te_vi = {vj:te_data[vj] for vj in range(nviews) if vj != vi}
+    globals().update(locals())
+    rtr_x, _ = rmae_model.encode(tr_vi_x, aggregate="mean")
+    rte_x, _ = rmae_model.encode(te_vi_x, aggregate="mean")
+    rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+
+    itr_x, _ = imae_model.encode(tr_vi_x, aggregate="mean")
+    ite_x, _ = imae_model.encode(te_vi_x, aggregate="mean")
+    itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+
+    ctr_x, _ = cmae_model.encode(tr_vi_cat, aggregate="mean")
+    cte_x, _ = cmae_model.encode(te_vi_cat, aggregate="mean")
+    ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+
+    globals().update(locals())
+    print("\n\n\nWithout View %i" % vi)
+    print("\n\nRMAE")
+    evaluate_downstream_task(rtr_x, tr_vi_y, rte_x, te_vi_y)
+
+    print("\n\nIMAE")
+    evaluate_downstream_task(itr_x, tr_vi_y, ite_x, te_vi_y)
+
+    print("\n\nCMAE")
+    evaluate_downstream_task(ctr_x, tr_vi_y, cte_x, te_vi_y)
+
+    print("\n\nsimple CAT")
+    evaluate_downstream_task(tr_scat, tr_scat_y, te_scat, te_scat_y)
+
+  # Leave one out
+
+
+    # for ovi in range(nviews):
+    #   if ovi != vi:
+    #     tr_vi[ovi] = [None] * ntr
+    #     te_vi[ovi] = [None] * nte
+
+    # trv_cat = multiview_datasets.fill_missing(tr_vi, cat_dims=True)
+    # tev_cat = multiview_datasets.fill_missing(te_vi, cat_dims=True)
+
+    # print("cat")
+    # evaluate_downstream_task(trv_cat, trv_y, tev_cat, tev_y)
+
+  # plot_heatmap(model.nullspace_matrix(), msplit_inds
+  # plt.plot(x, y)
+  # plt.title("Reconstruction error vs. number of views", fontsize=20)
+  # plt.xticks([1,2,3,4,5], fontsize=15)
+  # plt.yticks(fontsize=15)
+  # plt.xlabel("Available views", fontsize=18)
+  # plt.ylabel("Error", fontsize=18)
+
+
+def test_nuswidelite(args):
+  ndims_red = args.ndims_red
+  drop_scale = args.drop_scale
+  zero_at_input = args.zero_at_input
+
+  if ndims_red > 0:
+    data, view_sizes, labels, projs, means, concepts, f_types = load_nuswidelite(
+        ndims_red, rtn_proj_mean=True)
+  else:
+    data, view_sizes, labels, concepts, f_types = load_nuswidelite(None)
+        # ndims_red, rtn_proj_mean=True)
+
+  # if npts > 0:
+  #   data = {vi: d[:npts] for vi, d in data.items()}
+  # tr_frac = 0.8
+  # split_frac = [tr_frac, 1. - tr_frac]
+  # (tr_data, te_data), split_inds = multiview_datasets.split_data(
+  #     data, split_frac, get_inds=True)
+  # tr_labels, te_labels = labels[split_inds[0]], labels[split_inds[1]]
+  tr_data = data["train"]
+  tr_labels = labels["train"]
+  te_data = data["test"]
+  te_labels = labels["test"]
+
+  tr_cat = multiview_datasets.fill_missing(tr_data, cat_dims=True)
+  te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
+
+  # IPython.embed()
+  max_iters = args.max_iters
+  rmae_model = setup_RMAE(
+      v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
+  # IPython.embed()
+  imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
+  cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
+  IPython.embed()
   rmae_model.fit(tr_data)
   imae_model.fit(tr_data)
   cmae_tr, cmae_te = {0: tr_cat}, {0: te_cat}
@@ -324,77 +582,81 @@ def test_3news(args):
   print("\n\nCAT: Simple concatenation")
   evaluate_downstream_task(tr_cat, tr_y, te_cat, te_y)
 
-  # Only one view
-  # model = rmae_model
-  # nviews = len(v_sizes)
-  for vi in range(nviews):
-    tr_vi = {vi:tr_data[vi]}
-    te_vi = {vi:te_data[vi]}
-    tr_vi_x, tr_vi_y = make_proper_dset(tr_vi, tr_y)
-    te_vi_x, te_vi_y = make_proper_dset(te_vi, te_y)
 
-    ntr = len(tr_vi_x[vi])
-    nte = len(te_vi_x[vi])
-    tr_vi_with_None = {
-        vj: tr_vi_x[vi] if vj == vi else [None] * ntr
-        for vj in range(nviews)
-    }
-    te_vi_with_None = {
-        vj: te_vi_x[vi] if vj == vi else [None] * nte
-        for vj in range(nviews)
-    }
-    tr_vi_cat = {0: fill_missing(tr_vi_with_None, cat_dims=True)}
-    # te_vi_cat = {0: multiview_datasets.fill_missing(te_vi_with_None, cat_dims=True)}
-    # tr_vi = {vj:tr_data[vj] for vj in range(nviews) if vj != vi}
-    # te_vi = {vj:te_data[vj] for vj in range(nviews) if vj != vi}
+def test_nmnist(args):
+  ndims_red = args.ndims_red
+  drop_scale = args.drop_scale
+  zero_at_input = args.zero_at_input
 
-    rtr_x, _ = rmae_model.encode(tr_vi_x, aggregate="mean")
-    rte_x, _ = rmae_model.encode(te_vi_x, aggregate="mean")
-    rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+  if ndims_red > 0:
+    data, view_sizes, labels, projs, means, n_types = load_nmnist(
+        ndims_red, rtn_proj_mean=True)
+  else:
+    data, view_sizes, labels, concepts, f_types = load_nmnist(None)
+        # ndims_red, rtn_proj_mean=True)
 
-    itr_x, _ = imae_model.encode(tr_vi_x, aggregate="mean")
-    ite_x, _ = imae_model.encode(te_vi_x, aggregate="mean")
-    itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+  # if npts > 0:
+  #   data = {vi: d[:npts] for vi, d in data.items()}
+  # tr_frac = 0.8
+  # split_frac = [tr_frac, 1. - tr_frac]
+  # (tr_data, te_data), split_inds = multiview_datasets.split_data(
+  #     data, split_frac, get_inds=True)
+  # tr_labels, te_labels = labels[split_inds[0]], labels[split_inds[1]]
+  tr_data = data["train"]
+  tr_labels = labels["train"]
+  te_data = data["test"]
+  te_labels = labels["test"]
 
-    # ctr_x, _ = cmae_model.encode(tr_vi_cat, aggregate="mean")
-    # cte_x, _ = cmae_model.encode(te_vi_cat, aggregate="mean")
-    # ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+  tr_cat = multiview_datasets.fill_missing(tr_data, cat_dims=True)
+  te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
+
+  # IPython.embed()
+  max_iters = args.max_iters
+  rmae_model = setup_RMAE(
+      v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
+  # IPython.embed()
+  imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
+  cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
+  IPython.embed()
+  rmae_model.fit(tr_data)
+  imae_model.fit(tr_data)
+  cmae_tr, cmae_te = {0: tr_cat}, {0: te_cat}
+  cmae_model.fit(cmae_tr)
+
+  model = imae_model
+  IPython.embed()
+
+  # Everything together
+  tr_y, te_y = labels[split_inds[0]], labels[split_inds[1]]
+
+  rtr_x, _ = rmae_model.encode(tr_data, aggregate="mean")
+  rte_x, _ = rmae_model.encode(te_data, aggregate="mean")
+  rtr_x, rte_x = torch_utils.torch_to_numpy(rtr_x), torch_utils.torch_to_numpy(rte_x)
+
+  itr_x, _ = imae_model.encode(tr_data, aggregate="mean")
+  ite_x, _ = imae_model.encode(te_data, aggregate="mean")
+  itr_x, ite_x = torch_utils.torch_to_numpy(itr_x), torch_utils.torch_to_numpy(ite_x)
+
+  ctr_x, _ = cmae_model.encode(cmae_tr, aggregate="mean")
+  cte_x, _ = cmae_model.encode(cmae_te, aggregate="mean")
+  ctr_x, cte_x = torch_utils.torch_to_numpy(ctr_x), torch_utils.torch_to_numpy(cte_x)
+
+  tr_cat = multiview_datasets.fill_missing(tr_data, cat_dims=True)
+  te_cat = multiview_datasets.fill_missing(te_data, cat_dims=True)
+
+  print("\n\nRMAE: Robust Multi-view AE")
+  evaluate_downstream_task(rtr_x, tr_y, rte_x, te_y)
+
+  print("\n\nIMAE: Intersection Multi-view AE")
+  evaluate_downstream_task(itr_x, tr_y, ite_x, te_y)
+
+  print("\n\nCAE: Concatenated AE")
+  evaluate_downstream_task(ctr_x, tr_y, cte_x, te_y)
+
+  print("\n\nCAT: Simple concatenation")
+  evaluate_downstream_task(tr_cat, tr_y, te_cat, te_y)
 
 
-    print("\n\n\nView %i" % vi)
-    print("\n\nRMAE")
-    evaluate_downstream_task(rtr_x, tr_y, rte_x, te_y)
-
-    print("\n\nIMAE")
-    evaluate_downstream_task(itr_x, tr_y, ite_x, te_y)
-
-    # print("\n\nCMAE")
-    # evaluate_downstream_task(ctr_x, tr_y, cte_x, te_y)
-
-    # print("\n\nsimple CAT")
-    # evaluate_downstream_task(tr_cat, tr_y, te_cat, te_y)
-
-  # Leave one out
-
-
-    # for ovi in range(nviews):
-    #   if ovi != vi:
-    #     tr_vi[ovi] = [None] * ntr
-    #     te_vi[ovi] = [None] * nte
-
-    # trv_cat = multiview_datasets.fill_missing(tr_vi, cat_dims=True)
-    # tev_cat = multiview_datasets.fill_missing(te_vi, cat_dims=True)
-
-    # print("cat")
-    # evaluate_downstream_task(trv_cat, trv_y, tev_cat, tev_y)
-
-  # plot_heatmap(model.nullspace_matrix(), msplit_inds
-  # plt.plot(x, y)
-  # plt.title("Reconstruction error vs. number of views", fontsize=20)
-  # plt.xticks([1,2,3,4,5], fontsize=15)
-  # plt.yticks(fontsize=15)
-  # plt.xlabel("Available views", fontsize=18)
-  # plt.ylabel("Error", fontsize=18)
 
 def make_synthetic_data(args):
   npts = args.npts
@@ -574,7 +836,7 @@ def test_RMAE_synthetic_subset_redundancy(args):
   max_iters = args.max_iters
   rmae_model = setup_RMAE(
       v_sizes, drop_scale, zero_at_input, max_iters=max_iters)
-  # IPython.embed()
+  IPython.embed()
   imae_model = setup_intersection_mae(v_sizes, max_iters=max_iters)
   cmae_model = setup_cat_ae(v_sizes, max_iters=max_iters)
 
@@ -658,6 +920,7 @@ def test_RMAE_synthetic_subset_redundancy(args):
 _TEST_FUNCS = {
     0: test_3news,
     1: test_RMAE_synthetic_subset_redundancy,
+    2: test_nuswidelite,
 }
 
 

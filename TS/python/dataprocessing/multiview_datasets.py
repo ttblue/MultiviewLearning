@@ -122,12 +122,12 @@ def load_nus_wide_lite():
 
   # train_f = {}
   # test_f = {}
-  # for f_type in f_types:
+  # for i, f_type in enumerate(f_types):
   #   f_base_name = "Normalized_%s_Lite_" % f_type + "%s.dat"
   #   tr_file_name = os.path.join(f_dir, f_base_name % ("Train"))
   #   te_file_name = os.path.join(f_dir, f_base_name % ("Test"))
-  #   train_f[f_type] = np.loadtxt(tr_file_name)
-  #   test_f[f_type] = np.loadtxt(te_file_name)
+  #   train_f[i] = np.loadtxt(tr_file_name)
+  #   test_f[i] = np.loadtxt(te_file_name)
   # feats = {"train": train_f, "test": test_f}
   # np.save(os.path.join(f_dir, "all_feats"), feats)
 
@@ -138,15 +138,42 @@ def load_nus_wide_lite():
 
   labels = {}
   for ttype in ["Train", "Test"]:
-    labels[ttype] = np.load(os.path.join(NWL_DIR, "%s_labels.npy"))
+    labels[ttype] = np.load(os.path.join(l_dir, "%s_labels.npy" % ttype))
+  view_sizes = {i: fts["train"][i].shape[1] for i in range(len(f_types))}
+  return fts, labels, view_sizes, concepts, f_types
 
 
-  return feats, labels, concepts
+# n-MNIST
+# https://csc.lsu.edu/~saikat/n-mnist/
+NMNIST_DIR = os.path.join(DATA_DIR, "NoisyMnist")
+def load_nmnist():
+  all_file = os.path.join(NMNIST_DIR, "all_nmnist.npy")
+  if os.path.exists(all_file):
+    data, labels, n_types = np.load(all_file, allow_pickle=True).tolist()
+    view_sizes = {vi: data["train"][vi].shape[1] for vi in data["train"]}
+    return data, view_sizes, labels, n_types
 
+  awgn_file = os.path.join(NMNIST_DIR, "mnist-with-awgn.mat")
+  mb_file = os.path.join(NMNIST_DIR, "mnist-with-motion-blur.mat")
+  rcawgn_file = os.path.join(NMNIST_DIR, "mnist-with-reduced-contrast-and-awgn.mat")
 
+  n_types = ["awgn", "mb", "rcawgn"]
+  fls = [awgn_file, mb_file, rcawgn_file]
+  data = {"train": {}, "test": {}}
+  labels = None
+  for i, fl in enumerate(fls):
+    fl_data = sio.loadmat(fl)
+    train_x = fl_data["train_x"]
+    test_x = fl_data["test_x"]
+    train_y = fl_data["train_y"]
+    test_y = fl_data["test_y"]
+    data["train"][i] = train_x
+    data["test"][i] = test_x
+    if labels is None:
+      labels = {"train": train_y, "test": test_y}
 
-
-
+  np.save(all_file, [data, labels, n_types])
+  return data, labels, n_types
 
 ################################################################################
 # Data utilities:

@@ -17,7 +17,7 @@ import IPython
 
 class MAEConfig(BaseConfig):
   def __init__(
-      self, v_sizes, code_size, encoder_params, decoder_params,
+      self, v_sizes, code_size, encoder_params, decoder_params, lm,
       code_sample_noise_var, max_iters, batch_size, lr, verbose,
       *args, **kwargs):
 
@@ -27,6 +27,7 @@ class MAEConfig(BaseConfig):
     self.v_sizes = v_sizes
     self.encoder_params = encoder_params
     self.decoder_params = decoder_params
+    self.lm = lm
     self.code_sample_noise_var = code_sample_noise_var
 
     # self.view_dropout = view_dropout
@@ -73,6 +74,8 @@ def default_MAE_config(
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
 
+  lm = 1.0
+
   max_iters = 1000
   batch_size = 50
   lr = 1e-3
@@ -82,6 +85,7 @@ def default_MAE_config(
       code_size=code_size,
       encoder_params=encoder_params,
       decoder_params=decoder_params,
+      lm=lm,
       code_sample_noise_var=code_sample_noise_var,
       # view_dropout=view_dropout,
       max_iters=max_iters,
@@ -147,19 +151,30 @@ class MultiAutoEncoder(nn.Module):
   def _encode_view(self, xv, vi):
     return self._en_layers["E%i"%vi](xv)
 
+  def aggregate(self, zvs, valid_inds, agg_type="mean"):
+    if agg_type != "mean":
+      raise NotImplementedError()
+
+    # npts = len(zvs[utils.get_any_key(zvs)])
+    # HACK: number of points is the largest index in valid inds (+ 1)
+    npts = np.max([np.max(valid_inds[vi]) for vi in valid_inds]) + 1
+
+    navailable = torch.zeros(npts, 1)
+    agg_codes = torch.zeros(npts, self.config.code_size)
+    # IPython.embed()
+    for vi in zvs:
+      view_codes = torch.zeros(npts, self.config.code_size)
+      view_codes[valid_inds[vi]] = zvs[vi]
+      navailable[valid_inds[vi]] += 1
+      agg_codes += view_codes
+    agg_codes /= navailable
+    return agg_codes
+
   def encode(self, xvs, aggregate=None, *args, **kwargs):
     xvs_valid, valid_inds = self._get_valid(xvs)
     codes = {vi:self._encode_view(xv, vi) for vi, xv in xvs_valid.items()}
-    if aggregate == "mean":
-      npts = len(xvs[utils.get_any_key(xvs)])
-      navailable = torch.zeros(npts, 1)
-      agg_codes = torch.zeros(npts, self.config.code_size)
-      for vi in xvs_valid:
-        view_codes = torch.zeros(npts, self.config.code_size)
-        view_codes[valid_inds[vi]] = codes[vi]
-        navailable[valid_inds[vi]] += 1
-        agg_codes += view_codes
-      agg_codes /= navailable
+    if aggregate is not None:
+      agg_codes = self.aggregate(codes, valid_inds, aggregate)
       return agg_codes, valid_inds
     return codes, valid_inds
 
@@ -199,15 +214,16 @@ class MultiAutoEncoder(nn.Module):
     # x.requires_grad_(False)
     # zs = self.encode(xvs_valid)
     zs, valid_inds = self.encode(xvs)
-
+    zs_agg = self.aggregate(zs, valid_inds, "mean")
     # This is, for every encoded view, the reconstruction of every view
-    recons = {}
-    for vi in range(self._nviews):
-      recons[vi] = self.decode(zs[vi])
+    # recons = {}
+    # IPython.embed()
+    # for vi in range(self._nviews):
+    #   recons[vi] = self.decode(zs[vi])
+    recons = self.decode(zs_agg)
+    return zs, zs_agg, recons, valid_inds
 
-    return zs, recons, valid_inds
-
-  def loss(self, xvs, recons, zs, valid_inds):
+  def loss(self, xvs, recons, zs, zs_agg, valid_inds):
     # xv = self._split_views(x, rtn_torch=True)
 
     # obj = 0.
@@ -219,31 +235,58 @@ class MultiAutoEncoder(nn.Module):
     npts = len(xvs[utils.get_any_key(xvs)])
 
     # valid_inds = {}
-    xvs_valid = {}
-    for vi in xvs:
-      xvi = xvs[vi]
-      # valid_inds[vi] = [i for i in range(npts) if xvs[vi] is not None]
-      xvs_valid[vi] = torch_utils.numpy_to_torch(
-          np.array([xvi[i] for i in valid_inds[vi]]))
+    # xvs_valid = {}
+    # for vi in xvs:
+    #   xvi = xvs[vi]
+    #   # valid_inds[vi] = [i for i in range(npts) if xvs[vi] is not None]
+    #   xvs_valid[vi] = torch_utils.numpy_to_torch(
+    #       np.array([xvi[i] for i in valid_inds[vi]]))
 
-    for vi_r in recons:
-      # For reconstruction of all views from vi_r
-      vi_recons = recons[vi_r]
-      vi_r_inds = valid_inds[vi_r]
-      common_views = [vi for vi in vi_recons if vi in xvs_valid]
-      for vi in common_views:
-        xvi = xvs_valid[vi]
-        v_inds = valid_inds[vi]
-        _, vi_r_locs, vi_locs = np.intersect1d(
-            vi_r_inds, v_inds, assume_unique=True, return_indices=True)
-        try:
-         obj += self.recon_criterion(xvi[vi_locs], vi_recons[vi][vi_r_locs])
-        except:
-          IPython.embed()
+    for vi in recons:
+      vi_inds = valid_inds[vi]
+      vi_recons = recons[vi][vi_inds]
+      xvi_valid = torch_utils.numpy_to_torch(
+          np.array([xvs[vi][i] for i in vi_inds]))
+      obj += self.recon_criterion(xvi_valid, vi_recons)
+
+      # common_views = [vi for vi in vi_recons if vi in xvs_valid]
+      # for vi in common_views:
+      #   xvi = xvs_valid[vi]
+      #   v_inds = valid_inds[vi]
+      #   _, vi_r_locs, vi_locs = np.intersect1d(
+      #       vi_r_inds, v_inds, assume_unique=True, return_indices=True)
+      #   try:
+      #    obj += self.recon_criterion(xvi[vi_locs], vi_recons[vi][vi_r_locs])
+      #   except:
+      #     IPython.embed()
+
+    # for vi_r in recons:
+    #   # For reconstruction of all views from vi_r
+    #   vi_recons = recons[vi_r]
+    #   vi_r_inds = valid_inds[vi_r]
+    #   common_views = [vi for vi in vi_recons if vi in xvs_valid]
+    #   for vi in common_views:
+    #     xvi = xvs_valid[vi]
+    #     v_inds = valid_inds[vi]
+    #     _, vi_r_locs, vi_locs = np.intersect1d(
+    #         vi_r_inds, v_inds, assume_unique=True, return_indices=True)
+    #     try:
+    #      obj += self.recon_criterion(xvi[vi_locs], vi_recons[vi][vi_r_locs])
+    #     except:
+    #       IPython.embed()
 
     # Additional loss based on the encoding:
-    # Maybe explicitly force the encodings to be similar
+    # Explicitly force the encodings to be similar
     # KLD penalty
+    if self.config.lm > 0.:
+      zs_obj = 0
+      for vi in zs:
+        zvi = zs[vi]
+        vi_inds = valid_inds[vi]
+        zagg_valid = zs_agg[vi_inds]
+        zs_obj += self.recon_criterion(zvi, zagg_valid)
+      obj += self.config.lm * zs_obj
+
     return obj
 
   def _setup_optimizer(self):
@@ -266,8 +309,8 @@ class MultiAutoEncoder(nn.Module):
       xvs_batch = {vi:xv[b_start:b_end] for vi, xv in xvs.items()}
 
       self.opt.zero_grad()
-      zs, recons, valid_inds = self.forward(xvs_batch)
-      loss_val = self.loss(xvs_batch, recons, zs, valid_inds)
+      zs, zs_agg, recons, valid_inds = self.forward(xvs_batch)
+      loss_val = self.loss(xvs_batch, recons, zs, zs_agg, valid_inds)
       loss_val.backward()
       self.opt.step()
       self.itr_loss += loss_val
@@ -293,6 +336,7 @@ class MultiAutoEncoder(nn.Module):
           print("Iteration %i took %0.2fs." % (itr + 1, itr_duration))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
+    self.eval()
     self._trained = True
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
 
