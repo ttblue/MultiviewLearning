@@ -17,6 +17,15 @@ from mpl_toolkits.mplot3d import Axes3D
 import IPython
 
 
+###
+class SimpleArgs:
+  def __init__(self, options):
+    # Default values
+    arg_vals = {v[0]: v[-1] for v in options}
+    self.__dict__.update(arg_vals)
+###
+
+
 def default_nn_config():
   input_size = 10  # Computed online
   output_size = 10  # Computed online
@@ -75,10 +84,11 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
 
 class ArgsCopy:
   def __init__(self, args):
-    self.num_ss_tfm = args.num_ss_tfm
-    self.num_lin_tfm = args.num_lin_tfm
-    self.use_leaky_relu = args.use_leaky_relu
-    self.use_reverse = args.use_reverse
+    self.__dict__.update(args.__dict__)
+    # self.num_ss_tfm = args.num_ss_tfm
+    # self.num_lin_tfm = args.num_lin_tfm
+    # self.use_leaky_relu = args.use_leaky_relu
+    # self.use_reverse = args.use_reverse
 
 
 def default_likelihood_config(args):
