@@ -74,6 +74,7 @@ class MultiLayerNN(nn.Module):
     super(MultiLayerNN, self).__init__()
     self.config = config
     self._setup_layers()
+    self._setup_output()
 
   def _setup_layers(self):
     self.dropout = nn.Dropout(self.config.dropout_p)
@@ -83,7 +84,6 @@ class MultiLayerNN(nn.Module):
     self._layer_indices = []
     if num_layers == 0:
       self._layer_op = _IDENTITY
-      self._mu = _IDENTITY
     else:
       _activation = self.config.activation() if num_layers > 1 else None
       all_ops = []
@@ -102,6 +102,14 @@ class MultiLayerNN(nn.Module):
 
       # If list is empty, this defaults to identity.
       self._layer_op = nn.Sequential(*all_ops)  # Pre-last-layer ops
+
+  def _setup_output(self):
+    num_layers = len(self.config.layer_args)
+    if num_layers == 0:
+      self._mu = _IDENTITY
+      if self.config.use_vae:
+        self._logvar = _IDENTITY
+    else:
       ltype = self.config.layer_types[-1]
       largs = list(self.config.layer_args[-1])
       largs[1] = self.config.output_size  # Just in case
@@ -112,14 +120,14 @@ class MultiLayerNN(nn.Module):
         # self._logvar = nn.Linear(largs[1], self.config.output_size)
         self._logvar = ltype(*largs)
 
-  def forward(self, x):
+  def forward(self, x, disable_logvar=False):
     x = torch_utils.numpy_to_torch(x)
     x = self.dropout(x)
     x = self._layer_op(x)
     mu_x = self._last_activation(self._mu(x))
-    if not self.training:
+    if not self.training or not self.config.use_vae or disable_logvar:
       return mu_x
-    return (mu_x, self._logvar(x)) if self.config.use_vae else mu_x
+    return (mu_x, self._logvar(x))
 
   def get_layer_params(self, lidx):
     if lidx > len(self._layer_indices) or lidx == -1:
@@ -129,6 +137,44 @@ class MultiLayerNN(nn.Module):
     lidx = self._layer_indices[lidx]
     return self._layer_op[lidx]
 
+
+class MultiOutputMLNN(MultiLayerNN):
+  def __init__(self, config, output_sizes, *args, **kwargs):
+    self.output_sizes = output_sizes
+    super(MultiOutputMLNN, self).__init__(config)
+
+  def _setup_output(self):
+    num_layers = len(self.config.layer_args)
+    num_outputs = len(self.output_sizes)
+    if num_layers == 0:
+      self._mu = [_IDENTITY] * num_outputs
+      if self.config.use_vae:
+        self._logvar = [_IDENTITY] * num_outputs
+    else:
+      self._mu = []
+      if self.config.use_vae:
+        self._logvar = []
+      ltype = self.config.layer_types[-1]
+      largs = list(self.config.layer_args[-1])
+      for output_size in output_sizes:
+        largs[1] = output_size
+        self._mu.append(ltype(*largs))
+        if self.config.use_vae:
+          self._logvar.append(ltype(*largs))
+
+      self._last_activation = self.config.last_activation()
+
+  def forward(self, x, disable_logvar=False):
+    x = torch_utils.numpy_to_torch(x)
+    x = self.dropout(x)
+    x = self._layer_op(x)
+
+    mu_x = [self._last_activation(mu(x)) for mu in self._mu]
+    if not self.training or not self.config.use_vae or disable_logvar:
+      return mu_x
+
+    logvar_x = [self._last_activation(logvar(x)) for logvar in self._logvar]
+    return (mu_x, logvar_x)
 
 ################################################################################
 ## Recurrent nets

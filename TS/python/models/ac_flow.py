@@ -1,4 +1,8 @@
 # Based on: https://arxiv.org/abs/1909.06319
+# Loss is almost exactly the same as before -- just need to only select 
+# terms for available views
+# Add discriminator?
+
 
 import numpy as np
 import torch
@@ -17,6 +21,18 @@ class MultiviewACFlow(flow_pipeline.MultiviewFlowTrainer):
     super(MultiviewACFlow, self).__init__(config)
 
   def initialize(self, init_data):
+    pass
+
+  def sample_x(self, n):
+    pass
+
+  def sample_z(self, n):
+    pass
+
+  def _loss(self, ):
+    pass
+
+  def forward(self, x, b):
     pass
 
   def fit(self, Xs):

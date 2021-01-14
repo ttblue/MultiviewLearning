@@ -282,7 +282,7 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
     super(ScaleShiftCouplingTransform, self).__init__(config)
 
     if index_mask is not None:
-      self._set_fixed_inds(index_mask)
+      self.set_fixed_inds(index_mask)
 
   def set_fixed_inds(self, index_mask):
     # index_mask -- d-length array with k ones. d is the length of the overall 
