@@ -131,16 +131,17 @@ class FunctionParamNet(torch_models.MultiLayerNN):
 
   def _get_lin_params(self, x):
     # output: n_pts x mat_size x mat_size
-    lin_params = self._param_net(x_o)
-    lin_params = torch.view(lin_params, (self.output_dims, self.output_dims))
+    lin_params = self._param_net(x)
+    lin_params = torch.view(
+        lin_params, (-1, self.output_dims, self.output_dims))
     return lin_params
 
   def _get_ss_params(self, x):
-    ss_params = self._param_net(x_o)
+    ss_params = self._param_net(x)
     all_sizes = (
         [self.config.input_size] + self.hidden_sizes + [self.output_dims])
     ss_params = [
-        torch.view(param, (all_sizes[i], all_sizes[i + 1]))
+        torch.view(param, (-1, all_sizes[i], all_sizes[i + 1]))
         for i, param in enumerate(ss_params)
     ]
     return ss_params, self.activation
@@ -150,6 +151,7 @@ class FunctionParamNet(torch_models.MultiLayerNN):
       return self._get_lin_params(x)
     elif self.func_type == "scale_shift":
       return self._get_ss_params(x)
+
 
 class ConditionalLinearTransformation(ConditionalInvertibleTransform):
   # Model linear transform as L U matrix decomposition where L is lower
