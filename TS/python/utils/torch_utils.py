@@ -56,6 +56,7 @@ def LU_split(W):
   # into lower triangular L with unit diagonal and upper triangular U.
   # The corresponding triangular elements of L and U are the same as W
   # and in the same position as well.
+  # This is for storing the matrix itself as the LU decomposition.
   dim = W.shape[-1]
   module = torch if isinstance(W, torch.Tensor) else np
   L = module.eye(dim) + module.tril(W, -1)
