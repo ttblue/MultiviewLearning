@@ -27,7 +27,7 @@ class SimpleArgs:
 ###
 
 
-def default_nn_config():
+def make_default_nn_config():
   input_size = 10  # Computed online
   output_size = 10  # Computed online
   layer_units = [32, 64]
@@ -47,14 +47,14 @@ def default_nn_config():
   return nn_config
 
 
-def default_tfm_config(tfm_type="shift_scale_coupling"):
+def make_default_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
-  func_nn_config = default_nn_config()
+  func_nn_config = make_default_nn_config()
   func_nn_config.last_activation = torch.nn.Tanh
   has_bias = True
 
-  ltfm_config = default_nn_config()
-  bias_config = default_nn_config()
+  ltfm_config = make_default_nn_config()
+  bias_config = make_default_nn_config()
 
   has_bias = True
 
@@ -81,14 +81,14 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
   return config
 
 
-def default_cond_tfm_config(tfm_type="shift_scale_coupling"):
+def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
-  func_nn_config = default_nn_config()
+  func_nn_config = make_default_nn_config()
   func_nn_config.last_activation = torch.nn.Tanh
   has_bias = True
 
-  # ltfm_config = default_nn_config()
-  # bias_config = default_nn_config()
+  # ltfm_config = make_default_nn_config()
+  # bias_config = make_default_nn_config()
 
   # has_bias = True
 
@@ -120,13 +120,13 @@ class ArgsCopy:
     # self.use_reverse = args.use_reverse
 
 
-def default_likelihood_config(args):
+def make_default_likelihood_config(args):
   model_type = "linear_arm"
   n_components = args.n_components
   dist_type = "gaussian" if args.dist_type == "mv_gaussian" else args.dist_type
 
   hidden_size = 32
-  theta_nn_config = default_nn_config()
+  theta_nn_config = make_default_nn_config()
   theta_nn_config.last_activation = torch.nn.Tanh
   cell_type = "LSTM"  # not needed for linear_arm
 
@@ -176,7 +176,7 @@ def make_default_data_X(args, split=False, normalize_scale=None):
   return X
 
 
-def default_overlapping_data(args):
+def make_default_overlapping_data(args):
   npts = args.npts
   nviews = args.nviews
   ndim = args.ndim
@@ -194,7 +194,7 @@ def default_overlapping_data(args):
   return data, ptfms
 
 
-def default_overlapping_data2(args):
+def make_default_overlapping_data2(args):
   npts = args.npts
   nviews = args.nviews
   ndim = args.ndim
@@ -220,7 +220,7 @@ def rotate_and_shift_data(data, ndim, scale):
   return data, ptfm
 
 
-def default_independent_data(args, rotate_and_shift=True):
+def make_default_independent_data(args, rotate_and_shift=True):
   npts = args.npts
   nviews = args.nviews
   ndim = args.ndim
@@ -244,7 +244,7 @@ def default_independent_data(args, rotate_and_shift=True):
   return data, ptfm
 
 
-def default_shape_data(args):
+def make_default_shape_data(args):
   npts = args.npts
   nviews = args.nviews
   ndim = args.ndim
@@ -268,7 +268,7 @@ def default_shape_data(args):
   return data, ptfm
 
 
-def make_default_tfm(args, tfm_args=[], rtn_args=False):
+def make_default_tfm(args, view_dims, tfm_args=[], rtn_args=False):
   dim = args.ndim
   num_ss_tfm = args.num_ss_tfm
   num_lin_tfm = args.num_lin_tfm
@@ -278,62 +278,75 @@ def make_default_tfm(args, tfm_args=[], rtn_args=False):
   # Generate config list:
   tfm_configs = []
   tfm_inits = []
+  default_hidden_sizes = [64, 128]
+  default_activation = nn.LeakyReLU
+  default_nn_config = make_default_nn_config()
 
+  tot_dim = sum(view_sizes.values())
   #################################################
   # Bit-mask couple transform
   tfm_idx = 0
   idx_args = tfm_args[tfm_idx] if tfm_idx < len(tfm_args) else None
+  bit_mask = None
   if idx_args is not None and idx_args[0] == "scaleshift":
     bit_mask = idx_args[1]
 
-  for i in range(num_ss_tfm):
-    scale_shift_tfm_config = default_tfm_config("scale_shift_coupling")
-    tfm_configs.append(scale_shift_tfm_config)
-    if idx_args is not None and idx_args[0] == "scaleshift":
-      bit_mask = 1 - bit_mask
-    else:
-      bit_mask = np.zeros(dim)
-      bit_mask[np.random.permutation(dim)[:dim//2]] = 1
-    tfm_inits.append((bit_mask,))
+  for vi, vdim in view_dims.items():
+    obs_dim = tot_dim - vdim
+    dim = unobs_dim = vdim
+    hidden_sizes = default_hidden_sizes
+    for i in range(num_ss_tfm):
+      scale_shift_tfm_config = make_default_tfm_config("scale_shift")
+      tfm_configs.append(scale_shift_tfm_config)
 
-  # Fixed linear transform
-  tfm_idx = 1
-  # L, U = tfm_args[tfm_idx][1:]
-  # _, Li, Ui = scipy.linalg.lu(np.linalg.inv(L.dot(U)))
-  # init_mat = np.tril(Li, -1) + np.triu(Ui, 0)
-  # eps = 1e-1
-  # noise = np.random.randn(*init_mat.shape) * eps
-  for i in range(num_lin_tfm):
-    linear_tfm_config = default_tfm_config("fixed_linear")
-    linear_tfm_config.has_bias = False
-    tfm_configs.append(linear_tfm_config)
-    tfm_inits.append((dim,))# init_mat))
+      if bit_mask is not None:
+        bit_mask = 1 - bit_mask
+      else:
+        bit_mask = np.zeros(dim)
+        bit_mask[np.random.permutation(dim)[:dim//2]] = 1
 
-  # # Leaky ReLU
-  tfm_idx = 2
-  if use_leaky_relu:
-    leaky_relu_config = default_tfm_config("leaky_relu")
-    leaky_relu_config.neg_slope = 0.1
-    tfm_configs.append(leaky_relu_config)
-    tfm_inits.append(None)
+      tfm_inits.append(
+          (obs_dim, bit_mask, default_hidden_sizes, default_activation,
+           default_nn_config))
 
-  # Reverse
-  tfm_idx = 3
-  if use_reverse:
-    reverse_config = default_tfm_config("reverse")
-    tfm_configs.append(reverse_config)
-    tfm_inits.append(None)
-  #################################################
+    # Fixed linear transform
+    tfm_idx = 1
+    # L, U = tfm_args[tfm_idx][1:]
+    # _, Li, Ui = scipy.linalg.lu(np.linalg.inv(L.dot(U)))
+    # init_mat = np.tril(Li, -1) + np.triu(Ui, 0)
+    # eps = 1e-1
+    # noise = np.random.randn(*init_mat.shape) * eps
+    for i in range(num_lin_tfm):
+      linear_tfm_config = make_default_tfm_config("linear")
+      linear_tfm_config.has_bias = True
+      tfm_configs.append(linear_tfm_config)
+      tfm_inits.append((dim,))# init_mat))
+
+    # # Leaky ReLU
+    tfm_idx = 2
+    if use_leaky_relu:
+      leaky_relu_config = make_default_tfm_config("leaky_relu")
+      leaky_relu_config.neg_slope = 0.1
+      tfm_configs.append(leaky_relu_config)
+      tfm_inits.append(None)
+
+    # Reverse
+    tfm_idx = 3
+    if use_reverse:
+      reverse_config = make_default_tfm_config("reverse")
+      tfm_configs.append(reverse_config)
+      tfm_inits.append(None)
+    #################################################
   if rtn_args:
     return tfm_configs, tfm_inits
 
-  comp_config = default_tfm_config("composition")
+  comp_config = make_default_tfm_config("composition")
   model = flow_transforms.make_transform(tfm_configs, tfm_inits, comp_config)
 
   return model
 
 
-def default_pipeline_config(args, view_sizes={}):
+def make_default_pipeline_config(args, view_sizes={}):
   tot_dim = sum(view_sizes.values())
   shared_args = ArgsCopy(args)
   shared_args.ndim = tot_dim
@@ -350,7 +363,7 @@ def default_pipeline_config(args, view_sizes={}):
     view_tfm_config_lists[vi] = vi_cfg_list
     view_tfm_inits[vi] = vi_init
 
-  likelihood_config = default_likelihood_config(args) if args.use_ar else None
+  likelihood_config = make_default_likelihood_config(args) if args.use_ar else None
   base_dist = "mv_gaussian"
 
   batch_size = 50
@@ -371,7 +384,7 @@ def default_pipeline_config(args, view_sizes={}):
 def make_default_likelihood_model(args):
   if not args.use_ar:
     return None
-  config = default_likelihood_config(args)
+  config = make_default_likelihood_config(args)
   model = flow_likelihood.make_likelihood_model(config)
   model.initialize(args.ndim)
 
@@ -511,19 +524,19 @@ def simple_test_tfms_and_likelihood(args):
 
 
 _MV_DATAFUNCS = {
-    "o1": default_overlapping_data,
-    "o2": default_overlapping_data2,
-    "ind": default_independent_data,
-    "sh": default_shape_data,
+    "o1": make_default_overlapping_data,
+    "o2": make_default_overlapping_data2,
+    "ind": make_default_independent_data,
+    "sh": make_default_shape_data,
 }
 def test_pipeline(args):
-  data_func = _MV_DATAFUNCS.get(args.dtype, default_overlapping_data)
+  data_func = _MV_DATAFUNCS.get(args.dtype, make_default_overlapping_data)
   train_data, ptfms = data_func(args)
 
   view_sizes = {vi: vdat.shape[1] for vi, vdat in train_data.items()}
 
   # IPython.embed()
-  config, shared_tfm_inits, view_tfm_inits = default_pipeline_config(
+  config, shared_tfm_inits, view_tfm_inits = make_default_pipeline_config(
       args, view_sizes=view_sizes)
   model = flow_pipeline.MultiviewFlowTrainer(config)
   model.initialize(shared_tfm_inits, view_tfm_inits)

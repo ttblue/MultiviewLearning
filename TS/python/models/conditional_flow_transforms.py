@@ -31,7 +31,7 @@ class CTfmConfig(BaseConfig):
   def __init__(
       self, tfm_type="scale_shift_coupling", neg_slope=0.01,
       func_nn_config=None, has_bias=True, verbose=True,
-      *args, **åkwargs):
+      *args, **kwargs):
 
     super(CTfmConfig, self).__init__(*args, **kwargs)
 
