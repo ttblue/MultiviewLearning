@@ -43,14 +43,11 @@ def MVZeroImpute(xvs, v_dims, ignored_view=None, expand_b=True):
 
 class MACFTConfig(BaseConfig):
   def __init__(
-      self, view_tfm_config_lists={}, cond_tfm_config_list={}, expand_b=True,
-      likelihood_config=None, base_dist="gaussian",
-      batch_size=50, lr=1e-3, max_iters=1000,
+      expand_b=True, likelihood_config=None, base_dist="gaussian",
+      batch_size=50, lr=1e-3, max_iters=1000, verbose=True,
       *args, **kwargs):
     super(MFTConfig, self).__init__(*args, **kwargs)
 
-    self.view_tfm_config_list = view_tfm_config_list
-    self.cond_tfm_config_lists = cond_tfm_config_lists
     self.expand_b = expand_b
     self.likelihood_config = likelihood_config
     self.base_dist = base_dist
@@ -59,6 +56,8 @@ class MACFTConfig(BaseConfig):
     self.lr = lr
     self.max_iters = max_iters
 
+    self.verbose = verbose
+
 
 class MultiviewACFlowTrainer(nn.Module):
   # Class for basic flow training without arbitrary conditioning.
@@ -66,15 +65,19 @@ class MultiviewACFlowTrainer(nn.Module):
     self.config = config
     super(MultiviewACFlowTrainer, self).__init__()
 
-  def initialize(self, cond_tfm_init_args, view_tfm_init_args):
+  def initialize(
+      self, view_tfm_config_lists, view_tfm_init_args,
+      cond_tfm_config_lists, cond_tfm_init_args):
     # Initialize transforms, mm model, optimizer, etc.
 
+    self._view_tfm_config_lists = view_tfm_config_lists
+    self._cond_tfm_config_lists = cond_tfm_config_lists
     # View encoders:
-    self._nviews = len(self.config.view_tfm_config_lists)
+    self._nviews = len(view_tfm_config_lists)
     self._view_tfms = nn.ModuleDict()
     self._dim = 0
     self._view_dims = {}
-    for vi, cfg_list in self.config.view_tfm_config_lists.items():
+    for vi, cfg_list in view_tfm_config_lists.items():
       init_args = view_tfm_init_args[vi]
       tfm = flow_transforms.make_transform(cfg_list, init_args)
       self._view_tfms["v_%i"%vi] = tfm
@@ -85,7 +88,7 @@ class MultiviewACFlowTrainer(nn.Module):
     # self._shared_tfm = conditional_flow_transforms.make_transform(
     #     self.config.shared_tfm_config_list, shared_tfm_init_args)
     self._cond_tfms = nn.ModuleDict()
-    for vi, cfg_list in self.config.cond_tfm_config_lists.items():
+    for vi, cfg_list in cond_tfm_config_lists.items():
       init_args = cond_tfm_init_args[vi]
       tfm = conditional_flow_transforms.make_transform(cfg_list, init_args)
       self._cond_tfms["v_%i"%vi] = tfm

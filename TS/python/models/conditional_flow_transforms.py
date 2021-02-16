@@ -30,7 +30,9 @@ import IPython
 class CTfmConfig(BaseConfig):
   def __init__(
       self, tfm_type="scale_shift_coupling", neg_slope=0.01,
-      func_nn_config=None, has_bias=True, verbose=True,
+      func_nn_config=None, has_bias=True, base_dist="gaussian", reg_coeff=.1,
+      lr=1e-3, batch_size=50, max_iters=1000, stopping_eps=1e-5,
+      num_stopping_iter=10, grad_clip=5., verbose=True,
       *args, **kwargs):
 
     super(CTfmConfig, self).__init__(*args, **kwargs)
@@ -48,14 +50,14 @@ class CTfmConfig(BaseConfig):
     self.has_bias = has_bias
 
     # Some misc. parameters if training transforms only
-    # self.base_dist = "gaussian"
-    # self.reg_coeff = reg_coeff
-    # self.lr = lr
-    # self.batch_size = batch_size
-    # self.max_iters = max_iters
-    # self.stopping_eps = stopping_eps
-    # self.num_stopping_iter = num_stopping_iter
-    # self.grad_clip = grad_clip
+    self.base_dist = "gaussian"
+    self.reg_coeff = reg_coeff
+    self.lr = lr
+    self.batch_size = batch_size
+    self.max_iters = max_iters
+    self.stopping_eps = stopping_eps
+    self.num_stopping_iter = num_stopping_iter
+    self.grad_clip = grad_clip
 
     self.verbose = verbose
 
@@ -79,6 +81,154 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
   def inverse(self, z, x_o):
     raise NotImplementedError("Abstract class method")
 
+  def log_prob(self, x, x_o):
+    z, log_det = self(x, x_o, rtn_torch=True, rtn_logdet=True)
+    return self.base_log_prob(z) + log_det
+
+  def loss_nll(self, z, log_jac_det):
+    z_ll = self.base_log_prob(z)
+    nll_orig = -torch.mean(log_jac_det + z_ll)
+    return nll_orig
+
+  def loss_err(self, x_tfm, y, log_jac_det):
+    recon_error = self.recon_criterion(x_tfm, y)
+    logdet_reg = -torch.mean(log_jac_det)
+    loss_val = recon_error + self.config.reg_coeff * torch.abs(logdet_reg)
+    return loss_val
+
+  def _train_loop(self):
+    shuffle_inds = np.random.permutation(self._npts)
+    x = self._x[shuffle_inds]
+    x_o = self._x_o[shuffle_inds]
+    y = None if self._y is None else self._y[shuffle_inds]
+
+    self.itr_loss = 0.
+    for bidx in range(self._n_batches):
+      b_start = bidx * self.config.batch_size
+      b_end = b_start + self.config.batch_size
+      x_batch = x[b_start:b_end]
+      x_o_batch = x_o[b_start:b_end]
+      x_tfm_batch, jac_logdet = self.forward(
+          x_batch, x_o_batch, rtn_torch=True, rtn_logdet=True)
+      if y is not None:
+        y_batch = y[b_start:b_end]
+
+      self.opt.zero_grad()
+      loss_val = (
+          # Reconstruction loss
+          self.loss_err(x_tfm_batch, y_batch, jac_logdet)
+          if y is not None else
+          # Generative model -- log likelihood loss
+          self.loss_nll(x_tfm_batch, jac_logdet)
+      )
+
+      loss_val.backward()
+      self._avg_grad = self._get_avg_grad_val()
+      self._max_grad = self._get_max_grad_val()
+      nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
+      self.opt.step()
+
+      self.itr_loss += loss_val * x_batch.shape[0]
+    self.itr_loss /= self._npts
+
+    curr_loss = float(self.itr_loss.detach())
+    if np.abs(self._prev_loss - curr_loss) < self.config.stopping_eps:
+      self._stop_iters += 1
+      if self._stop_iters >= self.config.num_stopping_iter:
+        self._finished_training = True
+    else:
+      self._stop_iters = 0
+    self._prev_loss = curr_loss
+
+  def _get_avg_grad_val(self):
+    # Just for debugging
+    p_grads = [p.grad for p in self.parameters()]
+    num_params = sum([pg.numel() for pg in p_grads])
+    abs_sum_grad = sum([pg.abs().sum() for pg in p_grads])
+    return abs_sum_grad / num_params
+
+  def _get_max_grad_val(self):
+    # Just for debugging
+    p_grads = [p.grad for p in self.parameters()]
+    return max([pg.abs().max() for pg in p_grads])
+
+  def fit(self, x, x_o, y=None, lhood_model=None):
+    # Simple fitting procedure for transforming x to y
+    if self.config.verbose:
+      all_start_time = time.time()
+    self._x = torch_utils.numpy_to_torch(x)
+    self._x_o = torch_utils.numpy_to_torch(x_o)
+    self._y = None if y is None else torch_utils.numpy_to_torch(y)
+    self._npts, self._dim = self._x.shape
+
+    if y is None:
+      if lhood_model is None:
+        if self.config.base_dist not in _BASE_DISTS:
+          raise NotImplementedError(
+              "Base dist. type %s not implemented and likelihood model"
+              " not provided." % self.config.base_dist)
+        else:
+          loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+          self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
+      else:
+        self.base_dist = lhood_model
+
+      self.recon_criterion = None
+      self.base_log_prob = (
+          lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
+    else:
+      self.recon_criterion = nn.MSELoss(reduction="mean")
+      self.base_log_prob = None
+
+    self.opt = optim.Adam(self.parameters(), self.config.lr)
+    self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
+
+    self._finished_training = False
+    self._loss_history = []
+    self._avg_grad_history = []
+    self._prev_loss = np.inf
+    self._stop_iters = 0
+    try:
+      itr = -1
+      for itr in range(self.config.max_iters):
+        if self.config.verbose:
+          itr_start_time = time.time()
+
+        self._train_loop()
+        self._loss_history.append(float(self.itr_loss.detach()))
+        self._avg_grad_history.append(float(self._get_avg_grad_val().detach()))
+
+        if self._finished_training:
+          if self.config.verbose:
+            print("\nLoss change < stopping eps for multiple iters."
+                  "Finished training.")
+          break
+        if self.config.verbose:
+          itr_diff_time = time.time() - itr_start_time
+          loss_val = float(self.itr_loss.detach())
+          print("Iteration %i out of %i (in %.2fs). Loss: %.5f. "
+                "Avg/Max grad: %.5f / %.5f. Stop iter: %i" %
+                (itr + 1, self.config.max_iters, itr_diff_time, loss_val,
+                  self._avg_grad, self._max_grad, self._stop_iters),
+                end='\r')
+      if self.config.verbose and itr >= 0:
+        print("Iteration %i out of %i (in %.2fs). Loss: %.5f. Avg grad: %.5f."
+              "Stop iter: %i" % (itr + 1, self.config.max_iters,
+                  itr_diff_time, loss_val, self._avg_grad, self._stop_iters))
+    except KeyboardInterrupt:
+      print("Training interrupted. Quitting now.")
+    self.eval()
+    print("Training finished in %0.2f s." % (time.time() - all_start_time))
+    return self
+
+  def sample(self, x_o, n_samples=1, inverted=True, rtn_torch=False):
+    if isinstance(n_samples, tuple):
+      z_samples = self.base_dist.sample(*n_samples)
+    else:
+      z_samples = self.base_dist.sample(n_samples)
+    if inverted:
+      return self.inverse(z_samples, x_o, rtn_torch)
+    return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
   # def log_prob(self, x_u, x_o):
   #   z, log_det = self(x, rtn_torch=True, rtn_logdet=True)
   #   return self.base_log_prob(z) + log_det

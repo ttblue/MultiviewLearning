@@ -12,6 +12,8 @@ from models import ac_flow_pipeline, conditional_flow_transforms,\
 from synthetic import flow_toy_data, multimodal_systems
 from utils import math_utils, torch_utils, utils
 
+from tests.test_flow import make_default_tfm
+
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -87,27 +89,30 @@ def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   func_nn_config.last_activation = torch.nn.Tanh
   has_bias = True
 
-  # ltfm_config = make_default_nn_config()
-  # bias_config = make_default_nn_config()
+  ltfm_config = make_default_nn_config()
+  bias_config = make_default_nn_config()
 
-  # has_bias = True
+  has_bias = True
 
-  # base_dist = "gaussian"
-  # reg_coeff = 0.
-  # lr = 1e-3
-  # batch_size = 50
-  # max_iters = 1000
+  base_dist = "gaussian"
+  reg_coeff = 0.
+  lr = 1e-3
+  batch_size = 50
+  max_iters = 1000
 
-  # stopping_eps = 1e-5
-  # num_stopping_iter = 1000
+  stopping_eps = 1e-5
+  num_stopping_iter = 1000
 
-  # grad_clip = 2.
+  grad_clip = 2.
 
   verbose = True
 
   config = conditional_flow_transforms.CTfmConfig(
       tfm_type=tfm_type, neg_slope=neg_slope, func_nn_config=func_nn_config,
-      has_bias=has_bias, verbose=verbose)
+      has_bias=has_bias, reg_coeff=reg_coeff,
+      base_dist=base_dist, lr=lr, batch_size=batch_size, max_iters=max_iters,
+      stopping_eps=stopping_eps, num_stopping_iter=num_stopping_iter,
+      grad_clip=grad_clip, verbose=verbose)
   return config
 
 
@@ -268,8 +273,8 @@ def make_default_shape_data(args):
   return data, ptfm
 
 
-def make_default_tfm(args, view_dims, tfm_args=[], rtn_args=False):
-  dim = args.ndim
+def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
+  # dim = args.ndim
   num_ss_tfm = args.num_ss_tfm
   num_lin_tfm = args.num_lin_tfm
   use_leaky_relu = args.use_leaky_relu
@@ -291,13 +296,15 @@ def make_default_tfm(args, view_dims, tfm_args=[], rtn_args=False):
   if idx_args is not None and idx_args[0] == "scaleshift":
     bit_mask = idx_args[1]
 
-  for vi, vdim in view_dims.items():
+  for vi, vdim in view_sizes.items():
+    vi_tfm_configs = []
+    vi_tfm_inits = []
     obs_dim = tot_dim - vdim
     dim = unobs_dim = vdim
     hidden_sizes = default_hidden_sizes
     for i in range(num_ss_tfm):
       scale_shift_tfm_config = make_default_tfm_config("scale_shift")
-      tfm_configs.append(scale_shift_tfm_config)
+      vi_tfm_configs.append(scale_shift_tfm_config)
 
       if bit_mask is not None:
         bit_mask = 1 - bit_mask
@@ -305,7 +312,7 @@ def make_default_tfm(args, view_dims, tfm_args=[], rtn_args=False):
         bit_mask = np.zeros(dim)
         bit_mask[np.random.permutation(dim)[:dim//2]] = 1
 
-      tfm_inits.append(
+      vi_tfm_inits.append(
           (obs_dim, bit_mask, default_hidden_sizes, default_activation,
            default_nn_config))
 
@@ -319,66 +326,76 @@ def make_default_tfm(args, view_dims, tfm_args=[], rtn_args=False):
     for i in range(num_lin_tfm):
       linear_tfm_config = make_default_tfm_config("linear")
       linear_tfm_config.has_bias = True
-      tfm_configs.append(linear_tfm_config)
-      tfm_inits.append((dim,))# init_mat))
+      vi_tfm_configs.append(linear_tfm_config)
+      vi_tfm_inits.append((obs_dim, unobs_dim, default_nn_config))# init_mat))
 
     # # Leaky ReLU
     tfm_idx = 2
     if use_leaky_relu:
       leaky_relu_config = make_default_tfm_config("leaky_relu")
       leaky_relu_config.neg_slope = 0.1
-      tfm_configs.append(leaky_relu_config)
-      tfm_inits.append(None)
+      vi_tfm_configs.append(leaky_relu_config)
+      vi_tfm_inits.append(None)
 
     # Reverse
     tfm_idx = 3
     if use_reverse:
       reverse_config = make_default_tfm_config("reverse")
-      tfm_configs.append(reverse_config)
-      tfm_inits.append(None)
+      vi_tfm_configs.append(reverse_config)
+      vi_tfm_inits.append(None)
+
+    tfm_configs[vi] = vi_tfm_configs
+    tfm_inits[vi] = vi_tfm_inits
     #################################################
+
   if rtn_args:
     return tfm_configs, tfm_inits
 
   comp_config = make_default_tfm_config("composition")
-  model = flow_transforms.make_transform(tfm_configs, tfm_inits, comp_config)
+  models = {
+      vi: conditional_flow_transforms.make_transform(
+          tfm_configs[vi], tfm_inits[vi], comp_config)
+      for vi in tfm_configs
+  }
 
-  return model
+  return models
 
 
 def make_default_pipeline_config(args, view_sizes={}):
   tot_dim = sum(view_sizes.values())
-  shared_args = ArgsCopy(args)
-  shared_args.ndim = tot_dim
-  shared_tfm_config_list, shared_tfm_inits = make_default_tfm(
-      shared_args, rtn_args=True)
+  all_view_args = ArgsCopy(args)
+  # all_view_args.ndim = tot_dim
+  cond_config_lists, cond_inits_lists = make_default_cond_tfms(
+      view_sizes, all_view_args, rtn_args=True)
 
   view_tfm_config_lists = {}
-  view_tfm_inits = {}
+  view_tfm_init_lists = {}
   for vi, vdim in view_sizes.items():
     vi_args = ArgsCopy(args)
     vi_args.ndim = vdim
     vi_cfg_list, vi_init = make_default_tfm(vi_args, rtn_args=True)
 
     view_tfm_config_lists[vi] = vi_cfg_list
-    view_tfm_inits[vi] = vi_init
+    view_tfm_init_lists[vi] = vi_init
 
   likelihood_config = make_default_likelihood_config(args) if args.use_ar else None
   base_dist = "mv_gaussian"
 
+  expand_b = True
+
   batch_size = 50
   lr = 1e-3
   max_iters = args.max_iters
+
   verbose = True
 
-  config = flow_pipeline.MFTConfig(
-      shared_tfm_config_list=shared_tfm_config_list,
-      view_tfm_config_lists=view_tfm_config_lists,
-      likelihood_config=likelihood_config, base_dist=base_dist,
-      batch_size=batch_size, lr=lr, max_iters=max_iters,
+  config = ac_flow_pipeline.MACFTConfig(
+      expand_b=expand_b, likelihood_config=likelihood_config,
+      base_dist=base_dist, batch_size=batch_size, lr=lr, max_iters=max_iters,
       verbose=verbose)
 
-  return config, shared_tfm_inits, view_tfm_inits
+  return config, (view_tfm_config_lists, view_tfm_init_lists),\
+      (cond_config_lists, cond_inits_lists)
 
 
 def make_default_likelihood_model(args):
@@ -391,83 +408,41 @@ def make_default_likelihood_model(args):
   return model
 
 
-def simple_test_tfms(args):
-  (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
-  model = make_default_tfm(args, tfm_args)
+def simple_test_cond_tfms(args):
+  # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
+  data, ptfms = make_default_overlapping_data(args)
+  models = make_default_cond_tfms(args, tfm_args)
+  model = models[0]
+
   config = model.config
   config.batch_size = 1000
   config.lr = 1e-4
   config.reg_coeff = 0.1
   config.max_iters = args.max_iters
   config.stopping_eps = 1e-8
-  # IPython.embed()
-  if args.etype == "gen":
-    model.fit(tr_X)
-    bll = lambda Z: model.base_log_likelihood(torch_utils.numpy_to_torch(Z))
-    mll = lambda X: model.log_likelihood(torch_utils.numpy_to_torch(X))
-    blls = lambda Z: bll(Z).sum()
-    mlls = lambda X: mll(X).sum()
-    bllm = lambda Z: bll(Z).mean()
-    mllm = lambda X: mll(X).mean()
-  else:
-    comp_tfm.fit(tr_Z, tr_X)
-    # config = linear_tfm_config
-    # config.batch_size = 100
-    # config.max_iters = 10000
-    # config.has_bias = False
-    # linear_tfm = flow_transforms.make_transform(config)
-    # L, U = tfm_args[0][1:]
-    # # P, L, U = slg.lu(W)
-    # init_mat = np.tril(L, -1) + np.triu(U, 0)
-    # eps = 1e-1
-    # noise = np.random.randn(*init_mat.shape) * eps
-    # linear_tfm.initialize(dim)#, init_mat + noise)
-    # model.fit(tr_X, tr_Y)
-  # X = np.r_[tr_X, te_X]
-  # Z = np.r_[tr_Z, te_Z]
-  # X_torch = torch_utils.numpy_to_torch(X)
-  # Z_pred = model(X_torch, True, False)
-  # Z_inv = model.inverse(Z, True)
+
+  IPython.embed()
+
+  # n_test_samples = args.npts // 2
+  # samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
+  # # samples = np.concatenate(
+  # #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
+  # X_samples = model.inverse(samples, rtn_torch=False)
+  # X_all = np.r_[tr_X, te_X, X_samples]
+  # Z_all = np.r_[tr_Zinv_pred, te_Zinv_pred, samples]
 
   # IPython.embed()
 
   # tsne = umap.UMAP(2)
-  # n_test_samples = args.npts // 2
-  # # samples = np.concatenate(
-  # #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
-  # samples = model.sample(n_test_samples)
-  # X_pred = model.inverse(samples, rtn_torch=False)
-  # X_all = np.r_[X, X_pred]
-  # y = tsne.fit_transform(X_all)
+  # y_x = tsne.fit_transform(X_all)
+  # y_z = tsne.fit_transform(Z_all)
+  # plot_data = {"x": y_x, "z": y_z}
+  # pdtype = "z"
+  # y = plot_data[pdtype]
 
   # plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
   # plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
   # plt.show()
-  tr_Z_pred = model(tr_X, False, False)
-  te_Z_pred = model(te_X, False, False)
-  tr_Zinv_pred = model.inverse(tr_Z_pred, False)
-  te_Zinv_pred = model.inverse(te_Z_pred, False)
-
-  n_test_samples = args.npts // 2
-  samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
-  # samples = np.concatenate(
-  #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
-  X_samples = model.inverse(samples, rtn_torch=False)
-  X_all = np.r_[tr_X, te_X, X_samples]
-  Z_all = np.r_[tr_Zinv_pred, te_Zinv_pred, samples]
-
-  IPython.embed()
-
-  tsne = umap.UMAP(2)
-  y_x = tsne.fit_transform(X_all)
-  y_z = tsne.fit_transform(Z_all)
-  plot_data = {"x": y_x, "z": y_z}
-  pdtype = "z"
-  y = plot_data[pdtype]
-
-  plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
-  plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
-  plt.show()
 
 
 def simple_test_tfms_and_likelihood(args):
@@ -597,9 +572,9 @@ def test_pipeline(args):
   plt.show()
 
 _TEST_FUNCS = {
-    0: simple_test_tfms,
-    1: simple_test_tfms_and_likelihood,
-    2: test_pipeline
+    0: simple_test_cond_tfms,
+    # 1: simple_test_tfms_and_likelihood,
+    # 2: test_pipeline,
 }
 
 
@@ -628,6 +603,6 @@ if __name__ == "__main__":
       ]
   args = utils.get_args(options)
   
-  func = _TEST_FUNCS.get(args.expt, simple_test_tfms)
+  func = _TEST_FUNCS.get(args.expt, simple_test_cond_tfms)
   func(args)
  
