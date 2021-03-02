@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import itertools
 import numpy as np
 import os
 import scipy
@@ -430,6 +431,42 @@ def concat_with_binary_flags(data, main_view, b_available, expand_b=True):
   return output, zero_imputed_data, b_cat
 
 
+def make_missing_dset(data, main_view, separate_nv=False):
+  vc_dim = data[main_view].shape[1]
+  npts =  data[main_view].shape[0]
+  tot_dim = np.sum([vdat.shape[1] for vi, vdat in data if vi != main_view])
+  if separate_nv:
+    x = {}
+    x_o = {}
+  else:
+    x = np.empty((0, vc_dim))
+    x_o = np.empty((0, tot_dim * 2))
+
+  mv_x = data[main_view]
+  obs_views = [vi for vi in data if vi != main_view]
+
+  for nv in range(1, len(obs_views) + 1):
+    if separate_nv:
+      x[nv] = np.empty((0, vc_dim))
+      x_o[nv] = np.empty((0, tot_dim * 2))
+    for perm in itertools.combinations(obs_views, nv):
+      b_available = {
+          vi: np.ones(npts) * int(vi in perm)
+          for vi in obs_views
+
+      }
+      output, zero_imputed_data, b_cat = concat_with_binary_flags(
+          data, main_view, b_available)
+      if separate_nv:
+        x[nv] = np.concatenate([x[nv], mv_x], axis=0)
+        x_o[nv] = np.concatenate([x_o[nv], output], axis=0)
+      else:
+        x = np.concatenate([x, mv_x], axis=0)
+        x_o = np.concatenate([x_o, output], axis=0)
+
+  return x, x_o
+
+
 def simple_test_cond_tfms(args):
   # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
   data, ptfms = make_default_overlapping_data(args)
@@ -473,6 +510,56 @@ def simple_test_cond_tfms(args):
   print("Ready")
   IPython.embed()
 
+
+def test_cond_missing_tfms(args):
+  # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
+  data, ptfms = make_default_overlapping_data(args)
+  n_tr = int(0.8 * args.npts)
+  n_te = args.npts - n_tr
+
+  tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
+  te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
+
+  view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
+  main_view = 0
+  models = make_default_cond_tfms(args, view_sizes)
+  model = models[main_view]
+
+  config = model.config
+  config.batch_size = 1000
+  config.lr = 1e-4
+  config.reg_coeff = 0.1
+  config.max_iters = args.max_iters
+  config.stopping_eps = 1e-8
+
+
+  x_tr, x_o_tr = make_missing_dset(tr_data, main_view, separate_nv=False)
+  x_te, x_o_te = make_missing_dset(te_data, main_view, separate_nv=True)
+
+  # x_tr = tr_data[main_view].astype(np.float32)
+  # x_o_tr = np.concatenate(
+  #     [tr_data[vi] for vi in range(args.nviews) if vi != main_view],
+  #     axis=1).astype(np.float32)
+  # x_te = te_data[main_view].astype(np.float32)
+  # x_o_te = np.concatenate(
+  #     [te_data[vi] for vi in range(args.nviews) if vi != main_view],
+  #     axis=1).astype(np.float32)
+
+  # IPython.embed()
+  model.fit(x_tr, x_o_tr)
+
+  # x_tr = torch.from_numpy(x_tr)
+  # x_te = {nv: torch.from_numpy(x_nv) for nv, x_nv in x_te.items()}
+
+  z_tr = model(x_tr, x_o_tr, rtn_torch=True)
+  zi_tr = model.inverse(z_tr, x_o_tr, rtn_torch=True)
+
+
+  z_te = {nv: model(x_te[nv], x_o_te[nv], rtn_torch=True) for nv in x_te}
+  zi_te = {nv: model.inverse(z_te[nv], x_o_te[nv], rtn_torch=True) for nv in x_te}
+  # zi_te = model.inverse(z_te, x_o_te, rtn_torch=True)
+  print("Ready")
+  IPython.embed()
   # n_test_samples = args.npts // 2
   # samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
   # # samples = np.concatenate(
