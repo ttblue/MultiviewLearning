@@ -140,7 +140,8 @@ class MultiLayerNN(nn.Module):
 
 class MultiOutputMLNN(MultiLayerNN):
   def __init__(self, config, output_sizes, *args, **kwargs):
-    self.output_sizes = output_sizes
+    self.output_sizes = {i: os_i for i, os_i in enumerate(output_sizes)}
+    self._n_outputs = len(self.output_sizes)
     super(MultiOutputMLNN, self).__init__(config)
 
   def _setup_output(self):
@@ -151,16 +152,16 @@ class MultiOutputMLNN(MultiLayerNN):
       if self.config.use_vae:
         self._logvar = [_IDENTITY] * num_outputs
     else:
-      self._mu = []
+      self._mu = torch.nn.ModuleDict()
       if self.config.use_vae:
-        self._logvar = []
+        self._logvar = torch.nn.ModuleDict()
       ltype = self.config.layer_types[-1]
       largs = list(self.config.layer_args[-1])
-      for output_size in output_sizes:
+      for i, output_size in self.output_sizes.items():
         largs[1] = output_size
-        self._mu.append(ltype(*largs))
+        self._mu["op_%i"%i] = ltype(*largs)
         if self.config.use_vae:
-          self._logvar.append(ltype(*largs))
+          self._logvar["op_%i"%i] = ltype(*largs)
 
       self._last_activation = self.config.last_activation()
 
@@ -169,11 +170,13 @@ class MultiOutputMLNN(MultiLayerNN):
     x = self.dropout(x)
     x = self._layer_op(x)
 
-    mu_x = [self._last_activation(mu(x)) for mu in self._mu]
+    mu_x = [self._last_activation(self._mu["op_%i"%i](x))
+            for i in range(self._n_outputs)]
     if not self.training or not self.config.use_vae or disable_logvar:
       return mu_x
 
-    logvar_x = [self._last_activation(logvar(x)) for logvar in self._logvar]
+    logvar_x = [self._last_activation(self._logvar["op_%i"%i](x))
+                for i in range(self._n_outputs)]
     return (mu_x, logvar_x)
 
 ################################################################################

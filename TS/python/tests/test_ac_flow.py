@@ -51,9 +51,11 @@ def make_default_nn_config():
 
 def make_default_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
-  func_nn_config = make_default_nn_config()
-  func_nn_config.last_activation = torch.nn.Tanh
-  has_bias = True
+  scale_config = make_default_nn_config()
+  scale_config.last_activation = torch.nn.Tanh
+  shift_config = make_default_nn_config()
+  shift_config.last_activation = torch.nn.Sigmoid
+  shared_wts = False
 
   ltfm_config = make_default_nn_config()
   bias_config = make_default_nn_config()
@@ -281,10 +283,10 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
   use_reverse = args.use_reverse
 
   # Generate config list:
-  tfm_configs = []
-  tfm_inits = []
+  tfm_configs = {}
+  tfm_inits = {}
   default_hidden_sizes = [64, 128]
-  default_activation = nn.LeakyReLU
+  default_activation = nn.Tanh
   default_nn_config = make_default_nn_config()
 
   tot_dim = sum(view_sizes.values())
@@ -303,7 +305,7 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
     dim = unobs_dim = vdim
     hidden_sizes = default_hidden_sizes
     for i in range(num_ss_tfm):
-      scale_shift_tfm_config = make_default_tfm_config("scale_shift")
+      scale_shift_tfm_config = make_default_cond_tfm_config("scale_shift")
       vi_tfm_configs.append(scale_shift_tfm_config)
 
       if bit_mask is not None:
@@ -324,7 +326,7 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
     # eps = 1e-1
     # noise = np.random.randn(*init_mat.shape) * eps
     for i in range(num_lin_tfm):
-      linear_tfm_config = make_default_tfm_config("linear")
+      linear_tfm_config = make_default_cond_tfm_config("linear")
       linear_tfm_config.has_bias = True
       vi_tfm_configs.append(linear_tfm_config)
       vi_tfm_inits.append((obs_dim, unobs_dim, default_nn_config))# init_mat))
@@ -332,7 +334,7 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
     # # Leaky ReLU
     tfm_idx = 2
     if use_leaky_relu:
-      leaky_relu_config = make_default_tfm_config("leaky_relu")
+      leaky_relu_config = make_default_cond_tfm_config("leaky_relu")
       leaky_relu_config.neg_slope = 0.1
       vi_tfm_configs.append(leaky_relu_config)
       vi_tfm_inits.append(None)
@@ -340,7 +342,7 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
     # Reverse
     tfm_idx = 3
     if use_reverse:
-      reverse_config = make_default_tfm_config("reverse")
+      reverse_config = make_default_cond_tfm_config("reverse")
       vi_tfm_configs.append(reverse_config)
       vi_tfm_inits.append(None)
 
@@ -408,11 +410,39 @@ def make_default_likelihood_model(args):
   return model
 
 
+def concat_with_binary_flags(data, main_view, b_available, expand_b=True):
+  zero_imputed_data = {}
+  b_cat = {}
+  output = np.empty((data[0].shape[0], 0))
+  for vi in data:
+    if vi == main_view:
+      continue
+    b = b_available[vi]
+    zero_imputed_data[vi] = data[vi] * b
+    b = b.reshape(-1, 1)
+    if expand_b:
+      b_cat[vi] = np.tile(b, 1, data[vi].shape[1])
+    else:
+      b_cat[vi] = b
+
+    output = np.concatenate([output, zero_imputed_data[vi], b_cat[vi]], axis=1)
+
+  return output, zero_imputed_data, b_cat
+
+
 def simple_test_cond_tfms(args):
   # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
   data, ptfms = make_default_overlapping_data(args)
-  models = make_default_cond_tfms(args, tfm_args)
-  model = models[0]
+  n_tr = int(0.8 * args.npts)
+  n_te = args.npts - n_tr
+
+  tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
+  te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
+
+  view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
+  main_view = 0
+  models = make_default_cond_tfms(args, view_sizes)
+  model = models[main_view]
 
   config = model.config
   config.batch_size = 1000
@@ -421,6 +451,26 @@ def simple_test_cond_tfms(args):
   config.max_iters = args.max_iters
   config.stopping_eps = 1e-8
 
+  x_tr = tr_data[main_view].astype(np.float32)
+  x_o_tr = np.concatenate(
+      [tr_data[vi] for vi in range(args.nviews) if vi != main_view],
+      axis=1).astype(np.float32)
+  x_te = te_data[main_view].astype(np.float32)
+  x_o_te = np.concatenate(
+      [te_data[vi] for vi in range(args.nviews) if vi != main_view],
+      axis=1).astype(np.float32)
+
+  # IPython.embed()
+  model.fit(x_tr, x_o_tr)
+
+  x_tr = torch.from_numpy(x_tr)
+  x_te = torch.from_numpy(x_te)
+
+  z_tr = model(x_tr, x_o_tr, rtn_torch=True)
+  zi_tr = model.inverse(z_tr, x_o_tr, rtn_torch=True)
+  z_te = model(x_te, x_o_te, rtn_torch=True)
+  zi_te = model.inverse(z_te, x_o_te, rtn_torch=True)
+  print("Ready")
   IPython.embed()
 
   # n_test_samples = args.npts // 2

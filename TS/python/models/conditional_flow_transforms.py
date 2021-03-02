@@ -23,6 +23,7 @@ import IPython
 # 2. F(x_u, x_o) takes both parameters:
 #    -    z | x_o = F(x_u, x_o)
 
+_BASE_DISTS = flow_transforms._BASE_DISTS
 # Utils:
 
 
@@ -65,7 +66,7 @@ class CTfmConfig(BaseConfig):
 # Functions of the form q(x_u | x_o)
 class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
   def __init__(self, config):
-    super(InvertibleTransform, self).__init__()
+    super(flow_transforms.InvertibleTransform, self).__init__()
     self.config = config
     self._dim = None
 
@@ -152,7 +153,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     p_grads = [p.grad for p in self.parameters()]
     return max([pg.abs().max() for pg in p_grads])
 
-  def fit(self, x, x_o, y=None, lhood_model=None):
+  def fit(self, x, x_o, y=None, mask_func=None, lhood_model=None):
     # Simple fitting procedure for transforming x to y
     if self.config.verbose:
       all_start_time = time.time()
@@ -160,6 +161,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self._x_o = torch_utils.numpy_to_torch(x_o)
     self._y = None if y is None else torch_utils.numpy_to_torch(y)
     self._npts, self._dim = self._x.shape
+
+    self._mask_func = mask_func
 
     if y is None:
       if lhood_model is None:
@@ -310,9 +313,10 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
 # Class for function parameters for unobserved covariates given observed
 # covariates
 _FUNC_TYPES = ["linear", "scale_shift"]
-class FunctionParamNet(torch_models.MultiLayerNN):
+class FunctionParamNet(nn.Module):
   def __init__(self, nn_config, *args, **kwargs):
-    super(FunctionParamNet, self).__init__(nn_config, *args, **kwargs)
+    self.config = nn_config
+    super(FunctionParamNet, self).__init__(*args, **kwargs)
 
   def initialize(self, func_type, input_dims, output_dims, **kwargs):
     if func_type not in _FUNC_TYPES:
@@ -328,7 +332,7 @@ class FunctionParamNet(torch_models.MultiLayerNN):
 
     if func_type == "linear":
       mat_size = output_dims ** 2
-      self._has_bias = kwargs.get("bias", False):
+      self._has_bias = kwargs.get("bias", False)
       if self._has_bias:
         mat_size += output_dims
       self.config.set_sizes(input_size=input_dims, output_size=mat_size)
@@ -341,8 +345,9 @@ class FunctionParamNet(torch_models.MultiLayerNN):
       if fixed_dims is None:
         raise ModelException("Need fixed dim size for scale-shift function.")
       self.hidden_sizes = hidden_sizes
-
-      activations = kwargs.get("activations", torch_models._IDENTITY)
+      self.fixed_dims = fixed_dims
+      # activations = kwargs.get("activations", torch_models._IDENTITY)
+      activations = kwargs.get("activations", nn.Tanh())
       # Either single activation function or a list of activations of the same
       # size as len(hidden_sizes) + 1
       self.activations = activations
@@ -358,16 +363,16 @@ class FunctionParamNet(torch_models.MultiLayerNN):
     # output: n_pts x mat_size x mat_size
     lin_params = self._param_net(x)
     bias_dim = 1 if self._has_bias else 0
-    lin_params = torch.view(
+    lin_params = torch.reshape(
         lin_params, (-1, self.output_dims, self.output_dims + bias_dim))
     return lin_params
 
   def _get_ss_params(self, x):
     ss_params = self._param_net(x)
     all_sizes = (
-        [self.config.input_size] + self.hidden_sizes + [self.output_dims * 2])
+        [self.fixed_dims] + self.hidden_sizes + [self.output_dims * 2])
     ss_params = [
-        torch.view(param, (-1, all_sizes[i], all_sizes[i + 1]))
+        torch.reshape(param, (-1, all_sizes[i + 1], all_sizes[i]))
         for i, param in enumerate(ss_params)
     ]
     return ss_params, self.activations
@@ -377,6 +382,9 @@ class FunctionParamNet(torch_models.MultiLayerNN):
       return self._get_lin_params(x)
     elif self.func_type == "scale_shift":
       return self._get_ss_params(x)
+
+  def forward(self, x):
+    return self.get_params(x)
 
 
 class ConditionalLinearTransformation(ConditionalInvertibleTransform):
@@ -411,7 +419,7 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     #   self._b = torch.zeros(dim)
 
   def _get_params(self, x_o):
-    lin_params = self.param_net.get_params(x_o)
+    lin_params = self._param_net.get_params(x_o)
     if self.config.has_bias:
       b = lin_params[:, :, -1]
       lin_params = lin_params[:, :, :-1]
@@ -426,43 +434,56 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     x_o = torch_utils.numpy_to_torch(x_o)
     L, U, b = self._get_params(x_o)
 
-    x_ = x.transpose(0, 1) if len(x.shape) > 1 else x.view(-1, 1)
-    z = L.matmul(U.matmul(x_)) + b.view(-1, 1)
-    # Undoing dimension changes to be consistent with input
-    z = z.transpose(0, 1) if len(x.shape) > 1 else z.squeeze()
-    z = z if rtn_torch else torch_utils.torch_to_numpy(y)
+    try:
+      # x_ = x.transpose(0, 1) if len(x.shape) > 1 else x.view(-1, 1)
+      x_ = x.view(x.shape[0], -1, 1)
+      z = L.matmul(U.matmul(x_)) + b.view(b.shape[0], -1, 1)
+      # Undoing dimension changes to be consistent with input
+      z = z.squeeze()
+      # z = z.transpose(0, 1) if len(x.shape) > 1 else z.squeeze()
+      z = z if rtn_torch else torch_utils.torch_to_numpy(z)
+    except Exception as e:
+      IPython.embed()
+      raise(e)
 
     if rtn_logdet:
       # Determinant of triangular jacobian is product of the diagonals.
       # Since both L and U are triangular and L has unit diagonal,
       # this is just the product of diagonal elements of U.
-      jac_logdet = (torch.ones(x.shape[0]) *
-                    torch.sum(torch.log(torch.abs(torch.diag(U)))))
-      return y, jac_logdet
-    return y
+      U_diag = torch.diagonal(U, offset=0, dim1=1, dim2=2)
+      # IPython.embed()
+      jac_logdet = torch.sum(torch.log(torch.abs(U_diag)), axis=1)
+      return z, jac_logdet
+    return z
 
   def inverse(self, z, x_o, rtn_torch=True):
-    z = torch_utils.numpy_to_torch(y)
+    z = torch_utils.numpy_to_torch(z)
     x_o = torch_utils.numpy_to_torch(x_o)
     L, U, b = self._get_params(x_o)
-    
-    z_b = z - b
-    z_b_t = z_b.transpose(0, 1) if len(z_b.shape) > 1 else z_b
-    # Torch solver for triangular system of equations
-    # IPython.embed()
-    sol_L = torch.triangular_solve(z_b_t, L, upper=False, unitriangular=True)[0]
-    x_t = torch.triangular_solve(sol_L, U, upper=True)[0]
-    # trtrs always returns 2-D output, even if input is 1-D. So we do this:
-    x = x_t.transpose(0, 1) if len(z.shape) > 1 else x_t.squeeze()
-    x = x if rtn_torch else torch_utils.torch_to_numpy(x)
+
+    try:
+      z_ = z.view(z.shape[0], -1, 1)
+      z_b = z_ - b.view(b.shape[0], -1, 1)
+      # z_b_t = z_b.transpose(0, 1) if len(z_b.shape) > 1 else z_b
+      # Torch solver for triangular system of equations
+      # IPython.embed()
+      sol_L = torch.triangular_solve(z_b, L, upper=False, unitriangular=True)[0]
+      x = torch.triangular_solve(sol_L, U, upper=True)[0]
+      # trtrs always returns 2-D output, even if input is 1-D. So we do this:
+      # x = x_t.transpose(0, 1) if len(z.shape) > 1 else x_t.squeeze()
+      x = x.squeeze()
+      x = x if rtn_torch else torch_utils.torch_to_numpy(x)
+    except Exception as e:
+      IPython.embed()
+      raise(e)
 
     return x
 
 
 class ConditionalSSCTransform(ConditionalInvertibleTransform):
-  def __init__(self, config, *args, **kwargs)
-    super(ConditionalSSCTransform, self).__init__()
-    self.config = config
+  def __init__(self, config, *args, **kwargs):
+    super(ConditionalSSCTransform, self).__init__(config)
+    # self.config = config
 
   def set_fixed_inds(self, index_mask):
     # Converting mask to boolean:
@@ -487,7 +508,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     # from the coupling that are fed into the SS network.
     self._param_net.initialize(
         func_type="scale_shift", input_dims=obs_dim, fixed_dims=self._fixed_dim,
-        output_dims=self._tfm_inds, hidden_sizes=hidden_sizes,
+        output_dims=self._output_dim, hidden_sizes=hidden_sizes,
         activation=activation)
 
   def _get_params(self, x_o):
@@ -496,13 +517,18 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
   def _transform(self, x_fixed, ss_params, activations):
     # This function manually computes the foward pass of the network produced by
     # parameters from the param_net.
-    x_ss = x_fixed
+    x_ss = x_fixed.view(x_fixed.shape[0], -1, 1)
     if not isinstance(activations, list):
       activations = [activations] * len(ss_params)
 
-    for layer_params, activation in zip(ss_params, activations):
-      x_ss = activation(layer_params.matmul(x_ss))
+    try:
+      for layer_params, activation in zip(ss_params, activations):
+        x_ss = activation(layer_params.matmul(x_ss))
+    except Exception as e:
+      IPython.embed()
+      raise(e)
 
+    x_ss = torch.squeeze(x_ss)
     log_scale = x_ss[:, :self._output_dim]
     shift = x_ss[:, self._output_dim:]
     return log_scale, shift
@@ -540,7 +566,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     scale = torch.exp(-log_scale)
 
     x[:, self._fixed_inds] = z_fixed
-    x[:, self._tfm_inds] = scale * y[:, self._tfm_inds] - shift
+    x[:, self._tfm_inds] = scale * (z[:, self._tfm_inds] - shift)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
 
@@ -611,7 +637,9 @@ _TFM_TYPES = {
     "reverse": ReverseTransform,
     "leaky_relu": LeakyReLUTransform,
     "scale_shift_coupling": ConditionalSSCTransform,
+    "scale_shift": ConditionalSSCTransform,
     "fixed_linear": ConditionalLinearTransformation,
+    "linear": ConditionalLinearTransformation,
 }
 def make_transform(config, init_args=None, comp_config=None):
   if isinstance(config, list):
@@ -627,5 +655,6 @@ def make_transform(config, init_args=None, comp_config=None):
 
   tfm = _TFM_TYPES[config.tfm_type](config)
   if init_args is not None:
+    print(config.tfm_type, init_args)
     tfm.initialize(init_args)
   return tfm
