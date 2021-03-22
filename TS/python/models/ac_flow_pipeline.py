@@ -315,7 +315,7 @@ class MultiviewACFlowTrainer(nn.Module):
   def sample(self, n, x_o, rtn_torch=True):
     sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     samples = {}
-    l_samples = {vi:self._cond_lhoods.sample((n,)) for vi in sampling_views}
+    l_samples = {vi:self._cond_lhoods[vi].sample((n,)) for vi in sampling_views}
     return self.invert(l_samples, x_o, rtn_torch=rtn_torch)
     # raise NotImplementedError("Implement this!")
 

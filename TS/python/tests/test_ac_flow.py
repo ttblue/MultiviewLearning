@@ -276,7 +276,8 @@ def make_default_shape_data(args):
   return data, ptfm
 
 
-def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
+def make_default_cond_tfms(
+    args, view_sizes, tfm_args=[], double_tot_dim=False, rtn_args=False):
   # dim = args.ndim
   num_ss_tfm = args.num_ss_tfm
   num_lin_tfm = args.num_lin_tfm
@@ -291,6 +292,8 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
   default_nn_config = make_default_nn_config()
 
   tot_dim = sum(view_sizes.values())
+  if double_tot_dim:
+    tot_dim = tot_dim * 2
   #################################################
   # Bit-mask couple transform
   tfm_idx = 0
@@ -303,6 +306,8 @@ def make_default_cond_tfms(args, view_sizes, tfm_args=[], rtn_args=False):
     vi_tfm_configs = []
     vi_tfm_inits = []
     obs_dim = tot_dim - vdim
+    if double_tot_dim:
+      obs_dim -= vdim
     dim = unobs_dim = vdim
     hidden_sizes = default_hidden_sizes
     for i in range(num_ss_tfm):
@@ -419,10 +424,10 @@ def concat_with_binary_flags(data, main_view, b_available, expand_b=True):
     if vi == main_view:
       continue
     b = b_available[vi]
-    zero_imputed_data[vi] = data[vi] * b
     b = b.reshape(-1, 1)
+    zero_imputed_data[vi] = data[vi] * b
     if expand_b:
-      b_cat[vi] = np.tile(b, 1, data[vi].shape[1])
+      b_cat[vi] = np.tile(b, (1, data[vi].shape[1]))
     else:
       b_cat[vi] = b
 
@@ -431,10 +436,10 @@ def concat_with_binary_flags(data, main_view, b_available, expand_b=True):
   return output, zero_imputed_data, b_cat
 
 
-def make_missing_dset(data, main_view, separate_nv=False):
+def make_missing_dset(data, main_view, include_nv_0=True, separate_nv=False):
   vc_dim = data[main_view].shape[1]
   npts =  data[main_view].shape[0]
-  tot_dim = np.sum([vdat.shape[1] for vi, vdat in data if vi != main_view])
+  tot_dim = np.sum([vdat.shape[1] for vi, vdat in data.items() if vi != main_view])
   if separate_nv:
     x = {}
     x_o = {}
@@ -445,7 +450,9 @@ def make_missing_dset(data, main_view, separate_nv=False):
   mv_x = data[main_view]
   obs_views = [vi for vi in data if vi != main_view]
 
-  for nv in range(1, len(obs_views) + 1):
+  tot_views = len(obs_views)
+  start_nv = 0 if include_nv_0 else 1
+  for nv in range(start_nv, tot_views + 1):
     if separate_nv:
       x[nv] = np.empty((0, vc_dim))
       x_o[nv] = np.empty((0, tot_dim * 2))
@@ -522,7 +529,7 @@ def test_cond_missing_tfms(args):
 
   view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
   main_view = 0
-  models = make_default_cond_tfms(args, view_sizes)
+  models = make_default_cond_tfms(args, view_sizes, double_tot_dim=True)
   model = models[main_view]
 
   config = model.config
@@ -582,59 +589,6 @@ def test_cond_missing_tfms(args):
   # plt.show()
 
 
-def simple_test_tfms_and_likelihood(args):
-  # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(
-  #     args, split=True, normalize_scale=5)
-  nscale = 50.
-  tr_X, te_X = make_default_data_X(args, split=True, normalize_scale=nscale)
-  model = make_default_tfm(args, tfm_args=[])
-  lhood_model = make_default_likelihood_model(args)
-
-  config = model.config
-  config.batch_size = 1000
-  config.lr = 1e-4
-  config.reg_coeff = 0.1
-  config.max_iters = args.max_iters
-  config.stopping_eps = 1e-8
-
-  model.fit(tr_X, lhood_model=lhood_model)
-  if lhood_model is None:
-    lhood_model = model.base_dist
-  try:
-    # IPython.embed()
-    tr_Z_pred = model(tr_X, False, False)
-    te_Z_pred = model(te_X, False, False)
-    tr_Zinv_pred = model.inverse(tr_Z_pred, False)
-    te_Zinv_pred = model.inverse(te_Z_pred, False)
-
-    n_test_samples = args.npts // 2
-    samples = model.sample(n_test_samples, inverted=False, rtn_torch=False)
-    # samples = np.concatenate(
-    #     [np.random.randn(n_test_samples, 1)] * args.ndim, axis=1)
-    X_samples = model.inverse(samples, rtn_torch=False)
-    X_all = np.r_[tr_X, te_X, X_samples]
-    Z_all = np.r_[tr_Z_pred, te_Z_pred, samples]
-    Zinv_all = np.r_[tr_Zinv_pred, te_Zinv_pred, X_samples]
-
-    tsne = umap.UMAP(2)
-    y_x = tsne.fit_transform(X_all)
-    y_z = tsne.fit_transform(Z_all)
-    y_zi = tsne.fit_transform(Zinv_all)
-    plot_data = {"x": y_x, "z": y_z, "zi": y_zi}
-    pdtype = "z"
-    y = plot_data[pdtype]
-
-    plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
-    plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
-    plt.show()
-
-    plt.scatter(y[:tr_X.shape[0], 0], y[:tr_X.shape[0], 1], color="b")
-    plt.scatter(y[tr_X.shape[0]:args.npts, 0], y[tr_X.shape[0]:args.npts, 1], color="r")
-  except:
-    IPython.embed()
-  IPython.embed()
-
-
 _MV_DATAFUNCS = {
     "o1": make_default_overlapping_data,
     "o2": make_default_overlapping_data2,
@@ -643,42 +597,48 @@ _MV_DATAFUNCS = {
 }
 def test_pipeline(args):
   data_func = _MV_DATAFUNCS.get(args.dtype, make_default_overlapping_data)
-  train_data, ptfms = data_func(args)
+  data, ptfms = data_func(args)
+
+  n_tr = int(0.8 * args.npts)
+  n_te = args.npts - n_tr
+
+  tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
+  te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
 
   view_sizes = {vi: vdat.shape[1] for vi, vdat in train_data.items()}
 
   # IPython.embed()
   config, shared_tfm_inits, view_tfm_inits = make_default_pipeline_config(
       args, view_sizes=view_sizes)
-  model = flow_pipeline.MultiviewFlowTrainer(config)
+  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
   model.initialize(shared_tfm_inits, view_tfm_inits)
 
   IPython.embed()
 
-  model.fit(train_data)
-  n_test_samples = args.npts // 2
-  sample_data = model.sample(n_test_samples, rtn_torch=False)
+  model.fit(tr_data)
+  n_test_samples = n_te
+  # sample_data = model.sample(n_test_samples, rtn_torch=False)
 
-  IPython.embed()
+  # IPython.embed()
 
-  tsne = umap.UMAP(n_components=2)
-  compare_dat = {}
-  for vi, tr_view in train_data.items():
-    sample_view = sample_data[vi]
-    all_view = np.r_[tr_view, sample_view]
-    all_comp = tsne.fit_transform(all_view)
+  # tsne = umap.UMAP(n_components=2)
+  # compare_dat = {}
+  # for vi, tr_view in train_data.items():
+  #   sample_view = sample_data[vi]
+  #   all_view = np.r_[tr_view, sample_view]
+  #   all_comp = tsne.fit_transform(all_view)
 
-    compare_dat[vi] = {
-        "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
+  #   compare_dat[vi] = {
+  #       "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
 
-  train_z = torch_utils.torch_to_numpy(model(train_data, False)) #, rtn_torch=False)
-  sample_z = torch_utils.torch_to_numpy(model(sample_data, False)) #, rtn_torch=False)
-  all_z = np.r_[train_z, sample_z]
-  all_comp = tsne.fit_transform(all_z)
-  compare_dat["z"] = {
-        "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
+  # train_z = torch_utils.torch_to_numpy(model(train_data, False)) #, rtn_torch=False)
+  # sample_z = torch_utils.torch_to_numpy(model(sample_data, False)) #, rtn_torch=False)
+  # all_z = np.r_[train_z, sample_z]
+  # all_comp = tsne.fit_transform(all_z)
+  # compare_dat["z"] = {
+  #       "true": all_comp[:args.npts], "sample": all_comp[args.npts:]}
 
-  IPython.embed()
+  # IPython.embed()
   
   # shape = "cube"
   # shape_data = flow_toy_data.shaped_3d_manifold(1000, shape=shape, scale=1.0)
@@ -710,6 +670,7 @@ def test_pipeline(args):
 
 _TEST_FUNCS = {
     0: simple_test_cond_tfms,
+    1: test_cond_missing_tfms,
     # 1: simple_test_tfms_and_likelihood,
     # 2: test_pipeline,
 }
