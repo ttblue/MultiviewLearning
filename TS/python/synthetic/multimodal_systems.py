@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from utils import tfm_utils, math_utils
 
+
 # Probably should come up with a better way to generate features, other than
 # just random gaussian samples
 

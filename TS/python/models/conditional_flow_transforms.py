@@ -368,7 +368,11 @@ class FunctionParamNet(nn.Module):
     return lin_params
 
   def _get_ss_params(self, x):
+    # try:
     ss_params = self._param_net(x)
+    # except Exception as e:
+    #   IPython.embed()
+    #   raise(e)
     all_sizes = (
         [self.fixed_dims] + self.hidden_sizes + [self.output_dims * 2])
     ss_params = [
@@ -584,6 +588,7 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
     # Check dims:
     dims = [tfm._dim for tfm in self._tfm_list if tfm._dim is not None]
     if len(dims) > 0:
+      print(dims)
       if any([dim != dims[0] for dim in dims]):
         raise ModelException("Not all transforms have the same dimension.")
       self._dim = dims[0]

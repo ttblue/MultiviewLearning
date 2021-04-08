@@ -30,6 +30,16 @@ class SimpleArgs:
 ###
 
 
+def convert_numpy_to_float32(data):
+  if isinstance(data, np.ndarray):
+    data = data.astype("float32")
+  if isinstance(data, dict):
+    data = {i:idat.astype("float32") for i, idat in data.items()}
+  if isinstance(data, list):
+    data = [idat.astype("float32") for idat in data]
+  return data
+
+
 def make_default_nn_config():
   input_size = 10  # Computed online
   output_size = 10  # Computed online
@@ -371,10 +381,11 @@ def make_default_cond_tfms(
 
 def make_default_pipeline_config(args, view_sizes={}):
   tot_dim = sum(view_sizes.values())
+  # print(args.__dict__.keys())
   all_view_args = ArgsCopy(args)
   # all_view_args.ndim = tot_dim
   cond_config_lists, cond_inits_lists = make_default_cond_tfms(
-      view_sizes, all_view_args, rtn_args=True)
+      all_view_args, view_sizes, rtn_args=True)
 
   view_tfm_config_lists = {}
   view_tfm_init_lists = {}
@@ -397,6 +408,7 @@ def make_default_pipeline_config(args, view_sizes={}):
 
   verbose = True
 
+  # IPython.embed()
   config = ac_flow_pipeline.MACFTConfig(
       expand_b=expand_b, likelihood_config=likelihood_config,
       base_dist=base_dist, batch_size=batch_size, lr=lr, max_iters=max_iters,
@@ -598,6 +610,7 @@ _MV_DATAFUNCS = {
 def test_pipeline(args):
   data_func = _MV_DATAFUNCS.get(args.dtype, make_default_overlapping_data)
   data, ptfms = data_func(args)
+  data = convert_numpy_to_float32(data)
 
   n_tr = int(0.8 * args.npts)
   n_te = args.npts - n_tr
@@ -605,21 +618,28 @@ def test_pipeline(args):
   tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
   te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
 
-  view_sizes = {vi: vdat.shape[1] for vi, vdat in train_data.items()}
+  view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
 
   # IPython.embed()
-  config, shared_tfm_inits, view_tfm_inits = make_default_pipeline_config(
-      args, view_sizes=view_sizes)
-  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
-  model.initialize(shared_tfm_inits, view_tfm_inits)
+  # cond_tfm_config_lists, cond_tfm_init_args = make_default_cond_tfms(
+  #       args, view_sizes, rtn_args=True)
+  config, view_config_and_inits, cond_config_and_inits = \
+      make_default_pipeline_config(args, view_sizes=view_sizes)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
   IPython.embed()
 
-  model.fit(tr_data)
+  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+  model.initialize(
+      view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists)
+
+  model.fit(data)
   n_test_samples = n_te
   # sample_data = model.sample(n_test_samples, rtn_torch=False)
 
-  # IPython.embed()
+  IPython.embed()
 
   # tsne = umap.UMAP(n_components=2)
   # compare_dat = {}
@@ -671,8 +691,7 @@ def test_pipeline(args):
 _TEST_FUNCS = {
     0: simple_test_cond_tfms,
     1: test_cond_missing_tfms,
-    # 1: simple_test_tfms_and_likelihood,
-    # 2: test_pipeline,
+    2: test_pipeline,
 }
 
 

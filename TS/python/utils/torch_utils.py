@@ -10,6 +10,7 @@ import IPython
 
 
 _DTYPE = torch.float32
+_NP_DTYPE = np.float32
 _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 # For RNNs.
@@ -27,7 +28,7 @@ def numpy_to_torch(var, copy=False):
 
 def torch_to_numpy(var, copy=False):
   if isinstance(var, torch.Tensor):
-    var = var.detach().numpy()
+    var = var.detach().numpy().astype(_NP_DTYPE)
     if copy: var = var.copy()    
   return var
 

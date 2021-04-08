@@ -1,4 +1,5 @@
 import copy
+import itertools
 import numpy as np
 import scipy
 import torch
@@ -12,6 +13,7 @@ from utils import math_utils, torch_utils, utils
 
 import IPython
 
+_NP_DTYPE = np.float32
 
 # Some utilities:
 def MVZeroImpute(xvs, v_dims, ignored_view=None, expand_b=True):
@@ -20,33 +22,40 @@ def MVZeroImpute(xvs, v_dims, ignored_view=None, expand_b=True):
   # @ignored_view: If not None, view to ignore while zero-imputing and
   #     concatenating.
   tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
-  n_pts = xvs[utils.get_any_key(xvs)].shape[0]
+  npts = xvs[utils.get_any_key(xvs)].shape[0]
 
-  b_vals = np.empty((n_pts, 0))
-  imputed_vals = np.empty((n_pts, 0))
+  is_torch = not isinstance(xvs[utils.get_any_key(xvs)], np.ndarray)
+  xvs = torch_utils.dict_torch_to_numpy(xvs)
+
+  b_vals = np.empty((npts, 0))
+  imputed_vals = np.empty((npts, 0))
   vi_idx = 0
   for vi, dim in v_dims.items():
-    if vi == ignore_view:
+    if vi == ignored_view:
       continue
     vi_vals = xvs[vi] if vi in xvs else np.zeros((npts, dim))
     imputed_vals = np.concatenate([imputed_vals, vi_vals], axis=1)
 
-    vi_b = np.ones((n_pts,)) * (vi in xvs)
+    vi_b = np.ones((npts, 1)) * (vi in xvs)
     if expand_b:
       vi_b = np.tile(vi_b, (1, dim))
     b_vals = np.concatenate([b_vals, vi_b], axis=1)
 
-  output = np.c_[imputed_vals, b_vals]
+  output = np.c_[imputed_vals, b_vals].astype(_NP_DTYPE)
+  # IPython.embed()
+  if is_torch:
+    output = torch.from_numpy(output)
+
   return output
 #
 
 
 class MACFTConfig(BaseConfig):
   def __init__(
-      expand_b=True, likelihood_config=None, base_dist="gaussian",
+      self, expand_b=True, likelihood_config=None, base_dist="gaussian",
       batch_size=50, lr=1e-3, max_iters=1000, verbose=True,
       *args, **kwargs):
-    super(MFTConfig, self).__init__(*args, **kwargs)
+    super(MACFTConfig, self).__init__(*args, **kwargs)
 
     self.expand_b = expand_b
     self.likelihood_config = likelihood_config
@@ -70,6 +79,7 @@ class MultiviewACFlowTrainer(nn.Module):
       cond_tfm_config_lists, cond_tfm_init_args):
     # Initialize transforms, mm model, optimizer, etc.
 
+    # IPython.embed()
     self._view_tfm_config_lists = view_tfm_config_lists
     self._cond_tfm_config_lists = cond_tfm_config_lists
     # View encoders:
@@ -181,7 +191,7 @@ class MultiviewACFlowTrainer(nn.Module):
       # return z, log_jac_det
 
     l_vs = self._transform_views_cond(
-        z_vs, available_views, rtn_torch=True, rtn_logdet=rtn_logdet)
+        z_vs, available_views, rtn_logdet=rtn_logdet)
     if rtn_logdet:
       l_vs, l_ld_vs = l_vs
       logdet_vs = {
@@ -283,6 +293,7 @@ class MultiviewACFlowTrainer(nn.Module):
     self._view_data = torch_utils.dict_numpy_to_torch(xvs)
     self._n_batches = int(np.ceil(npts / self.config.batch_size))
 
+    self._view_subset_shuffler = self._make_view_subset_shuffler()
     # Set up optimizer
     self.opt = optim.Adam(self.parameters(), self.config.lr)
 
