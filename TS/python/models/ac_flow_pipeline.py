@@ -163,6 +163,7 @@ class MultiviewACFlowTrainer(nn.Module):
         {vi: z_vs[vi] for vi in available_views}
     )
 
+    # IPython.embed()
     expand_b = self.config.expand_b
     l_vs = {}
     logdet_vs = {}
@@ -204,8 +205,9 @@ class MultiviewACFlowTrainer(nn.Module):
   def _nll(self, l_vs):
     # Give the log likelihood under transformed latent state
     l_nll = {}
+    # IPython.embed()
     for vi, lvi in l_vs.items():
-      l_nll[vi] = self._cond_lhoods["v_%i" % vi](lvi)
+      l_nll[vi] = self._cond_lhoods["v_%i" % vi].nll(lvi)
     return l_nll
 
   def forward(self, xvs, rtn_logdet=True):
@@ -226,7 +228,7 @@ class MultiviewACFlowTrainer(nn.Module):
       l_nll_vi = l_nll[vi]
       ld_vi = ld_vs[vi]
       nll_loss[vi] = -torch.sum(ld_vi) + torch.sum(l_nll_vi)
-      total_loss += nll_loss
+      total_loss += nll_loss[vi]
 
     if aggregate == "sum":
       return total_loss
@@ -276,11 +278,13 @@ class MultiviewACFlowTrainer(nn.Module):
     x_vs = {}
     for vi, lvi in l_vs.items():
       z_cat = MVZeroImpute(
-          z_o, self._view_dims, ignored_view=vi, expand_b=expand_b)
+          z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
 
-      l_inv = self._cond_tfm["v_%i"%vi].inverse(z, z_cat)
+      l_inv = self._cond_tfms["v_%i"%vi].inverse(lvi, z_cat)
       x_vs[vi] = self._view_tfms["v_%i"%vi].inverse(l_inv)
 
+    if not rtn_torch:
+      x_vs = torch_utils.dict_torch_to_numpy(x_vs)
     return x_vs
 
   def fit(self, xvs):
@@ -326,7 +330,7 @@ class MultiviewACFlowTrainer(nn.Module):
   def sample(self, n, x_o, rtn_torch=True):
     sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     samples = {}
-    l_samples = {vi:self._cond_lhoods[vi].sample((n,)) for vi in sampling_views}
+    l_samples = {vi:self._cond_lhoods["v_%i"%vi].sample((n,)) for vi in sampling_views}
     return self.invert(l_samples, x_o, rtn_torch=rtn_torch)
     # raise NotImplementedError("Implement this!")
 

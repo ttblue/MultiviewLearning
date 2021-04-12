@@ -385,7 +385,7 @@ def make_default_pipeline_config(args, view_sizes={}):
   all_view_args = ArgsCopy(args)
   # all_view_args.ndim = tot_dim
   cond_config_lists, cond_inits_lists = make_default_cond_tfms(
-      all_view_args, view_sizes, rtn_args=True)
+      all_view_args, view_sizes, double_tot_dim=True, rtn_args=True)
 
   view_tfm_config_lists = {}
   view_tfm_init_lists = {}
@@ -599,6 +599,10 @@ def test_cond_missing_tfms(args):
   # plt.scatter(y[:args.npts, 0], y[:args.npts, 1], color="b")
   # plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
   # plt.show()
+
+
+def test_ptbxl(args):
+  
 
 
 _MV_DATAFUNCS = {
