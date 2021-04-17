@@ -4,10 +4,12 @@ import numpy as np
 import os
 import scipy
 from sklearn import manifold
+import time
 import torch
 from torch import nn
 import umap
 
+from dataprocessing import eeg_data
 from models import ac_flow_pipeline, conditional_flow_transforms,\
     flow_likelihood, flow_pipeline, flow_transforms, torch_models
 from synthetic import flow_toy_data, multimodal_systems
@@ -308,11 +310,12 @@ def make_default_cond_tfms(
   # Bit-mask couple transform
   tfm_idx = 0
   idx_args = tfm_args[tfm_idx] if tfm_idx < len(tfm_args) else None
-  bit_mask = None
+  init_bit_mask = None
   if idx_args is not None and idx_args[0] == "scaleshift":
-    bit_mask = idx_args[1]
+    init_bit_mask = idx_args[1]
 
   for vi, vdim in view_sizes.items():
+    bit_mask = init_bit_mask
     vi_tfm_configs = []
     vi_tfm_inits = []
     obs_dim = tot_dim - vdim
@@ -401,6 +404,7 @@ def make_default_pipeline_config(args, view_sizes={}):
   base_dist = "mv_gaussian"
 
   expand_b = True
+  no_view_tfm = False
 
   batch_size = 50
   lr = 1e-3
@@ -410,9 +414,9 @@ def make_default_pipeline_config(args, view_sizes={}):
 
   # IPython.embed()
   config = ac_flow_pipeline.MACFTConfig(
-      expand_b=expand_b, likelihood_config=likelihood_config,
-      base_dist=base_dist, batch_size=batch_size, lr=lr, max_iters=max_iters,
-      verbose=verbose)
+      expand_b=expand_b, no_view_tfm=no_view_tfm,
+      likelihood_config=likelihood_config, base_dist=base_dist,
+      batch_size=batch_size, lr=lr, max_iters=max_iters, verbose=verbose)
 
   return config, (view_tfm_config_lists, view_tfm_init_lists),\
       (cond_config_lists, cond_inits_lists)
@@ -601,16 +605,7 @@ def test_cond_missing_tfms(args):
   # plt.show()
 
 
-def test_ptbxl(args):
-  
 
-
-_MV_DATAFUNCS = {
-    "o1": make_default_overlapping_data,
-    "o2": make_default_overlapping_data2,
-    "ind": make_default_independent_data,
-    "sh": make_default_shape_data,
-}
 def test_pipeline(args):
   data_func = _MV_DATAFUNCS.get(args.dtype, make_default_overlapping_data)
   data, ptfms = data_func(args)
@@ -632,7 +627,8 @@ def test_pipeline(args):
   view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
   cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
-  IPython.embed()
+  # config.no_view_tfm = True
+  # IPython.embed()
 
   model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
   model.initialize(
@@ -692,10 +688,47 @@ def test_pipeline(args):
   plt.legend()
   plt.show()
 
+
+def test_ptbxl(args):
+  local_data_file = "./ptbxl_data.npy"
+  load_start_time = time.time()
+  if os.path.exists(local_data_file):
+    trX, trY, teX, teY = np.load(local_data_file, allow_pickle=True).tolist()
+    ann = eeg_data.load_ptbxl_annotations()
+  else:
+    (trX, trY), (teX, teY), ann = eeg_data.load_ptbxl()
+
+  print("Time taken to load PTB-XL: %.2fs" % (time.time() - load_start_time))
+  IPython.embed()
+
+  view_sizes = {vi:trX[vi].shape[1] for vi in trX}
+
+  config, view_config_and_inits, cond_config_and_inits = \
+      make_default_pipeline_config(args, view_sizes=view_sizes)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+  IPython.embed()
+
+  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+  model.initialize(
+      view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists)
+
+  model.fit(trX)
+
+
+_MV_DATAFUNCS = {
+    "o1": make_default_overlapping_data,  # need any 2 views for all 
+    "o2": make_default_overlapping_data2,  # need K-1 views for all
+    "ind": make_default_independent_data,
+    "sh": make_default_shape_data,
+}
+
 _TEST_FUNCS = {
     0: simple_test_cond_tfms,
     1: test_cond_missing_tfms,
     2: test_pipeline,
+    3: test_ptbxl,
 }
 
 
