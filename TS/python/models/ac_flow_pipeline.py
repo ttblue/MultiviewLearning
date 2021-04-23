@@ -224,7 +224,7 @@ class MultiviewACFlowTrainer(nn.Module):
       z_vs, l_vs = zl_vs
       output = l_vs
 
-    return l_vs
+    return output
 
   def loss(self, l_nll, ld_vs, aggregate="sum", *args, **kwargs):
     nll_loss = {}
@@ -288,18 +288,39 @@ class MultiviewACFlowTrainer(nn.Module):
         self._view_subset_counts[available_views] = 0
       self._view_subset_counts[available_views] += 1
 
-  def invert(self, l_vs, x_o, rtn_torch=True):
-    z_o = self._encode_views(x_o, rtn_logdet=False)
-    x_vs = {}
-    for vi, lvi in l_vs.items():
-      z_cat = MVZeroImpute(
-          z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
+  def invert(self, l_vs, x_o, rtn_torch=True, batch_size=None):
+    # Batch size to sample in smaller chunks for reduced memory usage
+    if batch_size is None:
+      z_o = self._encode_views(x_o, rtn_logdet=False)
+      x_vs = {}
+      for vi, lvi in l_vs.items():
+        z_cat = MVZeroImpute(
+            z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
 
-      l_inv = self._cond_tfms["v_%i"%vi].inverse(lvi, z_cat)
-      if self.config.no_view_tfm:
-        x_vs[vi] = l_inv
-      else:
-        x_vs[vi] = self._view_tfms["v_%i"%vi].inverse(l_inv)
+        l_inv = self._cond_tfms["v_%i"%vi].inverse(lvi, z_cat)
+        if self.config.no_view_tfm:
+          x_vs[vi] = l_inv
+        else:
+          x_vs[vi] = self._view_tfms["v_%i"%vi].inverse(l_inv)
+
+    else:
+      n_pts = l_vs[utils.get_any_key(l_vs)].shape[0]
+      x_vs = {vi: [] for vi in l_vs}
+      for start_idx in np.arange(n_pts, step=batch_size):
+        l_vs_batch = {
+            vi: lvi[start_idx:start_idx+batch_size]
+            for vi, lvi in l_vs.items()
+        }
+        x_o_batch = {
+            vi: xo_vi[start_idx:start_idx+batch_size]
+            for vi, xo_vi in x_o.items()   
+        }
+        x_s_batch = self.invert(
+            l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
+        for vi, xsb_vi in x_s_batch:
+          x_vs[vi].append(xsb_vi)
+
+      x_vs = {vi:torch.cat(xvi, dim=0) for vi, xvi in x_vs.items()}
 
     if not rtn_torch:
       x_vs = torch_utils.dict_torch_to_numpy(x_vs)
@@ -350,11 +371,12 @@ class MultiviewACFlowTrainer(nn.Module):
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
     return self
 
-  def sample(self, n, x_o, rtn_torch=True):
+  def sample(self, x_o, rtn_torch=True, batch_size=None):
+    n = x_o[utils.get_any_key(x_o)].shape[0]
     sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     samples = {}
     l_samples = {vi:self._cond_lhoods["v_%i"%vi].sample((n,)) for vi in sampling_views}
-    return self.invert(l_samples, x_o, rtn_torch=rtn_torch)
+    return self.invert(l_samples, x_o, rtn_torch=rtn_torch, batch_size=batch_size)
     # raise NotImplementedError("Implement this!")
 
   # def log_likelihood(self, x):

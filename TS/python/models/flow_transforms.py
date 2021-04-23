@@ -322,7 +322,8 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
     y = torch.zeros_like(x)
     x_fixed = x[:, self._fixed_inds]
 
-    scale = torch.exp(self._scale_tfm(x_fixed))
+    log_scale = self._scale_tfm(x_fixed)
+    scale = torch.exp(log_scale)
     shift = self._shift_tfm(x_fixed)
 
     y[:, self._fixed_inds] = x_fixed
@@ -331,7 +332,7 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
 
     if rtn_logdet:
-      jac_logdet = self._scale_tfm(x_fixed).sum(1)
+      jac_logdet = log_scale.sum(1)
       return y, jac_logdet
     return y
 

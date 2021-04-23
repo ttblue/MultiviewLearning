@@ -554,7 +554,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     z = z if rtn_torch else torch_utils.torch_to_numpy(z)
 
     if rtn_logdet:
-      jac_logdet = scale.sum(1)
+      jac_logdet = log_scale.sum(1)
       return z, jac_logdet
     return z
 

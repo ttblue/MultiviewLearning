@@ -134,8 +134,6 @@ def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
 class ArgsCopy:
   def __init__(self, args):
     self.__dict__.update(args.__dict__)
-    # self.num_ss_tfm = args.num_ss_tfm
-    # self.num_lin_tfm = args.num_lin_tfm
     # self.use_leaky_relu = args.use_leaky_relu
     # self.use_reverse = args.use_reverse
 
@@ -291,8 +289,8 @@ def make_default_shape_data(args):
 def make_default_cond_tfms(
     args, view_sizes, tfm_args=[], double_tot_dim=False, rtn_args=False):
   # dim = args.ndim
-  num_ss_tfm = args.num_ss_tfm
-  num_lin_tfm = args.num_lin_tfm
+  num_ss_tfm = args.num_cond_ss_tfm
+  num_lin_tfm = args.num_cond_lin_tfm
   use_leaky_relu = args.use_leaky_relu
   use_reverse = args.use_reverse
 
@@ -689,6 +687,118 @@ def test_pipeline(args):
   plt.show()
 
 
+
+def pred_results_inliers(
+    model, sub_dat, y, percentile=90, ignore_mult=3., use_valid_n=False):
+  # Outliers are considered incorrect predictions
+  abs_sub_dat = np.abs(sub_dat)
+  sub_perc_vals = np.percentile(abs_sub_dat, axis=0, q=percentile)
+  vinds = (abs_sub_dat < ignore_mult * sub_perc_vals).all(axis=1)
+  print("Valid frac: %.2f" % vinds.sum()/vinds.shape[0])
+
+  valid_x = sub_dat[vinds]
+  valid_y = y[vinds]
+  pred_y = model.predict(valid_x)
+
+  if use_valid_n:
+    n_pts = valid_y.shape[0]
+  else:
+    n_pts = y.shape[0]
+  acc = (pred_y == valid_y).sum() / n_pts
+
+  return acc
+
+
+def get_ptbxl_results(base_model, sample_sets, y, set_labels):
+  n = y.shape[0]
+  results = {}
+  for i, set_label in enumerate(set_labels):
+    samples_i = sample_sets[set_label]
+    results_i = {}
+    for nv, nv_samples_i in samples_i.items():
+      results_i = {}
+      for subset, sub_dat in nv_samples_i.items():
+        # pred_y = base_model.predict(sub_dat)
+        # sub_acc = (pred_y == y)/n
+        sub_acc = pred_results_inliers(base_model, sub_dat, y)
+        results_i[subset] = sub_acc
+
+    results[set_label] = results_i
+
+  return results
+
+
+def get_ptbxl_results_all_labels(base_models, sample_sets, y_tr, y_te, set_labels):
+  results = {}
+  y_lbl = {"tr": y_tr, "te": y_te}
+  ptbxl_labels = ["NORM", "MI", "STTC", "CD", "HYP"]
+  set_labels = list(sample_sets.keys())
+  for dtype, y_d in y_lbl.items():
+    results[dtype] = {}
+    samples_d = {set_name: sample_sets[set_name][dtype] for set_name in sample_sets}
+    for i, lbl in enumerate(ptbxl_labels):
+      model_l = base_model[lbl]
+      y_lbl = get_labels(y_d, [lbl])
+      results_lbl = get_ptbxl_results(model_l, samples_d, y_lbl, set_labels)
+      print(samples_d.keys())
+      print(results_lbl.keys())
+      results[dtype][lbl] = results_lbl
+  return results
+
+
+def convert_ptbxl_results_to_mats(results):
+  acc_mats = {}
+  num_labels = None
+  label_list = None
+  num_sets = None
+  set_list = None
+  num_subsets = None
+  subset_list = None
+  for dtype, results_d in results.items():
+    acc_mats[dtype] = {}
+    if num_labels is None:
+      num_labels = len(results_d)
+    if label_list is None:
+      label_list = list(results_d.keys())
+    for li, lbl in enumerate(label_list):
+      results_ld = results_d[lbl]
+      if num_sets is None:
+        num_sets = len(results_ld)
+      if set_list is None:
+        set_list = list(results_ld.keys())
+      for set_i, set_type in enumerate(set_list):
+        results_sld = results_ld[set_type]
+        if num_subsets is None:
+          num_subsets = len(results_sld)
+        if not acc_mats[dtype][set_type]:
+          acc_mats[dtype][lbl] = np.zeros(num_subsets, num_sets)
+        if subset_list is None:
+          subset_list = list(results_sld.keys())
+        for si, subset in enumerate(subset_list):
+          acc_mats[dtype][lbl][si, set_i] = results_sld[subset]
+
+  return acc_mats, label_list, set_list, subset_list
+
+
+def plot_ptbxl_heatmaps(acc_mats, lbl_names, set_list, subset_list):
+  dname = {"tr": "Training", "te": "Testing"}
+  x_ticks = np.arange(0.5, len(subset_list))
+  y_ticks = np.arange(0.5, len(set_list))
+  for dtype, accs_d in acc_mats.items():
+    for lbl, mat in accs_d.items():
+      fig = plt.figure()
+      hm = plt.imshow(mat)
+      cbar = plt.colorbar(hm)
+      plt.title("%s accuracy: %s" % (dname[dtype], set_name))
+      plt.xtick_labels(x_ticks, subset_list)
+      plt.ytick_labels(y_ticks, set_list)
+      # for mind in msplit_inds:
+      #   mind -= 0.5
+      #   plt.axvline(x=mind, ls="--")
+      #   plt.axhline(y=mind, ls="--")
+      plt.show()
+
+
 def test_ptbxl(args):
   local_data_file = "./ptbxl_data.npy"
   load_start_time = time.time()
@@ -746,8 +856,10 @@ if __name__ == "__main__":
       ("shape", str, "Shape of toy data.", "cube"),
       ("max_iters", int, "Number of iters for opt.", 10000),
       ("batch_size", int, "Batch size for opt.", 100),
-      ("num_ss_tfm", int, "Number of shift-scale tfms", 1),
-      ("num_lin_tfm", int, "Number of linear tfms", 1),
+      ("num_ss_tfm", int, "Number of shift-scale tfms for views", 0),
+      ("num_lin_tfm", int, "Number of linear tfms for views", 1),
+      ("num_cond_ss_tfm", int, "Number of shift-scale tfms for cond. tfm", 1),
+      ("num_cond_lin_tfm", int, "Number of linear tfms for cond. tfm", 1),
       ("use_leaky_relu", bool, "Flag for using leaky relu tfm", False),
       ("use_reverse", bool, "Flag for using reverse tfm", False),
       ("dist_type", str, "Base dist. type ([mv_]gaussian/laplace/logistic)",
