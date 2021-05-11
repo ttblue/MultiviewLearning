@@ -32,16 +32,19 @@ _BASE_DISTS = ["gaussian"]
 class TfmConfig(BaseConfig):
   # General config object for all transforms
   def __init__(
-      self, tfm_type="scale_shift_coupling", neg_slope=0.01, scale_config=None,
-      shift_config=None, shared_wts=False, ltfm_config=None, bias_config=None,
-      has_bias=True, base_dist="gaussian", reg_coeff=.1, lr=1e-3, batch_size=50,
-      max_iters=1000, stopping_eps=1e-5, num_stopping_iter=10, grad_clip=5.,
+      self, tfm_type="scale_shift_coupling", neg_slope=0.01, is_sigmoid=False,
+      scale_config=None, shift_config=None, shared_wts=False, ltfm_config=None,
+      bias_config=None, has_bias=True, base_dist="gaussian", reg_coeff=.1,
+      lr=1e-3, batch_size=50, max_iters=1000, stopping_eps=1e-5,
+      num_stopping_iter=10, grad_clip=5.,
       *args, **kwargs):
     super(TfmConfig, self).__init__(*args, **kwargs)
 
     self.tfm_type = tfm_type.lower()
     # LeakyReLU params:
     self.neg_slope = neg_slope
+    # Sigmoid/logit params:
+    self.is_sigmoid = is_sigmoid
 
     # Shift Scale params:
     self.scale_config = scale_config
@@ -275,6 +278,57 @@ class LeakyReLUTransform(InvertibleTransform):
     x = self._inv_func(y)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
+
+
+class SigmoidLogitTransform(InvertibleTransform):
+  def __init__(self, config):
+    super(SigmoidLogitTransform, self).__init__(config)
+
+  def initialize(self, *args, **kwargs):
+    pass
+
+  def _sigmoid(self, x, rtn_logdet=False):
+    y = torch.sigmoid(x)
+    if rtn_logdet:
+      jac = torch.abs(y * (1 - y))
+      log_det = torch.log(jac)
+      return y, log_det
+
+    return y
+
+  def _logit(self, x, rtn_logdet=False):
+    x_odds = x / (1 - x)
+    y = torch.log(x_odds)
+    if rtn_logdet:
+      jac = torch.abs(1 / ((x - 1) * (x)))
+      log_det = torch.log(jac)
+      return y, log_det
+
+    return y
+
+  def forward(self, x, rtn_torch=True, rtn_logdet=False):
+    x = torch_utils.numpy_to_torch(x)
+    
+    y = (
+        self._sigmoid(x, rtn_logdet=rtn_logdet)
+        if self.config.is_sigmoid else
+        self._logit(x, rtn_logdet=rtn_logdet))
+
+    if rtn_logdet:
+      y, jac_logdet = y
+      y = y if rtn_torch else torch_utils.torch_to_numpy(y)
+      return y, jac_logdet
+
+    y = y if rtn_torch else torch_utils.torch_to_numpy(y)
+    return y
+
+  def inverse(self, y, rtn_torch=True):
+    x = (
+        self._logit(y, rtn_logdet=False)
+        if self.config.is_sigmoid else
+        self._sigmoid(y, rtn_logdet=False))
+    x = x if rtn_torch else torch_utils.torch_to_numpy(x)
+    return x
 
 
 class ScaleShiftCouplingTransform(InvertibleTransform):
@@ -532,8 +586,12 @@ class CompositionTransform(InvertibleTransform):
 _TFM_TYPES = {
     "reverse": ReverseTransform,
     "leaky_relu": LeakyReLUTransform,
+    "sigmoid": SigmoidLogitTransform,
+    "logit": SigmoidLogitTransform,
     "scale_shift_coupling": ScaleShiftCouplingTransform,
+    "scale_shift": ScaleShiftCouplingTransform,
     "fixed_linear": FixedLinearTransformation,
+    "linear": FixedLinearTransformation,
 }
 def make_transform(config, init_args=None, comp_config=None):
   if isinstance(config, list):

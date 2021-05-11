@@ -30,7 +30,7 @@ _BASE_DISTS = flow_transforms._BASE_DISTS
 ################################################################################
 class CTfmConfig(BaseConfig):
   def __init__(
-      self, tfm_type="scale_shift_coupling", neg_slope=0.01,
+      self, tfm_type="scale_shift_coupling", neg_slope=0.01, is_sigmoid=False,
       func_nn_config=None, has_bias=True, base_dist="gaussian", reg_coeff=.1,
       lr=1e-3, batch_size=50, max_iters=1000, stopping_eps=1e-5,
       num_stopping_iter=10, grad_clip=5., verbose=True,
@@ -40,7 +40,9 @@ class CTfmConfig(BaseConfig):
 
     self.tfm_type = tfm_type.lower()
     # LeakyReLU params:
-    self.neg_slope = neg_slope 
+    self.neg_slope = neg_slope
+    # Sigmoid/logit params:
+    self.is_sigmoid = is_sigmoid
 
     # Shift Scale params:
     self.func_nn_config = func_nn_config
@@ -308,6 +310,57 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
     x = self._inv_func(z)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
+
+
+class SigmoidLogitTransform(ConditionalInvertibleTransform):
+  def __init__(self, config):
+    super(SigmoidLogitTransform, self).__init__(config)
+
+  def initialize(self, *args, **kwargs):
+    pass
+
+  def _sigmoid(self, x, rtn_logdet=False):
+    y = torch.sigmoid(x)
+    if rtn_logdet:
+      jac = torch.abs(y * (1 - y))
+      log_det = torch.log(jac)
+      return y, log_det
+
+    return y
+
+  def _logit(self, x, rtn_logdet=False):
+    x_odds = x / (1 - x)
+    y = torch.log(x_odds)
+    if rtn_logdet:
+      jac = torch.abs(1 / ((x - 1) * (x)))
+      log_det = torch.log(jac)
+      return y, log_det
+
+    return y
+
+  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+    x = torch_utils.numpy_to_torch(x)
+    
+    y = (
+        self._sigmoid(x, rtn_logdet=rtn_logdet)
+        if self.config.is_sigmoid else
+        self._logit(x, rtn_logdet=rtn_logdet))
+
+    if rtn_logdet:
+      y, jac_logdet = y
+      y = y if rtn_torch else torch_utils.torch_to_numpy(y)
+      return y, jac_logdet
+
+    y = y if rtn_torch else torch_utils.torch_to_numpy(y)
+    return y
+
+  def inverse(self, y, x_o, rtn_torch=True):
+    x = (
+        self._logit(y, rtn_logdet=False)
+        if self.config.is_sigmoid else
+        self._sigmoid(y, rtn_logdet=False))
+    x = x if rtn_torch else torch_utils.torch_to_numpy(x)
+    return x
 
 
 # Class for function parameters for unobserved covariates given observed
@@ -641,6 +694,8 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
 _TFM_TYPES = {
     "reverse": ReverseTransform,
     "leaky_relu": LeakyReLUTransform,
+    "sigmoid": SigmoidLogitTransform,
+    "logit": SigmoidLogitTransform,
     "scale_shift_coupling": ConditionalSSCTransform,
     "scale_shift": ConditionalSSCTransform,
     "fixed_linear": ConditionalLinearTransformation,

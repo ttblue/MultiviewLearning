@@ -9,7 +9,7 @@ import torch
 from torch import nn
 import umap
 
-from dataprocessing import eeg_data
+from dataprocessing import ecg_data
 from models import ac_flow_pipeline, conditional_flow_transforms,\
     flow_likelihood, flow_pipeline, flow_transforms, torch_models
 from synthetic import flow_toy_data, multimodal_systems
