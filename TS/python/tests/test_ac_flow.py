@@ -9,7 +9,8 @@ import torch
 from torch import nn
 import umap
 
-from dataprocessing import ecg_data
+from dataprocessing import ecg_data, split_single_view_dsets as ssvd,\
+    multiview_datasets as mvd
 from models import ac_flow_pipeline, conditional_flow_transforms,\
     flow_likelihood, flow_pipeline, flow_transforms, torch_models
 from synthetic import flow_toy_data, multimodal_systems
@@ -100,6 +101,7 @@ def make_default_tfm_config(tfm_type="shift_scale_coupling"):
 
 def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
+  is_sigmoid = False
   func_nn_config = make_default_nn_config()
   func_nn_config.last_activation = torch.nn.Tanh
   has_bias = True
@@ -123,8 +125,8 @@ def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   verbose = True
 
   config = conditional_flow_transforms.CTfmConfig(
-      tfm_type=tfm_type, neg_slope=neg_slope, func_nn_config=func_nn_config,
-      has_bias=has_bias, reg_coeff=reg_coeff,
+      tfm_type=tfm_type, neg_slope=neg_slope, is_sigmoid=is_sigmoid,
+      func_nn_config=func_nn_config, has_bias=has_bias, reg_coeff=reg_coeff,
       base_dist=base_dist, lr=lr, batch_size=batch_size, max_iters=max_iters,
       stopping_eps=stopping_eps, num_stopping_iter=num_stopping_iter,
       grad_clip=grad_clip, verbose=verbose)
@@ -287,7 +289,8 @@ def make_default_shape_data(args):
 
 
 def make_default_cond_tfms(
-    args, view_sizes, tfm_args=[], double_tot_dim=False, rtn_args=False):
+    args, view_sizes, tfm_args=[], double_tot_dim=False, start_logit=False,
+    rtn_args=False):
   # dim = args.ndim
   num_ss_tfm = args.num_cond_ss_tfm
   num_lin_tfm = args.num_cond_lin_tfm
@@ -321,6 +324,12 @@ def make_default_cond_tfms(
       obs_dim -= vdim
     dim = unobs_dim = vdim
     hidden_sizes = default_hidden_sizes
+
+    if start_logit:
+      logit_config = make_default_cond_tfm_config("logit")
+      vi_tfm_configs.append(logit_config)
+      vi_tfm_inits.append([])
+
     for i in range(num_ss_tfm):
       scale_shift_tfm_config = make_default_cond_tfm_config("scale_shift")
       vi_tfm_configs.append(scale_shift_tfm_config)
@@ -380,20 +389,24 @@ def make_default_cond_tfms(
   return models
 
 
-def make_default_pipeline_config(args, view_sizes={}):
+def make_default_pipeline_config(
+    args, view_sizes={}, no_view_tfm=False, start_logit=False):
+
   tot_dim = sum(view_sizes.values())
   # print(args.__dict__.keys())
   all_view_args = ArgsCopy(args)
   # all_view_args.ndim = tot_dim
   cond_config_lists, cond_inits_lists = make_default_cond_tfms(
-      all_view_args, view_sizes, double_tot_dim=True, rtn_args=True)
+      all_view_args, view_sizes, double_tot_dim=True, rtn_args=True,
+      start_logit=no_view_tfm)
 
   view_tfm_config_lists = {}
   view_tfm_init_lists = {}
   for vi, vdim in view_sizes.items():
     vi_args = ArgsCopy(args)
     vi_args.ndim = vdim
-    vi_cfg_list, vi_init = make_default_tfm(vi_args, rtn_args=True)
+    vi_cfg_list, vi_init = make_default_tfm(
+        vi_args, rtn_args=True, start_logit=start_logit)
 
     view_tfm_config_lists[vi] = vi_cfg_list
     view_tfm_init_lists[vi] = vi_init
@@ -402,7 +415,6 @@ def make_default_pipeline_config(args, view_sizes={}):
   base_dist = "mv_gaussian"
 
   expand_b = True
-  no_view_tfm = False
 
   batch_size = 50
   lr = 1e-3
@@ -827,6 +839,65 @@ def test_ptbxl(args):
   model.fit(trX)
 
 
+def stratified_sample(view_data, labels, n_sampled, frac=None, get_inds=True):
+  npts = labels.shape[0]
+  if frac is not None:
+    n_sampled = np.round(frac * npts).astype(int)
+
+  ltypes, lcounts = np.unique(labels, return_counts=True)
+  sampled_counts = (lcounts / npts * n_sampled).astype(int)
+  sampled_counts[0] = n_sampled - sampled_counts[1:].sum()
+  idx_set = []
+  for i, l in enumerate(ltypes):
+    li_count = sampled_counts[i]
+    tot_li = lcounts[i]
+    linds = (labels == l).nonzero()[0]
+    idx_set += [linds[i] for i in np.random.permutation(tot_li)[:li_count]]
+
+  np.random.shuffle(idx_set)
+  labels_sampled = labels[idx_set]
+  view_data_sampled = {vi: vdat[idx_set] for vi, vdat in view_data.items()}
+
+  if get_inds:
+    return view_data_sampled, labels_sampled, idx_set
+  return view_data_sampled, labels_sampled
+
+
+def get_single_digit(x, y, digit=0):
+  digit_inds = (y == digit).nonzero()[0]
+  x_digit = {vi:xvi[digit_inds] for vi, xvi in x.items()}
+  y_digit = y[digit_inds]
+  return x_digit, y_digit
+
+
+def test_mnist(args):
+  local_data_file = "./ptbxl_data.npy"
+  load_start_time = time.time()
+  n_views = 3
+  tr_data, va_data, te_data = ssvd.load_split_mnist(n_views=n_views)
+  (x_tr, y_tr) = tr_data
+  (x_va, y_va) = va_data
+  (x_te, y_te) = te_data
+  print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
+  IPython.embed()
+
+  view_sizes = {vi:x_tr[vi].shape[1] for vi in x_tr}
+
+  config, view_config_and_inits, cond_config_and_inits = \
+      make_default_pipeline_config(args, view_sizes=view_sizes, start_logit=True)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+
+  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+  model.initialize(
+      view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists)
+  IPython.embed()
+
+  model.fit(x_tr)
+
+
+
 _MV_DATAFUNCS = {
     "o1": make_default_overlapping_data,  # need any 2 views for all 
     "o2": make_default_overlapping_data2,  # need K-1 views for all
@@ -839,6 +910,7 @@ _TEST_FUNCS = {
     1: test_cond_missing_tfms,
     2: test_pipeline,
     3: test_ptbxl,
+    4: test_mnist,
 }
 
 
@@ -856,7 +928,7 @@ if __name__ == "__main__":
       ("shape", str, "Shape of toy data.", "cube"),
       ("max_iters", int, "Number of iters for opt.", 10000),
       ("batch_size", int, "Batch size for opt.", 100),
-      ("num_ss_tfm", int, "Number of shift-scale tfms for views", 0),
+      ("num_ss_tfm", int, "Number of shift-scale tfms for views", 4),
       ("num_lin_tfm", int, "Number of linear tfms for views", 1),
       ("num_cond_ss_tfm", int, "Number of shift-scale tfms for cond. tfm", 1),
       ("num_cond_lin_tfm", int, "Number of linear tfms for cond. tfm", 1),

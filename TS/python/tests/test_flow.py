@@ -48,6 +48,8 @@ def default_nn_config():
 
 def default_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
+  is_sigmoid = False
+
   scale_config = default_nn_config()
   scale_config.last_activation = torch.nn.Tanh
   shift_config = default_nn_config()
@@ -73,12 +75,12 @@ def default_tfm_config(tfm_type="shift_scale_coupling"):
   verbose = True
 
   config = flow_transforms.TfmConfig(
-      tfm_type=tfm_type, neg_slope=neg_slope, scale_config=scale_config,
-      shift_config=shift_config, shared_wts=shared_wts, ltfm_config=ltfm_config,
-      bias_config=bias_config, has_bias=has_bias, reg_coeff=reg_coeff,
-      base_dist=base_dist, lr=lr, batch_size=batch_size, max_iters=max_iters,
-      stopping_eps=stopping_eps, num_stopping_iter=num_stopping_iter,
-      grad_clip=grad_clip, verbose=verbose)
+      tfm_type=tfm_type, neg_slope=neg_slope, is_sigmoid=is_sigmoid,
+      scale_config=scale_config, shift_config=shift_config,
+      shared_wts=shared_wts, ltfm_config=ltfm_config, bias_config=bias_config,
+      has_bias=has_bias, reg_coeff=reg_coeff, base_dist=base_dist, lr=lr,
+      batch_size=batch_size, max_iters=max_iters, stopping_eps=stopping_eps,
+      num_stopping_iter=num_stopping_iter, grad_clip=grad_clip, verbose=verbose)
   return config
 
 
@@ -239,7 +241,7 @@ def default_shape_data(args):
   return data, ptfm
 
 
-def make_default_tfm(args, tfm_args=[], rtn_args=False):
+def make_default_tfm(args, tfm_args=[], rtn_args=False, start_logit=False):
   dim = args.ndim
   num_ss_tfm = args.num_ss_tfm
   num_lin_tfm = args.num_lin_tfm
@@ -251,6 +253,11 @@ def make_default_tfm(args, tfm_args=[], rtn_args=False):
   tfm_inits = []
 
   #################################################
+  if start_logit:
+    logit_config = default_tfm_config("logit")
+    tfm_configs.append(logit_config)
+    tfm_inits.append([])
+
   # Bit-mask couple transform
   tfm_idx = 0
   idx_args = tfm_args[tfm_idx] if tfm_idx < len(tfm_args) else None

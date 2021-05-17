@@ -291,7 +291,7 @@ class SigmoidLogitTransform(InvertibleTransform):
     y = torch.sigmoid(x)
     if rtn_logdet:
       jac = torch.abs(y * (1 - y))
-      log_det = torch.log(jac)
+      log_det = torch.log(jac).sum(axis=1)
       return y, log_det
 
     return y
@@ -301,7 +301,7 @@ class SigmoidLogitTransform(InvertibleTransform):
     y = torch.log(x_odds)
     if rtn_logdet:
       jac = torch.abs(1 / ((x - 1) * (x)))
-      log_det = torch.log(jac)
+      log_det = torch.log(jac).sum(axis=1)
       return y, log_det
 
     return y
