@@ -7,46 +7,15 @@ from torch import nn, optim
 import time
 
 from models.model_base import ModelException, BaseConfig
-from models import conditional_flow_transforms, flow_likelihood, flow_transforms
+from models import conditional_flow_transforms, conditional_flow_transforms_mp,\
+                   flow_likelihood, flow_transforms
+from models.conditional_flow_transforms import MVZeroImpute
 from utils import math_utils, torch_utils, utils
 
 
 import IPython
 
 _NP_DTYPE = np.float32
-
-# Some utilities:
-def MVZeroImpute(xvs, v_dims, ignored_view=None, expand_b=True):
-  # @expand_b: Blow up binary flag to size of views if True, keep single bit
-  #     for each view otherwise.
-  # @ignored_view: If not None, view to ignore while zero-imputing and
-  #     concatenating.
-  tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
-  npts = xvs[utils.get_any_key(xvs)].shape[0]
-
-  is_torch = not isinstance(xvs[utils.get_any_key(xvs)], np.ndarray)
-  xvs = torch_utils.dict_torch_to_numpy(xvs)
-
-  b_vals = np.empty((npts, 0))
-  imputed_vals = np.empty((npts, 0))
-  vi_idx = 0
-  for vi, dim in v_dims.items():
-    if vi == ignored_view:
-      continue
-    vi_vals = xvs[vi] if vi in xvs else np.zeros((npts, dim))
-    imputed_vals = np.concatenate([imputed_vals, vi_vals], axis=1)
-
-    vi_b = np.ones((npts, 1)) * (vi in xvs)
-    if expand_b:
-      vi_b = np.tile(vi_b, (1, dim))
-    b_vals = np.concatenate([b_vals, vi_b], axis=1)
-
-  output = np.c_[imputed_vals, b_vals].astype(_NP_DTYPE)
-  # IPython.embed()
-  if is_torch:
-    output = torch.from_numpy(output)
-
-  return output
 
 
 class MACFTConfig(BaseConfig):
