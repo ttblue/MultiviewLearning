@@ -153,7 +153,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
   def _get_params(self, x_o, rtn_torch=True):
     raise NotImplementedError("Abstract class method")
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     raise NotImplementedError("Abstract class method")
 
   def inverse(self, z, x_o):
@@ -184,29 +184,40 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
 
   def _train_loop(self):
     shuffle_inds = np.random.permutation(self._npts)
-    x = self._x[shuffle_inds]
-    x_o = self._x_o[shuffle_inds]
-    y = None if self._y is None else self._y[shuffle_inds]
+    x = self._x_vs[self.view_id][shuffle_inds]
+    x_o = {
+        vi:x_vi[shuffle_inds]
+        for vi, x_vi in self._x_vs.items() if vi != self.view_id
+    }
+    b_o = {
+        vi:b_o_vi[shuffle_inds]
+        for vi, b_o_vi in self._b_o.items()
+        if vi != self.view_id
+    }
+    # y = None if self._y is None else self._y[shuffle_inds]
 
     self.itr_loss = 0.
     for bidx in range(self._n_batches):
       b_start = bidx * self.config.batch_size
       b_end = b_start + self.config.batch_size
       x_batch = x[b_start:b_end]
-      x_o_batch = x_o[b_start:b_end]
+      x_o_batch = {
+          vi:x_o_vi[b_start:b_end] for vi, x_o_vi in self._x_vs.items()}
+      b_o_batch = {
+          vi:b_o_vi[b_start:b_end] for vi, b_o_vi in self._b_o.items()}
       x_tfm_batch, jac_logdet = self.forward(
-          x_batch, x_o_batch, rtn_torch=True, rtn_logdet=True)
-      if y is not None:
-        y_batch = y[b_start:b_end]
+          x_batch, x_o_batch, b_o_batch, rtn_torch=True, rtn_logdet=True)
+      # if y is not None:
+      #   y_batch = y[b_start:b_end]
 
       self.opt.zero_grad()
-      loss_val = (
+      loss_val = self.loss_nll(x_tfm_batch, jac_logdet)  # (
           # Reconstruction loss
-          self.loss_err(x_tfm_batch, y_batch, jac_logdet)
-          if y is not None else
+          # self.loss_err(x_tfm_batch, y_batch, jac_logdet)
+          # if y is not None else
           # Generative model -- log likelihood loss
-          self.loss_nll(x_tfm_batch, jac_logdet)
-      )
+          # self.loss_nll(x_tfm_batch, jac_logdet)
+      # )
 
       loss_val.backward()
       self._avg_grad = self._get_avg_grad_val()
@@ -248,8 +259,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self.view_id = view_id
     self.view_sizes = {vi: x_vi.shape[1] for vi, x_vi in x_vs.items()}
 
-    self._x_vs = torch_utils.numpy_to_torch(x_o)
-    self._b_o = torch_utils.numpy_to_torch(b_o)
+    self._x_vs = torch_utils.dict_numpy_to_torch(x_o)
+    self._b_o = torch_utils.dict_numpy_to_torch(b_o)
     # self._y = None if y is None else torch_utils.numpy_to_torch(y)
     self._npts, self._dim = self._x_vs[view_id].shape
 
@@ -357,7 +368,7 @@ class ReverseTransform(ConditionalInvertibleTransform):
   def initialize(self, *args, **kwargs):
     pass
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     reverse_idx = torch.arange(x.size(-1) -1, -1, -1).long()
     z = x.index_select(-1, reverse_idx)
@@ -367,7 +378,7 @@ class ReverseTransform(ConditionalInvertibleTransform):
     # Determinant of Jacobian reverse transform is 1.
     return (z, 0.) if rtn_logdet else z
 
-  def inverse(self, z, rtn_torch=True):
+  def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     return self(z, rtn_torch=rtn_torch, rtn_logdet=False)
 
 
@@ -381,7 +392,7 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
     self._inv_func = torch.nn.LeakyReLU(negative_slope=(1. / neg_slope))
     self._log_slope = np.log(np.abs(neg_slope))
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     z = self._relu_func(x)
 
@@ -392,7 +403,7 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
       return z, jac_logdet
     return z
 
-  def inverse(self, z, x_o, rtn_torch=True):
+  def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
     x = self._inv_func(z)
 
@@ -407,45 +418,45 @@ class SigmoidLogitTransform(ConditionalInvertibleTransform):
     pass
 
   def _sigmoid(self, x, rtn_logdet=False):
-    y = torch.sigmoid(x)
+    z = torch.sigmoid(x)
     if rtn_logdet:
-      jac = torch.abs(y * (1 - y))
+      jac = torch.abs(z * (1 - z))
       log_det = torch.log(jac)
-      return y, log_det
+      return z, log_det
 
-    return y
+    return z
 
   def _logit(self, x, rtn_logdet=False):
     x_odds = x / (1 - x)
-    y = torch.log(x_odds)
+    z = torch.log(x_odds)
     if rtn_logdet:
       jac = torch.abs(1 / ((x - 1) * (x)))
       log_det = torch.log(jac)
-      return y, log_det
+      return z, log_det
 
-    return y
+    return z
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     
-    y = (
+    z = (
         self._sigmoid(x, rtn_logdet=rtn_logdet)
         if self.config.is_sigmoid else
         self._logit(x, rtn_logdet=rtn_logdet))
 
     if rtn_logdet:
-      y, jac_logdet = y
-      y = y if rtn_torch else torch_utils.torch_to_numpy(y)
-      return y, jac_logdet
+      z, jac_logdet = z
+      z = z if rtn_torch else torch_utils.torch_to_numpy(z)
+      return z, jac_logdet
 
-    y = y if rtn_torch else torch_utils.torch_to_numpy(y)
-    return y
+    z = z if rtn_torch else torch_utils.torch_to_numpy(z)
+    return z
 
-  def inverse(self, y, x_o, rtn_torch=True):
+  def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     x = (
-        self._logit(y, rtn_logdet=False)
+        self._logit(z, rtn_logdet=False)
         if self.config.is_sigmoid else
-        self._sigmoid(y, rtn_logdet=False))
+        self._sigmoid(z, rtn_logdet=False))
     x = x if rtn_torch else torch_utils.torch_to_numpy(x)
     return x
 
@@ -573,7 +584,7 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     L, U = torch_utils.LU_split(lin_params)
     return L, U, b
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     x_o = torch_utils.numpy_to_torch(x_o)
     L, U, b = self._get_params(x_o)
@@ -600,7 +611,7 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
       return z, jac_logdet
     return z
 
-  def inverse(self, z, x_o, rtn_torch=True):
+  def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
     x_o = torch_utils.numpy_to_torch(x_o)
     L, U, b = self._get_params(x_o)
@@ -677,7 +688,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     shift = x_ss[:, self._output_dim:]
     return log_scale, shift
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     x_o = torch_utils.numpy_to_torch(x_o)
 
@@ -698,7 +709,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
       return z, jac_logdet
     return z
 
-  def inverse(self, z, x_o, rtn_torch=True):
+  def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
     x_o = torch_utils.numpy_to_torch(x_o)
 
@@ -744,7 +755,7 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
           tfm.initialize(arg)
     self._set_dim()
 
-  def forward(self, x, x_o, rtn_torch=True, rtn_logdet=False):
+  def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
     x_o = torch_utils.numpy_to_torch(x_o)
     z = x
@@ -763,7 +774,7 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
     z = z if rtn_torch else torch_utils.torch_to_numpy(z)
     return (z, jac_logdet) if rtn_logdet else z
 
-  def inverse(self, z, x_o, rtn_torch=True):
+  def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
     x_o = torch_utils.numpy_to_torch(x_o)
     x = z

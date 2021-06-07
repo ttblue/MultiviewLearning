@@ -1,8 +1,13 @@
 # Folders
 *results/
+Papers/
+Data/
 
 # Image files
 *.png
 
 # Mac files
 *.DS_Store
+
+# swp files
+*.swp

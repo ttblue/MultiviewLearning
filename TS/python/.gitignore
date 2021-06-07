@@ -1,0 +1,22 @@
+# Data stuff
+*.npy
+*/temp_data*
+
+# Saved models and files
+*/saved_files/*
+*/save_files/*
+*/saved_models/*
+*/temp_models/*
+tests/synth/*
+tests/3news_models/*
+
+# Cache and log stuff
+*/__pycache__*
+*.log
+
+# IPython notebooks
+*.ipynb
+*.ipynb_checkpoints/*
+
+# Misc. scripts
+*.sh
