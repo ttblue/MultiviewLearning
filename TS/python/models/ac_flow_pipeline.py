@@ -103,59 +103,79 @@ class MultiviewACFlowTrainer(nn.Module):
       # self._likelihood_model = flow_likelihood.make_likelihood_model(
       #     self.config.likelihood_config, self._dim)
 
-  def _cat_views(self, zvs):
-    zvs_cat = torch.cat([zvs[vi] for vi in range(self._nviews)], dim=1)
-    return zvs_cat
+  # def _cat_views(self, zvs):
+  #   zvs_cat = torch.cat([zvs[vi] for vi in range(self._nviews)], dim=1)
+  #   return zvs_cat
 
-  def _split_views(self, zvs_cat):
-    split_sizes = [self._view_dims[vi] for vi in range(self._nviews)]
-    zvs_split = {
-        vi:zvi for vi, zvi in enumerate(torch.split(zvs_cat, split_sizes, 1))}
-    return zvs_split
+  # def _split_views(self, zvs_cat):
+  #   split_sizes = [self._view_dims[vi] for vi in range(self._nviews)]
+  #   zvs_split = {
+  #       vi:zvi for vi, zvi in enumerate(torch.split(zvs_cat, split_sizes, 1))}
+  #   return zvs_split
 
-  def _encode_views(self, xvs, rtn_logdet=True):
+  def _encode_views(self, x_vs, b_o, rtn_logdet=True):
     if self.config.no_view_tfm:
-      z_vs = torch_utils.dict_numpy_to_torch(xvs)
-      n_pts = xvs[utils.get_any_key(xvs)].shape[0]
+      z_vs = torch_utils.dict_numpy_to_torch(x_vs)
+      n_pts = x_vs[utils.get_any_key(x_vs)].shape[0]
       if rtn_logdet:
         log_jac_det = {vi: torch.zeros((n_pts, 1)) for vi in z_vs}
     else:
       z_vs = {
-          vi: self._view_tfms["v_%i"%vi](
-              xvi, rtn_torch=True, rtn_logdet=rtn_logdet)
-          for vi, xvi in xvs.items()
+          vi:self._view_tfms["v_%i"%vi](
+              x_vi, rtn_torch=True, rtn_logdet=rtn_logdet)
+          for vi, x_vi in x_vs.items()
       }
       if rtn_logdet:
-        # log_jac_det = torch.sum(
-        #     torch.stack([z_vi[1] for z_vi in z_vs.values()], 1), 1)
-        log_jac_det = {vi: z_vi[1] for vi, z_vi in z_vs.items()}
-        z_vs = {vi: z_vi[0] for vi, z_vi in z_vs.items()}
+        log_jac_det = {vi:z_vi[1] for vi, z_vi in z_vs.items()}
+        z_vs = {vi:z_vi[0] for vi, z_vi in z_vs.items()}
+      # for vi, x_vi in x_vs.items():
+      #   z_vi = self._view_tfms["v_%i"%vi](
+      #       x_vi, rtn_torch=True, rtn_logdet=rtn_logdet)
+      #   if rtn_logdet:
+
+        # b_vi = b_o[vi]
+        # z_vi = torch.zeros_like(x_vi)
+        # if rtn_logdet:
+        #   ljd_vi = torch.zeros_like(b_vi)
+
+        # available_inds = torch.nonzero(b_vi).squeeze()
+        # if len(available_inds) > 0:
+        #   z_vi_tfm = self._view_tfms["v_%i"%vi](
+        #     x_vi[available_inds], rtn_torch=True, rtn_logdet=rtn_logdet)
+        #   if rtn_logdet:
+        #     z_vi_tfm, ljd_vi[available_inds] = z_vi_tfm        
+        #   z_vi[available_inds] = z_vi_tfm
+
+        # z_vs[vi] = z_vi
+        # if rtn_logdet:
+        #   log_jac_det[vi] = ljd_vi
       # zvs_cat = self._cat_views(z_vs)
     return (z_vs, log_jac_det) if rtn_logdet else z_vs
 
-  def _transform_views_cond(self, z_vs, available_views=None, rtn_logdet=True):
-    z_available = (
-        z_vs if available_views is None else
-        {vi: z_vs[vi] for vi in available_views}
-    )
+  def _transform_views_cond(self, z_vs, b_o, rtn_logdet=True):
 
     # IPython.embed()
-    expand_b = self.config.expand_b
+    # expand_b = self.config.expand_b
     l_vs = {}
-    logdet_vs = {}
+    if rtn_logdet:
+      logdet_vs = {}
     for vi, z_vi in z_vs.items():
-      z_cat = MVZeroImpute(
-          z_available, self._view_dims, ignored_view=vi, expand_b=expand_b)
-      l_vi = self._cond_tfms["v_%i" % vi](z_vi, z_cat, rtn_logdet=rtn_logdet)
-      if rtn_logdet:
-        l_vi, logdet_vs[vi] = l_vi
-      l_vs[vi] = l_vi
+        b_vi = b_o[vi]
+        z_vi_o = {vo:z_vo for vo, z_vo in z_vs.items() if vo != vi}
+        b_vi_o = {vo:b_vo for vo, b_vo in b_o.items() if vo != vi}
+      # z_cat = MVZeroImpute(
+      #     z_available, self._view_dims, ignored_view=vi, expand_b=expand_b)
+        l_vi = self._cond_tfms["v_%i" % vi](
+            z_vi, z_vi_o, b_vi_o, rtn_logdet=rtn_logdet)
+        if rtn_logdet:
+          l_vi, logdet_vs[vi] = l_vi
+        l_vs[vi] = l_vi
 
     return (l_vs, logdet_vs) if rtn_logdet else l_vs
 
-  def _transform(self, xvs, available_views, rtn_logdet=True):
+  def _transform(self, x_vs, b_o, rtn_logdet=True):
     # Transform input covariates using invertible transforms.
-    z_vs = self._encode_views(xvs, rtn_logdet=rtn_logdet)
+    z_vs = self._encode_views(x_vs, b_o, rtn_logdet=rtn_logdet)
     if rtn_logdet:
       z_vs, logdet_vs = z_vs
       # z, log_jac_det_shared = self._shared_tfm(
@@ -167,8 +187,7 @@ class MultiviewACFlowTrainer(nn.Module):
       # log_jac_det = log_jac_det_vs + log_jac_det_shared
       # return z, log_jac_det
 
-    l_vs = self._transform_views_cond(
-        z_vs, available_views, rtn_logdet=rtn_logdet)
+    l_vs = self._transform_views_cond(z_vs, b_o, rtn_logdet=rtn_logdet)
     if rtn_logdet:
       l_vs, l_ld_vs = l_vs
       logdet_vs = {
@@ -186,8 +205,8 @@ class MultiviewACFlowTrainer(nn.Module):
       l_nll[vi] = self._cond_lhoods["v_%i" % vi].nll(lvi)
     return l_nll
 
-  def forward(self, xvs, rtn_logdet=True):
-    zl_vs = self._transform(xvs, rtn_logdet)
+  def forward(self, x_vs, b_o, rtn_logdet=True):
+    zl_vs = self._transform(x_vs, b_o, rtn_logdet)
     if rtn_logdet:
       z_vs, l_vs, ld_vs = zl_vs
       output = (l_vs, ld_vs)
@@ -224,24 +243,31 @@ class MultiviewACFlowTrainer(nn.Module):
       for sidx in shuffle_inds:
         yield view_subsets[sidx]
 
-  def _shuffle(self, xvs):
-    npts = xvs[utils.get_any_key(xvs)].shape[0]
+  def _shuffle(self, x_vs):
+    npts = x_vs[utils.get_any_key(x_vs)].shape[0]
     r_inds = np.random.permutation(npts)
-    return {vi:xv[r_inds] for vi, xv in xvs.items()}
+    return {vi:xv[r_inds] for vi, xv in x_vs.items()}
 
   def _train_loop(self):
-    xvs = self._shuffle(self._view_data)
+    x_vs = self._shuffle(self._view_data)
     self.itr_loss = 0.
-    for bidx in range(self._n_batches):
-      b_start = bidx * self.config.batch_size
-      b_end = b_start + self.config.batch_size
-      xvs_batch = {vi:xv[b_start:b_end] for vi, xv in xvs.items()}
+    for batch_idx in range(self._n_batches):
+      batch_start = batch_idx * self.config.batch_size
+      batch_end = min(batch_start + self.config.batch_size, self._npts)
+
+      batch_npts = batch_end - batch_start
+      xvs_batch = {vi:xv[batch_start:batch_end] for vi, xv in x_vs.items()}
       available_views = next(self._view_subset_shuffler)
+      b_o_batch = {
+          vi:(torch.ones(batch_npts) if vi in available_views else
+              torch.zeros(batch_npts))
+          for vi in xvs_batch
+      }
       # if self.config.verbose:
       #   print("  View subset selected: %s" % (available_views, ))
       # globals().update(locals())
       l_batch, z_batch, ld_batch = self._transform(
-          xvs_batch, available_views, rtn_logdet=True)
+          xvs_batch, b_o_batch, rtn_logdet=True)
       l_batch_nll = self._nll(l_batch)
 
       # available_views = next(self._view_subset_shuffler)
@@ -260,16 +286,16 @@ class MultiviewACFlowTrainer(nn.Module):
         self._view_subset_counts[available_views] = 0
       self._view_subset_counts[available_views] += 1
 
-  def invert(self, l_vs, x_o, rtn_torch=True, batch_size=None):
+  def invert(self, l_vs, x_o, b_o, rtn_torch=True, batch_size=None):
     # Batch size to sample in smaller chunks for reduced memory usage
     if batch_size is None:
-      z_o = self._encode_views(x_o, rtn_logdet=False)
+      z_o = self._encode_views(x_o, b_o, rtn_logdet=False)
       x_vs = {}
       for vi, lvi in l_vs.items():
-        z_cat = MVZeroImpute(
-            z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
+        # z_cat = MVZeroImpute(
+        #     z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
 
-        l_inv = self._cond_tfms["v_%i"%vi].inverse(lvi, z_cat)
+        l_inv = self._cond_tfms["v_%i"%vi].inverse(lvi, x_o, b_o)
         if self.config.no_view_tfm:
           x_vs[vi] = l_inv
         else:
@@ -287,6 +313,10 @@ class MultiviewACFlowTrainer(nn.Module):
             vi: xo_vi[start_idx:start_idx+batch_size]
             for vi, xo_vi in x_o.items()   
         }
+        b_o_batch = {
+            vi: bo_vi[start_idx:start_idx+batch_size]
+            for vi, bo_vi in b_o.items()   
+        }
         x_s_batch = self.invert(
             l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
         for vi, xsb_vi in x_s_batch:
@@ -298,16 +328,16 @@ class MultiviewACFlowTrainer(nn.Module):
       x_vs = torch_utils.dict_torch_to_numpy(x_vs)
     return x_vs
 
-  def fit(self, xvs):
+  def fit(self, x_vs):
     if self.config.verbose:
       all_start_time = time.time()
       print("Starting training loop.")
 
     self._training = True
     # For convenience
-    npts = xvs[utils.get_any_key(xvs)].shape[0]
-    self._view_data = torch_utils.dict_numpy_to_torch(xvs)
-    self._n_batches = int(np.ceil(npts / self.config.batch_size))
+    self._npts = x_vs[utils.get_any_key(x_vs)].shape[0]
+    self._view_data = torch_utils.dict_numpy_to_torch(x_vs)
+    self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
     self._view_subset_shuffler = self._make_view_subset_shuffler()
     self._view_subset_counts = {}
@@ -344,12 +374,14 @@ class MultiviewACFlowTrainer(nn.Module):
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
     return self
 
-  def sample(self, x_o, rtn_torch=True, batch_size=None):
+  def sample(self, x_o, b_o, rtn_torch=True, batch_size=None):
     n = x_o[utils.get_any_key(x_o)].shape[0]
     sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     samples = {}
-    l_samples = {vi:self._cond_lhoods["v_%i"%vi].sample((n,)) for vi in sampling_views}
-    return self.invert(l_samples, x_o, rtn_torch=rtn_torch, batch_size=batch_size)
+    l_samples = {
+        vi:self._cond_lhoods["v_%i"%vi].sample((n,)) for vi in sampling_views}
+    return self.invert(
+        l_samples, x_o, b_o, rtn_torch=rtn_torch, batch_size=batch_size)
     # raise NotImplementedError("Implement this!")
 
   # def log_likelihood(self, x):

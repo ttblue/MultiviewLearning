@@ -64,36 +64,80 @@ _BASE_DISTS = flow_transforms._BASE_DISTS
 
 #   return output
 
+# def MVZeroImpute(x_vs, b_available, v_dims, ignored_view=None, expand_b=True):
+#   # @expand_b: Blow up binary flag to size of views if True, keep single bit
+#   #     for each view otherwise.
+#   # @ignored_view: If not None, view to ignore while zero-imputing and
+#   #     concatenating.
+#   tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
+#   npts = x_vs[utils.get_any_key(x_vs)].shape[0]
+
+#   is_torch = not isinstance(x_vs[utils.get_any_key(x_vs)], np.ndarray)
+#   x_vs = torch_utils.dict_torch_to_numpy(x_vs)
+
+#   b_vals = np.empty((npts, 0))
+#   imputed_vals = np.empty((npts, 0))
+#   vi_idx = 0
+#   for vi, dim in v_dims.items():
+#     if vi == ignored_view:
+#       continue
+#     vi_b = b_available[vi]
+#     vi_vals = x_vs[vi] * vi_available
+#     imputed_vals = np.concatenate([imputed_vals, vi_vals], axis=1)
+#     if expand_b:
+#       vi_b = np.tile(vi_b, (1, dim))
+#     b_vals = np.concatenate([b_vals, vi_b], axis=1)
+
+#   output = np.c_[imputed_vals, b_vals].astype(_NP_DTYPE)
+#   # IPython.embed()
+#   if is_torch:
+#     output = torch.from_numpy(output)
+
+#   return output
 
 # Some utilities:
-def MVZeroImpute(x_vs, b_available, v_dims, ignored_view=None, expand_b=True):
+def MVZeroImpute(
+    x_vs, b_available, v_dims, ignored_bitflags=[], expand_b=True):
   # @expand_b: Blow up binary flag to size of views if True, keep single bit
   #     for each view otherwise.
   # @ignored_view: If not None, view to ignore while zero-imputing and
   #     concatenating.
-  tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
+  # tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
   npts = x_vs[utils.get_any_key(x_vs)].shape[0]
 
   is_torch = not isinstance(x_vs[utils.get_any_key(x_vs)], np.ndarray)
-  x_vs = torch_utils.dict_torch_to_numpy(x_vs)
 
-  b_vals = np.empty((npts, 0))
-  imputed_vals = np.empty((npts, 0))
+  #   pass
+  # else:
+  b_vals = [] #math_module.empty((npts, 0))
+  imputed_vals = [] #math_module.empty((npts, 0))
   vi_idx = 0
-  for vi, dim in v_dims.items():
-    if vi == ignored_view:
-      continue
+  sorted_keys = sorted(v_dims.keys())
+  for vi in sorted_keys:
+    dim = v_dims[vi]
     vi_b = b_available[vi]
-    vi_vals = x_vs[vi] * vi_available
-    imputed_vals = np.concatenate([imputed_vals, vi_vals], axis=1)
-    if expand_b:
-      vi_b = np.tile(vi_b, (1, dim))
-    b_vals = np.concatenate([b_vals, vi_b], axis=1)
+    vi_vals = x_vs[vi] * vi_b
+    imputed_vals.append(vi_vals)
+    # imputed_vals = np.concatenate([imputed_vals, vi_vals], axis=1)
 
-  output = np.c_[imputed_vals, b_vals].astype(_NP_DTYPE)
+    if vi in ignored_bitflags:
+      continue
+    vi_b = vi_b.view(-1, 1) if is_torch else vi_b.reshape(-1, 1)
+    if expand_b:
+      vi_b = torch.tile(vi_b, (1, dim)) if is_torch else np.tile(vi_b, (1, dim))
+    b_vals.append(vi_b)
+      # b_vals = np.concatenate([b_vals, vi_b], axis=1)
+
+  all_vals = imputed_vals + b_vals
+  output = (
+      torch.cat(all_vals, dim=1) if is_torch else
+      np.concatenate(all_vals, axis=1))
+
+    # output = np.c_[imputed_vals, b_vals].astype(_NP_DTYPE)
+
   # IPython.embed()
-  if is_torch:
-    output = torch.from_numpy(output)
+  # if is_torch:
+  #   output = torch.from_numpy(output)
 
   return output
 
@@ -145,27 +189,22 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
   def __init__(self, config):
     super(flow_transforms.InvertibleTransform, self).__init__()
     self.config = config
-    self._dim = None
+    # self._dim = None
 
-  def initialize(self, *args, **kwargs):
-    raise NotImplementedError("Abstract class method")
+  def initialize(self, view_id, view_sizes, *args, **kwargs):
+    # raise NotImplementedError("Abstract class method")
+    self.view_id = view_id
+    self.view_sizes = view_sizes
+    self._dim = view_sizes[view_id]
 
-  def _get_params(self, x_o, rtn_torch=True):
-    raise NotImplementedError("Abstract class method")
+  # def _get_params(self, x_o, rtn_torch=True):
+  #   raise NotImplementedError("Abstract class method")
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     raise NotImplementedError("Abstract class method")
 
   def inverse(self, z, x_o):
     raise NotImplementedError("Abstract class method")
-
-  def _impute_mv_data(self, x_vs, b_available, rtn_torch=True):
-    imputed_data = MVZeroImpute(
-        x_vs, b_available, self.view_sizes, expand_b=True)
-
-    if rtn_torch:
-      return torch_utils.numpy_to_torch(imputed_data)
-    return torch_utils.torch_to_numpy(imputed_data)
 
   def log_prob(self, x, x_o):
     z, log_det = self(x, x_o, rtn_torch=True, rtn_logdet=True)
@@ -249,20 +288,17 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     p_grads = [p.grad for p in self.parameters()]
     return max([pg.abs().max() for pg in p_grads])
 
-  def fit(self, x_vs, b_o, view_id, lhood_model=None):
+  def fit(self, x_vs, b_o, lhood_model=None):
     # @b_o: dictionary of bit flags of length n_pts, denoting availablity of 
     #     view for each data-point
     # Simple fitting procedure for transforming x to y
     if self.config.verbose:
       all_start_time = time.time()
 
-    self.view_id = view_id
-    self.view_sizes = {vi: x_vi.shape[1] for vi, x_vi in x_vs.items()}
-
-    self._x_vs = torch_utils.dict_numpy_to_torch(x_o)
+    self._x_vs = torch_utils.dict_numpy_to_torch(x_vs)
     self._b_o = torch_utils.dict_numpy_to_torch(b_o)
     # self._y = None if y is None else torch_utils.numpy_to_torch(y)
-    self._npts, self._dim = self._x_vs[view_id].shape
+    self._npts, self._dim = self._x_vs[self.view_id].shape
 
     if y is None:
       if lhood_model is None:
@@ -412,6 +448,7 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
 
 class SigmoidLogitTransform(ConditionalInvertibleTransform):
   def __init__(self, config):
+    raise NotImplementedError("Not yet implemented.")
     super(SigmoidLogitTransform, self).__init__(config)
 
   def initialize(self, *args, **kwargs):
@@ -482,55 +519,59 @@ class FunctionParamNet(nn.Module):
     self.config.use_vae = False
 
     if func_type == "linear":
-      mat_size = output_dims ** 2
+      fn_dims = output_dims ** 2
       self._has_bias = kwargs.get("bias", False)
       if self._has_bias:
-        mat_size += output_dims
-      self.config.set_sizes(input_size=input_dims, output_size=mat_size)
-      self._param_net = torch_models.MultiLayerNN(self.config)
+        fn_dims += output_dims
+      # self.config.set_sizes(input_size=input_dims, output_size=mat_size)
+      # self._param_net = torch_models.MultiLayerNN(self.config)
     elif func_type == "scale_shift":
-      hidden_sizes = kwargs.get("hidden_sizes", None)
-      fixed_dims = kwargs.get("fixed_dims", None)
-      if hidden_sizes is None:
-        raise ModelException("Need hidden sizes for scale-shift function.")
-      if fixed_dims is None:
-        raise ModelException("Need fixed dim size for scale-shift function.")
-      self.hidden_sizes = hidden_sizes
-      self.fixed_dims = fixed_dims
+      fn_dims = output_dims * 2
+      # hidden_sizes = kwargs.get("hidden_sizes", None)
+      # fixed_dims = kwargs.get("fixed_dims", None)
+      # if hidden_sizes is None:
+      #   raise ModelException("Need hidden sizes for scale-shift function.")
+      # if fixed_dims is None:
+      #   raise ModelException("Need fixed dim size for scale-shift function.")
+      # self.hidden_sizes = hidden_sizes
+      # self.fixed_dims = fixed_dims
       # activations = kwargs.get("activations", torch_models._IDENTITY)
-      activations = kwargs.get("activations", nn.Tanh())
+      # activations = kwargs.get("activations", nn.Tanh())
       # Either single activation function or a list of activations of the same
       # size as len(hidden_sizes) + 1
-      self.activations = activations
-
-      self.config.set_sizes(input_size=input_dims)
-      # The output dim is doubled, one set for (scale) and one set for (shift)
-      all_sizes = [fixed_dims] + hidden_sizes + [output_dims * 2]
-      param_sizes = [
-          all_sizes[i] * all_sizes[i+1] for i in range(len(all_sizes) - 1)]
-      self._param_net = torch_models.MultiOutputMLNN(self.config, param_sizes)
+      # self.activations = activations
+    self.config.set_sizes(input_size=input_dims, output_size=fn_dims)
+    self._param_net = torch_models.MultiLayerNN(self.config)
+      # self.config.set_sizes(input_size=input_dims)
+      # # The output dim is doubled, one set for (scale) and one set for (shift)
+      # # all_sizes = [fixed_dims] + hidden_sizes + [output_dims * 2]
+      # # param_sizes = [
+      # #     all_sizes[i] * all_sizes[i+1] for i in range(len(all_sizes) - 1)]
+      # self._param_net = torch_models.MultiOutputMLNN(self.config, param_sizes)
 
   def _get_lin_params(self, x):
     # output: n_pts x mat_size x mat_size
     lin_params = self._param_net(x)
     bias_dim = 1 if self._has_bias else 0
-    lin_params = torch.reshape(
+    lin_params = torch.view(
         lin_params, (-1, self.output_dims, self.output_dims + bias_dim))
     return lin_params
 
   def _get_ss_params(self, x):
     # try:
     ss_params = self._param_net(x)
+    ss_params = torch.view(ss_params, (-1, self.output_dims, 2))
+    return ss_params
     # except Exception as e:
     #   IPython.embed()
     #   raise(e)
-    all_sizes = (
-        [self.fixed_dims] + self.hidden_sizes + [self.output_dims * 2])
-    ss_params = [
-        torch.reshape(param, (-1, all_sizes[i + 1], all_sizes[i]))
-        for i, param in enumerate(ss_params)
-    ]
-    return ss_params, self.activations
+    # all_sizes = (
+    #     [self.fixed_dims] + self.hidden_sizes + [self.output_dims * 2])
+    # ss_params = [
+    #     torch.reshape(param, (-1, all_sizes[i + 1], all_sizes[i]))
+    #     for i, param in enumerate(ss_params)
+    # ]
+    # return ss_params, self.activations
 
   def get_params(self, x):
     if self.func_type == "linear":
@@ -550,15 +591,20 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     super(ConditionalLinearTransformation, self).__init__(config)
 
   def initialize(
-      self, obs_dim, unobs_dim, nn_config, init_lin_param=None,
-      init_bias_param=None, *args, **kwargs):
+      self, view_id, view_sizes, nn_config, *args, **kwargs):
+
+    super(ConditionalLinearTransformation, self).initialize(view_id, view_sizes)
+    self._view_sizes_obs = {
+        vi: vdim for vi, vdim in self.view_sizes.items() if vi != self.view_id}
 
     self._param_net = FunctionParamNet(nn_config)
-    self._obs_dim = obs_dim
-    self._dim = unobs_dim
+
+    # Need to account for bit flags
+    input_dims = np.sum(self._view_sizes_obs.values()) * 2
+    output_dims = self._dim
 
     self._param_net.initialize(
-        func_type="linear", input_dims=obs_dim, output_dims=unobs_dim,
+        func_type="linear", input_dims=input_dims, output_dims=output_dims,
         bias=self.config.has_bias)
     # init_lin_param = (
     #     torch.eye(dim) if init_lin_param is None else
@@ -576,23 +622,47 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
   def _get_params(self, x_o):
     lin_params = self._param_net.get_params(x_o)
     if self.config.has_bias:
-      b = lin_params[:, :, -1]
+      t = lin_params[:, :, -1]
       lin_params = lin_params[:, :, :-1]
     else:
-      b = 0
+      t = 0
 
     L, U = torch_utils.LU_split(lin_params)
-    return L, U, b
+    return L, U, t
+
+  def _impute_mv_data(self, x, x_o, b_o):
+    # x_vs = x_o
+    npts = x.shape[0]
+    if b_o is None:
+      b_o = {
+          vi: torch.ones(npts) if vi in x_o else torch.zeros(npts)
+          for vi in self._view_sizes_obs
+      }
+    if self.view_id in x_o:
+      x_o = {vi: xvi for vi, xvi in x_o.items() if vi != self.view_id}
+      b_o = {vi: bvi for vi, bvi in b_o.items() if vi != self.view_id}
+    # x_o[self.view_id] = torch.zeros_like(x)
+    # b_o[self.view_id] = torch.zeros(npts)
+
+    imputed_data = MVZeroImpute(
+        x_o, b_o, self._view_sizes_obs, expand_b=True)
+
+    return imputed_data
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    x_o = torch_utils.numpy_to_torch(x_o)
-    L, U, b = self._get_params(x_o)
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
+    if b_o is not None:
+      b_o = torch_utils.dict_numpy_to_torch(b_o)
+
+    x_imputed = self._impute_mv_data(x, x_o, b_o)
+
+    L, U, t = self._get_params(x_imputed)
 
     try:
       # x_ = x.transpose(0, 1) if len(x.shape) > 1 else x.view(-1, 1)
       x_ = x.view(x.shape[0], -1, 1)
-      z = L.matmul(U.matmul(x_)) + b.view(b.shape[0], -1, 1)
+      z = L.matmul(U.matmul(x_)) + t.view(t.shape[0], -1, 1)
       # Undoing dimension changes to be consistent with input
       z = z.squeeze()
       # z = z.transpose(0, 1) if len(x.shape) > 1 else z.squeeze()
@@ -613,16 +683,19 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
 
   def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
-    x_o = torch_utils.numpy_to_torch(x_o)
-    L, U, b = self._get_params(x_o)
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
+    b_o = torch_utils.dict_numpy_to_torch(b_o)
+
+    x_imputed = self._impute_mv_data(z, x_o, b_o)
+    L, U, t = self._get_params(x_imputed)
 
     try:
       z_ = z.view(z.shape[0], -1, 1)
-      z_b = z_ - b.view(b.shape[0], -1, 1)
+      z_t = z_ - t.view(t.shape[0], -1, 1)
       # z_b_t = z_b.transpose(0, 1) if len(z_b.shape) > 1 else z_b
       # Torch solver for triangular system of equations
       # IPython.embed()
-      sol_L = torch.triangular_solve(z_b, L, upper=False, unitriangular=True)[0]
+      sol_L = torch.triangular_solve(z_t, L, upper=False, unitriangular=True)[0]
       x = torch.triangular_solve(sol_L, U, upper=True)[0]
       # trtrs always returns 2-D output, even if input is 1-D. So we do this:
       # x = x_t.transpose(0, 1) if len(z.shape) > 1 else x_t.squeeze()
@@ -650,57 +723,62 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     self._output_dim = self._tfm_inds.shape[0]
 
   def initialize(
-      self, obs_dim, index_mask, hidden_sizes, activation, nn_config,
-      *args, **kwargs):
+      self, view_id, view_sizes, index_mask, nn_config, *args, **kwargs):
+
+    super(ConditionalSSCTransformation, self).initialize(view_id, view_sizes)
+    self._view_sizes_obs = {
+        vi: vdim for vi, vdim in self.view_sizes.items() if vi != self.view_id}
+    self._view_sizes_obs[self.view_id] = self._fixed_dim
 
     self._param_net = FunctionParamNet(nn_config)
-    self._obs_dim = obs_dim
-    self._dim = index_mask.shape[0]
+    # Ignore bit flags for main view.
+    input_dims = np.sum(self._view_sizes_obs.values()) * 2 - self._fixed_dim
+    output_dims = self._output_dim
 
     self.set_fixed_inds(index_mask)
-    # The input size is the size of the observed covariates
-    # The output size is the size of the partition of unobserved covariates
-    # from the coupling that are fed into the SS network.
     self._param_net.initialize(
-        func_type="scale_shift", input_dims=obs_dim, fixed_dims=self._fixed_dim,
-        output_dims=self._output_dim, hidden_sizes=hidden_sizes,
-        activation=activation)
+        func_type="scale_shift", input_dims=input_dims, output_dims=output_dims)
 
   def _get_params(self, x_o):
-    return self._param_net.get_params(x_o)
-
-  def _transform(self, x_fixed, ss_params, activations):
-    # This function manually computes the foward pass of the network produced by
-    # parameters from the param_net.
-    x_ss = x_fixed.view(x_fixed.shape[0], -1, 1)
-    if not isinstance(activations, list):
-      activations = [activations] * len(ss_params)
-
-    try:
-      for layer_params, activation in zip(ss_params, activations):
-        x_ss = activation(layer_params.matmul(x_ss))
-    except Exception as e:
-      IPython.embed()
-      raise(e)
-
-    x_ss = torch.squeeze(x_ss)
-    log_scale = x_ss[:, :self._output_dim]
-    shift = x_ss[:, self._output_dim:]
+    ss_params = self._param_net.get_params(x_o)
+    log_scale, shift = ss_params[:, :, 0], ss_params[:, :, 1]
     return log_scale, shift
+
+  def _impute_mv_data(self, x, x_o, b_o):
+    # x_vs = x_o
+    npts = x.shape[0]
+    if b_o is None:
+      b_o = {
+          vi: torch.ones(npts) if vi in x_o else torch.zeros(npts)
+          for vi in self._view_sizes_obs
+      }
+
+    x_o[self.view_id] = x[:, self._fixed_inds]
+    b_o[self.view_id] = torch.ones(npts)
+
+    ignored_bitflags = [self.view_id]
+    imputed_data = MVZeroImpute(
+        x_o, b_o, self._view_sizes_obs, ignored_bitflags, expand_b=True)
+
+    return imputed_data
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    x_o = torch_utils.numpy_to_torch(x_o)
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
+    if b_o is not None:
+      b_o = torch_utils.dict_numpy_to_torch(b_o)
 
-    z = torch.zeros_like(x)
-    x_fixed = x[:, self._fixed_inds]
+    x_imputed = self._impute_mv_data(x, x_o, b_o)
 
-    ss_params, activations = self._get_params(x_o)
-    log_scale, shift = self._transform(x_fixed, ss_params, activations)
+    log_scale, shift = self._get_params(x_imputed)
     scale = torch.exp(log_scale)
 
+    x_fixed = x[:, self._fixed_inds]
+    x_tfm = x[:, self._tfm_inds]
+
+    z = torch.zeros_like(x)
     z[:, self._fixed_inds] = x_fixed
-    z[:, self._tfm_inds] = scale * x[:, self._tfm_inds] + shift
+    z[:, self._tfm_inds] = scale * x_tfm  + shift
 
     z = z if rtn_torch else torch_utils.torch_to_numpy(z)
 
@@ -711,17 +789,21 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
 
   def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
-    x_o = torch_utils.numpy_to_torch(x_o)
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
+    if b_o is not None:
+      b_o = torch_utils.dict_numpy_to_torch(b_o)
 
-    x = torch.zeros_like(z)
-    z_fixed = z[:, self._fixed_inds]
+    x_imputed = self._impute_mv_data(x, x_o, b_o)
 
-    ss_params, activations = self._get_params(x_o)
-    log_scale, shift = self._transform(z_fixed, ss_params, activations)
+    log_scale, shift = self._get_params(x_imputed)
     scale = torch.exp(-log_scale)
 
+    z_fixed = z[:, self._fixed_inds]
+    z_tfm = z[:, self._tfm_inds]
+
+    x = torch.zeros_like(z)
     x[:, self._fixed_inds] = z_fixed
-    x[:, self._tfm_inds] = scale * (z[:, self._tfm_inds] - shift)
+    x[:, self._tfm_inds] = scale * (z_tfm - shift)
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
 
@@ -757,12 +839,15 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    x_o = torch_utils.numpy_to_torch(x_o)
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
+    if b_o is not None:
+      b_o = torch_utils.dict_numpy_to_torch(b_o)
+
     z = x
     if rtn_logdet:
       jac_logdet = 0
     for tfm in self._tfm_list:
-      z = tfm(z, x_o, rtn_torch=True, rtn_logdet=rtn_logdet)
+      z = tfm(z, x_o, b_o, rtn_torch=True, rtn_logdet=rtn_logdet)
       try:
         if rtn_logdet:
           z, tfm_jlogdet = z
@@ -777,10 +862,13 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
   def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
     x_o = torch_utils.numpy_to_torch(x_o)
+    if b_o is not None:
+      b_o = torch_utils.dict_numpy_to_torch(b_o)
+
     x = z
     for tfm in self._tfm_list[::-1]:
       try:
-        x = tfm.inverse(x, x_o)
+        x = tfm.inverse(x, x_o, b_o)
       except Exception as e:
         IPython.embed()
         raise(e)
