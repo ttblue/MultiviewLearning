@@ -20,14 +20,13 @@ _NP_DTYPE = np.float32
 
 class MACFTConfig(BaseConfig):
   def __init__(
-      self, expand_b=True, no_view_tfm=False, meta_parameters=False,
-      likelihood_config=None, base_dist="gaussian", batch_size=50, lr=1e-3,
-      max_iters=1000, verbose=True, *args, **kwargs):
+      self, expand_b=True, no_view_tfm=False, likelihood_config=None,
+      base_dist="gaussian", batch_size=50, lr=1e-3, max_iters=1000,
+      verbose=True, *args, **kwargs):
     super(MACFTConfig, self).__init__(*args, **kwargs)
 
     self.expand_b = expand_b
     self.no_view_tfm = no_view_tfm
-    self.meta_parameters = meta_parameters
 
     self.likelihood_config = likelihood_config
     self.base_dist = base_dist

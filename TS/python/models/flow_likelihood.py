@@ -32,6 +32,9 @@ class AbstractLikelihood(nn.Module):
   def initialize(self, *args, **kwargs):
     raise NotImplementedError("Abstract class method")
 
+  def mean(self, *args, **kwargs):
+    raise NotImplementedError("Abstract class method")
+
   def sample(self, *args, **kwargs):
     raise NotImplementedError("Abstract class method")
 
@@ -48,12 +51,13 @@ class AbstractLikelihood(nn.Module):
 
 
 BASE_DISTS = ["mv_gaussian"] #, "laplace", "logistic"]
-_TORCH_DISTRIBUTIONS = {
+_TORCH_DISTRIBUTIONS_MAP = {
     "mv_gaussian": torch.distributions.MultivariateNormal,
     "gaussian": torch.distributions.Normal,
     "laplace": torch.distributions.Laplace,
     "logistic": torch.distributions.LogisticNormal,
 }
+_TORCH_DISTRIBUTIONS = list(_TORCH_DISTRIBUTIONS_MAP.values())
 
 class BaseDistribution(AbstractLikelihood):
   # Simple likelihoods
@@ -71,7 +75,7 @@ class BaseDistribution(AbstractLikelihood):
       scale = (
           torch.eye(dim) if self.config.dist_type == "mv_gaussian" else
           torch.ones(dim))
-    self._base_dist = _TORCH_DISTRIBUTIONS[self.config.dist_type](loc, scale)
+    self._base_dist = _TORCH_DISTRIBUTIONS_MAP[self.config.dist_type](loc, scale)
 
   def sample(self, shape, rtn_torch=True):
     # IPython.embed()
@@ -121,12 +125,12 @@ class ARMixtureModel(AbstractLikelihood):
     super(ARMixtureModel, self).__init__(config)
 
   def initialize(self, dim, *args, **kwargs):
-    if self.config.dist_type not in _TORCH_DISTRIBUTIONS:
+    if self.config.dist_type not in _TORCH_DISTRIBUTIONS_MAP:
       raise ModelException(
           "Base dist. type %s not available." % config.dist_type)
 
     self._dim = dim
-    self._torch_dist = _TORCH_DISTRIBUTIONS[self.config.dist_type]
+    self._torch_dist = _TORCH_DISTRIBUTIONS_MAP[self.config.dist_type]
     # The MM parameters are wts, mus, lsigmas (3 sets)
     self.config.theta_nn_config.set_sizes(
         input_size=self.config.hidden_size,
@@ -295,3 +299,13 @@ def make_likelihood_model(config, dim=None):
   if dim is not None:
     lhood_model.initialize(dim)
   return lhood_model
+
+
+## Mean functions
+def get_mean(dist, n_samples, *args, **kwargs):
+  if dist in _TORCH_DISTRIBUTIONS:
+    mu = dist.mean.view(1, -1)
+    mu = torch.tile(n_samples, 1)
+    return mu
+  else:
+    raise("Mean function for %s not implemented." % dist)

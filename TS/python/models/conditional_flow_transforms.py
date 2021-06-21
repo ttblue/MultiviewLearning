@@ -11,7 +11,7 @@ import time
 
 from models import torch_models, flow_likelihood, flow_transforms
 from models.model_base import ModelException, BaseConfig
-from utils import math_utils, torch_utils
+from utils import math_utils, torch_utils, utils
 
 
 import IPython
@@ -37,7 +37,7 @@ _BASE_DISTS = flow_transforms._BASE_DISTS
 #   #     for each view otherwise.
 #   # @ignored_view: If not None, view to ignore while zero-imputing and
 #   #     concatenating.
-#   tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
+#   tot_dim = sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
 #   npts = xvs[utils.get_any_key(xvs)].shape[0]
 
 #   is_torch = not isinstance(xvs[utils.get_any_key(xvs)], np.ndarray)
@@ -69,7 +69,7 @@ _BASE_DISTS = flow_transforms._BASE_DISTS
 #   #     for each view otherwise.
 #   # @ignored_view: If not None, view to ignore while zero-imputing and
 #   #     concatenating.
-#   tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
+#   tot_dim = sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
 #   npts = x_vs[utils.get_any_key(x_vs)].shape[0]
 
 #   is_torch = not isinstance(x_vs[utils.get_any_key(x_vs)], np.ndarray)
@@ -102,7 +102,7 @@ def MVZeroImpute(
   #     for each view otherwise.
   # @ignored_view: If not None, view to ignore while zero-imputing and
   #     concatenating.
-  # tot_dim = np.sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
+  # tot_dim = sum([dim for vi, dim in v_dims.items() if vi != ignored_view])
   npts = x_vs[utils.get_any_key(x_vs)].shape[0]
 
   is_torch = not isinstance(x_vs[utils.get_any_key(x_vs)], np.ndarray)
@@ -116,7 +116,7 @@ def MVZeroImpute(
   for vi in sorted_keys:
     dim = v_dims[vi]
     vi_b = b_available[vi]
-    vi_vals = x_vs[vi] * vi_b
+    vi_vals = x_vs[vi] * vi_b.view(-1, 1)
     imputed_vals.append(vi_vals)
     # imputed_vals = np.concatenate([imputed_vals, vi_vals], axis=1)
 
@@ -146,10 +146,9 @@ def MVZeroImpute(
 class CTfmConfig(BaseConfig):
   def __init__(
       self, tfm_type="scale_shift_coupling", neg_slope=0.01, is_sigmoid=False,
-      func_nn_config=None, meta_parameters=False, has_bias=True,
-      base_dist="gaussian", reg_coeff=.1, lr=1e-3, batch_size=50,
-      max_iters=1000, stopping_eps=1e-5, num_stopping_iter=10, grad_clip=5.,
-      verbose=True, *args, **kwargs):
+      func_nn_config=None, has_bias=True, base_dist="gaussian", reg_coeff=.1,
+      lr=1e-3, batch_size=50, max_iters=1000, stopping_eps=1e-5,
+      num_stopping_iter=10, grad_clip=5., verbose=True, *args, **kwargs):
 
     super(CTfmConfig, self).__init__(*args, **kwargs)
 
@@ -300,24 +299,24 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     # self._y = None if y is None else torch_utils.numpy_to_torch(y)
     self._npts, self._dim = self._x_vs[self.view_id].shape
 
-    if y is None:
-      if lhood_model is None:
-        if self.config.base_dist not in _BASE_DISTS:
-          raise NotImplementedError(
-              "Base dist. type %s not implemented and likelihood model"
-              " not provided." % self.config.base_dist)
-        else:
-          loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
-          self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
+    # if y is None:
+    if lhood_model is None:
+      if self.config.base_dist not in _BASE_DISTS:
+        raise NotImplementedError(
+            "Base dist. type %s not implemented and likelihood model"
+            " not provided." % self.config.base_dist)
       else:
-        self.base_dist = lhood_model
-
-      self.recon_criterion = None
-      self.base_log_prob = (
-          lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
+        loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+        self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
     else:
-      self.recon_criterion = nn.MSELoss(reduction="mean")
-      self.base_log_prob = None
+      self.base_dist = lhood_model
+
+    self.recon_criterion = None
+    self.base_log_prob = (
+        lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
+    # else:
+    #   self.recon_criterion = nn.MSELoss(reduction="mean")
+    #   self.base_log_prob = None
 
     self.opt = optim.Adam(self.parameters(), self.config.lr)
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
@@ -360,11 +359,15 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
     return self
 
-  def sample(self, x_o, n_samples=1, inverted=True, rtn_torch=False):
-    if isinstance(n_samples, tuple):
-      z_samples = self.base_dist.sample(*n_samples)
+  def sample(
+      self, x_o, n_samples=1, inverted=True, use_mean=True, rtn_torch=False):
+    if not isinstance(n_samples, int) or n_samples <= 0:
+      raise ValueError("n_samples must be a positive integer.")
+    if use_mean:
+      z_samples = flow_transforms.get_mean(self.base_dist, n_samples, x_o)
     else:
       z_samples = self.base_dist.sample(n_samples)
+
     if inverted:
       return self.inverse(z_samples, x_o, rtn_torch)
     return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
@@ -553,14 +556,14 @@ class FunctionParamNet(nn.Module):
     # output: n_pts x mat_size x mat_size
     lin_params = self._param_net(x)
     bias_dim = 1 if self._has_bias else 0
-    lin_params = torch.view(
-        lin_params, (-1, self.output_dims, self.output_dims + bias_dim))
+    lin_params = lin_params.view(
+        -1, self.output_dims, self.output_dims + bias_dim)
     return lin_params
 
   def _get_ss_params(self, x):
     # try:
     ss_params = self._param_net(x)
-    ss_params = torch.view(ss_params, (-1, self.output_dims, 2))
+    ss_params = ss_params.view(-1, self.output_dims, 2)
     return ss_params
     # except Exception as e:
     #   IPython.embed()
@@ -600,7 +603,7 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     self._param_net = FunctionParamNet(nn_config)
 
     # Need to account for bit flags
-    input_dims = np.sum(self._view_sizes_obs.values()) * 2
+    input_dims = sum(self._view_sizes_obs.values()) * 2
     output_dims = self._dim
 
     self._param_net.initialize(
@@ -725,17 +728,18 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
   def initialize(
       self, view_id, view_sizes, index_mask, nn_config, *args, **kwargs):
 
-    super(ConditionalSSCTransformation, self).initialize(view_id, view_sizes)
+    super(ConditionalSSCTransform, self).initialize(view_id, view_sizes)
+
+    self.set_fixed_inds(index_mask)
     self._view_sizes_obs = {
         vi: vdim for vi, vdim in self.view_sizes.items() if vi != self.view_id}
     self._view_sizes_obs[self.view_id] = self._fixed_dim
 
     self._param_net = FunctionParamNet(nn_config)
     # Ignore bit flags for main view.
-    input_dims = np.sum(self._view_sizes_obs.values()) * 2 - self._fixed_dim
+    input_dims = sum(self._view_sizes_obs.values()) * 2 - self._fixed_dim
     output_dims = self._output_dim
 
-    self.set_fixed_inds(index_mask)
     self._param_net.initialize(
         func_type="scale_shift", input_dims=input_dims, output_dims=output_dims)
 
@@ -809,10 +813,8 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
 
 
 class CompositionConditionalTransform(ConditionalInvertibleTransform):
-  def __init__(self, config, tfm_list=[], init_args=None):
+  def __init__(self, config):
     super(CompositionConditionalTransform, self).__init__(config)
-    if tfm_list or init_args:
-      self.initialize(tfm_list, init_args)
 
   def _set_transform_ordered_list(self, tfm_list):
     self._tfm_list = nn.ModuleList(tfm_list)
@@ -821,20 +823,25 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
     # Check dims:
     dims = [tfm._dim for tfm in self._tfm_list if tfm._dim is not None]
     if len(dims) > 0:
-      print(dims)
+      # print(dims)
       if any([dim != dims[0] for dim in dims]):
         raise ModelException("Not all transforms have the same dimension.")
       self._dim = dims[0]
 
-  def initialize(self, tfm_list, init_args=None, *args, **kwargs):
+  def initialize(
+      self, view_id, view_sizes, tfm_list, init_args=None, *args, **kwargs):
+    super(CompositionConditionalTransform, self).initialize(view_id, view_sizes)
+
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
     if init_args:
       for tfm, arg in zip(self._tfm_list, init_args):
-        if isinstance(arg, tuple):
-          tfm.initialize(*arg)
+        if isinstance(arg, tuple) or isinstance(arg, list):
+          tfm.initialize(view_id, view_sizes, *arg)
+        elif arg is not None:
+          tfm.initialize(view_id, view_sizes, arg)
         else:
-          tfm.initialize(arg)
+          tfm.initialize(view_id, view_sizes)
     self._set_dim()
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
@@ -887,20 +894,34 @@ _TFM_TYPES = {
     "fixed_linear": ConditionalLinearTransformation,
     "linear": ConditionalLinearTransformation,
 }
-def make_transform(config, init_args=None, comp_config=None):
-  if isinstance(config, list):
-    tfm_list = [make_transform(cfg) for cfg in config]
-    comp_config = (
-        CTfmConfig("composition") if comp_config is None else comp_config)
-    return CompositionConditionalTransform(comp_config, tfm_list, init_args)
+def make_transform(
+    configs, view_id, view_sizes, init_args=None, comp_config=None):
+  if not isinstance(configs, list):
+    configs = [configs]
 
-  if config.tfm_type not in _TFM_TYPES:
-    raise TypeError(
-        "%s not a valid transform. Available transforms: %s" %
-        (config.tfm_type, list(_TFM_TYPES.keys())))
+  tfm_list = []
+  for cfg in configs:
+    if cfg.tfm_type not in _TFM_TYPES:
+      raise TypeError(
+          "%s not a valid transform. Available transforms: %s" %
+          (cfg.tfm_type, list(_TFM_TYPES.keys())))
+    tfm_list.append(_TFM_TYPES[cfg.tfm_type](cfg))
 
-  tfm = _TFM_TYPES[config.tfm_type](config)
-  if init_args is not None:
-    print(config.tfm_type, init_args)
-    tfm.initialize(init_args)
-  return tfm
+  comp_config = (
+      CTfmConfig("composition") if comp_config is None else comp_config)
+  comp_tfm = CompositionConditionalTransform(comp_config)
+  comp_tfm.initialize(view_id, view_sizes, tfm_list, init_args)
+  return comp_tfm
+
+  # if config.tfm_type not in _TFM_TYPES:
+  #   raise TypeError(
+  #       "%s not a valid transform. Available transforms: %s" %
+  #       (config.tfm_type, list(_TFM_TYPES.keys())))
+
+  # tfm = _TFM_TYPES[config.tfm_type](config)
+  # if init_args is not None:
+  #   print(config.tfm_type, init_args)
+  #   tfm.initialize(view_id, view_sizes, *init_args)
+  # else:
+  #   tfm.initialize(view_id, view_sizes)
+  # return tfm
