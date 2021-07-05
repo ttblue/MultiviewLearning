@@ -66,14 +66,41 @@ def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   return config
 
 
-def make_default_cond_tfms(
-    args, view_sizes, tfm_args=[], double_tot_dim=False, start_logit=False,
-    rtn_args=False):
+_AVAILABLE_TRANSFORMS = {
+    "s": "scale_shift_couping",
+    "l": "linear",
+    "r": "rnn_couping",
+    "v": "reverse",
+    "k": "leaky_relu",
+    "g": "logit",
+}
+def make_default_tfms(
+    args, view_sizes, double_tot_dim=False, rtn_args=False, is_cond=True):
   # dim = args.ndim
-  num_ss_tfm = args.num_cond_ss_tfm
-  num_lin_tfm = args.num_cond_lin_tfm
-  use_leaky_relu = args.use_leaky_relu
-  use_reverse = args.use_reverse
+  # reset_bit_mask = True
+  # num_ss_tfm = args.num_cond_ss_tfm
+  # num_lin_tfm = args.num_cond_lin_tfm
+
+  if is_cond:
+    start_tfm_set = args.cond_start_tfm_set
+    repeat_tfm_set = args.cond_repeat_tfm_set
+    num_tfm_sets = args.num_cond_tfm_sets
+    end_tfm_set = args.cond_end_tfm_set
+    num_ss_tfm = max(args.num_cond_ss_tfm, 3)  # Need at least 3 ss tfms
+  else:
+    start_tfm_set = args.start_tfm_set
+    repeat_tfm_set = args.repeat_tfm_set
+    num_tfm_sets = args.num_tfm_sets
+    end_tfm_set = args.end_tfm_set
+    num_ss_tfm = max(args.num_ss_tfm, 3)  # Need at least 3 ss tfms
+
+  for tf in start_tfm_set + repeat_tfm_set + end_tfm_set:
+    if tf not in _AVAILABLE_TRANSFORMS:
+      raise ValueError("Transformation %s not available." % tf)
+    if tf == "r":
+      raise ValueError("RNN Coupling not yet available.")
+
+  all_tfm_set = start_tfm_set + repeat_tfm_set * num_tfm_sets + end_tfm_set
 
   # Generate config list:
   tfm_configs = {}
@@ -87,14 +114,14 @@ def make_default_cond_tfms(
     tot_dim = tot_dim * 2
   #################################################
   # Bit-mask couple transform
-  tfm_idx = 0
-  idx_args = tfm_args[tfm_idx] if tfm_idx < len(tfm_args) else None
-  init_bit_mask = None
-  if idx_args is not None and idx_args[0] == "scaleshift":
-    init_bit_mask = idx_args[1]
+  # tfm_idx = 0
+  # idx_args = tfm_args[tfm_idx] if tfm_idx < len(tfm_args) else None
+  # init_bit_mask = None
+  # if idx_args is not None and idx_args[0] == "scaleshift":
+  #   init_bit_mask = idx_args[1]
 
   for vi, vdim in view_sizes.items():
-    bit_mask = init_bit_mask
+    # bit_mask = init_bit_mask
     vi_tfm_configs = []
     vi_tfm_inits = []
     obs_dim = tot_dim - vdim
@@ -103,65 +130,58 @@ def make_default_cond_tfms(
     dim = unobs_dim = vdim
     hidden_sizes = default_hidden_sizes
 
-    if start_logit:
-      logit_config = make_default_cond_tfm_config("logit")
-      vi_tfm_configs.append(logit_config)
-      vi_tfm_inits.append(())
-
-    for i in range(num_ss_tfm):
-      scale_shift_tfm_config = make_default_cond_tfm_config("scale_shift")
-      vi_tfm_configs.append(scale_shift_tfm_config)
-
-      if bit_mask is not None:
-        bit_mask = 1 - bit_mask
-      else:
+    for tf in all_tfm_set:
+      if tf == "s":
         bit_mask = np.zeros(dim)
         bit_mask[np.random.permutation(dim)[:dim//2]] = 1
+        for i in range(num_ss_tfm):
+          scale_shift_tfm_config = make_default_cond_tfm_config("scale_shift")
+          vi_tfm_configs.append(scale_shift_tfm_config)
+          vi_tfm_inits.append(
+              (bit_mask, default_nn_config))
+          bit_mask = 1 - bit_mask
 
-      vi_tfm_inits.append(
-          (bit_mask, default_nn_config))
+      elif tf == "l":
+        linear_tfm_config = make_default_cond_tfm_config("linear")
+        linear_tfm_config.has_bias = True
+        vi_tfm_configs.append(linear_tfm_config)
+        vi_tfm_inits.append(default_nn_config)# init_mat))
 
-    # Fixed linear transform
-    tfm_idx = 1
-    # L, U = tfm_args[tfm_idx][1:]
-    # _, Li, Ui = scipy.linalg.lu(np.linalg.inv(L.dot(U)))
-    # init_mat = np.tril(Li, -1) + np.triu(Ui, 0)
-    # eps = 1e-1
-    # noise = np.random.randn(*init_mat.shape) * eps
-    for i in range(num_lin_tfm):
-      linear_tfm_config = make_default_cond_tfm_config("linear")
-      linear_tfm_config.has_bias = True
-      vi_tfm_configs.append(linear_tfm_config)
-      vi_tfm_inits.append(default_nn_config)# init_mat))
+      elif tf == "r":
+        raise ValueError("RNN Coupling not yet available.")
 
-    # # Leaky ReLU
-    tfm_idx = 2
-    if use_leaky_relu:
-      leaky_relu_config = make_default_cond_tfm_config("leaky_relu")
-      leaky_relu_config.neg_slope = 0.1
-      vi_tfm_configs.append(leaky_relu_config)
-      vi_tfm_inits.append(())
+      elif tf == "v":
+        reverse_config = make_default_cond_tfm_config("reverse")
+        vi_tfm_configs.append(reverse_config)
+        vi_tfm_inits.append(())
 
-    # Reverse
-    tfm_idx = 3
-    if use_reverse:
-      reverse_config = make_default_cond_tfm_config("reverse")
-      vi_tfm_configs.append(reverse_config)
-      vi_tfm_inits.append(())
+      elif tf == "k":
+        leaky_relu_config = make_default_cond_tfm_config("leaky_relu")
+        leaky_relu_config.neg_slope = 0.1
+        vi_tfm_configs.append(leaky_relu_config)
+        vi_tfm_inits.append(())
 
-    tfm_configs[vi] = vi_tfm_configs
-    tfm_inits[vi] = vi_tfm_inits
+      elif tf == "g":
+        logit_config = make_default_cond_tfm_config("logit")
+        vi_tfm_configs.append(logit_config)
+        vi_tfm_inits.append(())
+
+      tfm_configs[vi] = vi_tfm_configs
+      tfm_inits[vi] = vi_tfm_inits
     #################################################
 
   if rtn_args:
     return tfm_configs, tfm_inits
 
-  comp_config = make_default_tfm_config("composition")
-  models = {
-      vi: conditional_flow_transforms.make_transform(
-          tfm_configs[vi], vi, view_sizes, tfm_inits[vi], comp_config)
-      for vi in tfm_configs
-  }
+  if is_cond:
+    comp_config = make_default_tfm_config("composition")
+    models = {
+        vi: conditional_flow_transforms.make_transform(
+            tfm_configs[vi], vi, view_sizes, tfm_inits[vi], comp_config)
+        for vi in tfm_configs
+    }
+  else:
+    pass
 
   return models
 
@@ -254,6 +274,8 @@ def simple_test_cond_tfms(args):
 
   # IPython.embed()
   model.fit(tr_data, b_o_tr)
+  z_tr = model.sample(tr_data)
+  z_te = model.sample(te_data)
   IPython.embed()
 
   # x_tr = torch.from_numpy(x_tr)
@@ -618,7 +640,6 @@ def test_mnist(args):
   model.fit(x_tr)
 
 
-
 _MV_DATAFUNCS = {
     "o1": make_default_overlapping_data,  # need any 2 views for all 
     "o2": make_default_overlapping_data2,  # need K-1 views for all
@@ -649,12 +670,30 @@ if __name__ == "__main__":
       ("shape", str, "Shape of toy data.", "cube"),
       ("max_iters", int, "Number of iters for opt.", 10000),
       ("batch_size", int, "Batch size for opt.", 100),
-      ("num_ss_tfm", int, "Number of shift-scale tfms for views", 4),
-      ("num_lin_tfm", int, "Number of linear tfms for views", 1),
-      ("num_cond_ss_tfm", int, "Number of shift-scale tfms for cond. tfm", 1),
-      ("num_cond_lin_tfm", int, "Number of linear tfms for cond. tfm", 1),
-      ("use_leaky_relu", bool, "Flag for using leaky relu tfm", False),
-      ("use_reverse", bool, "Flag for using reverse tfm", False),
+      ("init_tfm_set", str,
+       "Initial sequence of s/l/v/k/r/g (3x scale coupling, linear, reverse,"
+       "leaky_relu, rnn coupling, logit)", ""),
+      ("repeat_tfm_set", str,
+        "Repeated tfm set after @start_tfm_set (same tfms as before)", "slv"),
+      ("num_tfm_sets", int, "Number of tfm sequences from @repeat_tfm_set", 3),
+      ("end_tfm_set", str,
+        "Final sequence of tfms (same tfms as before)", "")
+      ("cond_start_tfm_set", str,
+       "Initial sequence for conditional tfms (same tfms as before)", ""),
+      ("cond_repeat_tfm_set", str,
+       "Repeated tfm set after @cond_start_tfm_set (same tfms as before)",
+       "slv"),
+      ("num_cond_tfm_sets", str,
+       "Number of tfm sequences from @cond_repeat_tfm_set", 3),
+      ("end_cond_tfm_set", str,
+        "Final sequence of conditional tfms (same tfms as before)", "")
+      ("num_ss_tfm", int, "Number of ss tfms in a row (min 3)", 3),
+      ("num_cond_ss_tfm", int,
+       "Number of ss tfms in a row for conditional transform (min 3)", 3),
+      ("num_lin_tfm", int, "DEPRECATED", 3),
+      ("num_cond_lin_tfm", int, "DEPRECATED", 3),
+      ("use_leaky_relu", bool, "DEPRECATED", False),
+      ("use_reverse", bool, "DEPRECATED", False),
       ("dist_type", str, "Base dist. type ([mv_]gaussian/laplace/logistic)",
        "mv_gaussian"),
       ("use_ar", bool, "Flag for base dist being an AR model", False),

@@ -374,11 +374,12 @@ class MultiviewACFlowTrainer(nn.Module):
     return self
 
   def sample(self, x_o, b_o, rtn_torch=True, batch_size=None):
-    n = x_o[utils.get_any_key(x_o)].shape[0]
+    n_samples = x_o[utils.get_any_key(x_o)].shape[0]
     sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     samples = {}
     l_samples = {
-        vi:self._cond_lhoods["v_%i"%vi].sample((n,)) for vi in sampling_views}
+        vi:self._cond_lhoods["v_%i"%vi].sample((n_samples,))
+        for vi in sampling_views}
     return self.invert(
         l_samples, x_o, b_o, rtn_torch=rtn_torch, batch_size=batch_size)
     # raise NotImplementedError("Implement this!")

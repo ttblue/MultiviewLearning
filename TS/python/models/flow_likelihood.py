@@ -303,9 +303,9 @@ def make_likelihood_model(config, dim=None):
 
 ## Mean functions
 def get_mean(dist, n_samples, *args, **kwargs):
-  if dist in _TORCH_DISTRIBUTIONS:
+  if type(dist) in _TORCH_DISTRIBUTIONS:
     mu = dist.mean.view(1, -1)
-    mu = torch.tile(n_samples, 1)
+    mu = torch.tile(mu, (n_samples, 1))
     return mu
   else:
-    raise("Mean function for %s not implemented." % dist)
+    raise ValueError("Mean function for %s not implemented." % dist)

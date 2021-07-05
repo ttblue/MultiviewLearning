@@ -360,17 +360,18 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     return self
 
   def sample(
-      self, x_o, n_samples=1, inverted=True, use_mean=True, rtn_torch=False):
-    if not isinstance(n_samples, int) or n_samples <= 0:
-      raise ValueError("n_samples must be a positive integer.")
+      self, x_o, b_o=None, use_mean=True, rtn_torch=False):
+    # if not isinstance(n_samples, int) or n_samples <= 0:
+    #   raise ValueError("n_samples must be a positive integer.")
+    n_samples = x_o[utils.get_any_key(x_o)].shape[0]
     if use_mean:
-      z_samples = flow_transforms.get_mean(self.base_dist, n_samples, x_o)
+      z_samples = flow_likelihood.get_mean(self.base_dist, n_samples, x_o)
     else:
       z_samples = self.base_dist.sample(n_samples)
 
-    if inverted:
-      return self.inverse(z_samples, x_o, rtn_torch)
-    return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
+    # if inverted:
+    return self.inverse(z_samples, x_o, b_o, rtn_torch)
+    # return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
   # def log_prob(self, x_u, x_o):
   #   z, log_det = self(x, rtn_torch=True, rtn_logdet=True)
   #   return self.base_log_prob(z) + log_det
@@ -687,7 +688,8 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
   def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
     x_o = torch_utils.dict_numpy_to_torch(x_o)
-    b_o = torch_utils.dict_numpy_to_torch(b_o)
+    if b_o is not None:
+      b_o = torch_utils.dict_numpy_to_torch(b_o)
 
     x_imputed = self._impute_mv_data(z, x_o, b_o)
     L, U, t = self._get_params(x_imputed)
@@ -797,7 +799,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     if b_o is not None:
       b_o = torch_utils.dict_numpy_to_torch(b_o)
 
-    x_imputed = self._impute_mv_data(x, x_o, b_o)
+    x_imputed = self._impute_mv_data(z, x_o, b_o)
 
     log_scale, shift = self._get_params(x_imputed)
     scale = torch.exp(-log_scale)
@@ -868,7 +870,7 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
 
   def inverse(self, z, x_o, b_o=None, rtn_torch=True):
     z = torch_utils.numpy_to_torch(z)
-    x_o = torch_utils.numpy_to_torch(x_o)
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
     if b_o is not None:
       b_o = torch_utils.dict_numpy_to_torch(b_o)
 
