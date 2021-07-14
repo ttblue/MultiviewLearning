@@ -161,8 +161,11 @@ def generate_LDS_data_with_two_observation_models_train_test(
 
 def generate_redundant_multiview_data(
       npts, nviews=3, ndim=15, scale=2, centered=True, overlap=True,
-      gen_D_alpha=True, perturb_eps=1e-2):
-  data = np.random.uniform(high=scale, size=(npts, ndim))
+      gen_D_alpha=True, perturb_eps=1e-2, dtype="normal"):
+  if dtype == "uniform":
+    data = np.random.unifom(high=scale, size=(npts, ndim))
+  else:
+    data = np.random.normal(scale=scale, size=(npts, ndim))
 
   if centered:
     data -= data.mean(axis=0)

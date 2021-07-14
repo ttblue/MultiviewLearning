@@ -87,12 +87,14 @@ def make_default_tfms(
     num_tfm_sets = args.num_cond_tfm_sets
     end_tfm_set = args.cond_end_tfm_set
     num_ss_tfm = max(args.num_cond_ss_tfm, 3)  # Need at least 3 ss tfms
+    config_func = make_default_cond_tfm_config
   else:
     start_tfm_set = args.start_tfm_set
     repeat_tfm_set = args.repeat_tfm_set
     num_tfm_sets = args.num_tfm_sets
     end_tfm_set = args.end_tfm_set
     num_ss_tfm = max(args.num_ss_tfm, 3)  # Need at least 3 ss tfms
+    config_func = make_default_tfm_config
 
   for tf in start_tfm_set + repeat_tfm_set + end_tfm_set:
     if tf not in _AVAILABLE_TRANSFORMS:
@@ -135,14 +137,14 @@ def make_default_tfms(
         bit_mask = np.zeros(dim)
         bit_mask[np.random.permutation(dim)[:dim//2]] = 1
         for i in range(num_ss_tfm):
-          scale_shift_tfm_config = make_default_cond_tfm_config("scale_shift")
+          scale_shift_tfm_config = config_func("scale_shift")
           vi_tfm_configs.append(scale_shift_tfm_config)
           vi_tfm_inits.append(
               (bit_mask, default_nn_config))
           bit_mask = 1 - bit_mask
 
       elif tf == "l":
-        linear_tfm_config = make_default_cond_tfm_config("linear")
+        linear_tfm_config = config_func("linear")
         linear_tfm_config.has_bias = True
         vi_tfm_configs.append(linear_tfm_config)
         vi_tfm_inits.append(default_nn_config)# init_mat))
@@ -151,18 +153,18 @@ def make_default_tfms(
         raise ValueError("RNN Coupling not yet available.")
 
       elif tf == "v":
-        reverse_config = make_default_cond_tfm_config("reverse")
+        reverse_config = config_func("reverse")
         vi_tfm_configs.append(reverse_config)
         vi_tfm_inits.append(())
 
       elif tf == "k":
-        leaky_relu_config = make_default_cond_tfm_config("leaky_relu")
+        leaky_relu_config = config_func("leaky_relu")
         leaky_relu_config.neg_slope = 0.1
         vi_tfm_configs.append(leaky_relu_config)
         vi_tfm_inits.append(())
 
       elif tf == "g":
-        logit_config = make_default_cond_tfm_config("logit")
+        logit_config = config_func("logit")
         vi_tfm_configs.append(logit_config)
         vi_tfm_inits.append(())
 
@@ -173,15 +175,19 @@ def make_default_tfms(
   if rtn_args:
     return tfm_configs, tfm_inits
 
+  comp_config = config_func("composition")
   if is_cond:
-    comp_config = make_default_tfm_config("composition")
     models = {
         vi: conditional_flow_transforms.make_transform(
             tfm_configs[vi], vi, view_sizes, tfm_inits[vi], comp_config)
         for vi in tfm_configs
     }
   else:
-    pass
+    models = {
+      vi: flow_transforms.make_transform(
+            tfm_configs[vi], tfm_inits[vi], comp_config)
+      for vi in tfm_configs
+    }
 
   return models
 
@@ -193,20 +199,21 @@ def make_default_pipeline_config(
   # print(args.__dict__.keys())
   all_view_args = ArgsCopy(args)
   # all_view_args.ndim = tot_dim
-  cond_config_lists, cond_inits_lists = make_default_cond_tfms(
+  cond_config_lists, cond_inits_lists = make_default_tfm(
       all_view_args, view_sizes, double_tot_dim=True, rtn_args=True,
-      start_logit=no_view_tfm)
+      is_cond=True)
 
-  view_tfm_config_lists = {}
-  view_tfm_init_lists = {}
-  for vi, vdim in view_sizes.items():
-    vi_args = ArgsCopy(args)
-    vi_args.ndim = vdim
-    vi_cfg_list, vi_init = make_default_tfm(
-        vi_args, rtn_args=True, start_logit=start_logit)
+  view_tfm_config_lists, view_tfm_init_lists = make_default_tfm(
+      all_view_args, view_sizes, double_tot_dim=True, rtn_args=True,
+      is_cond=False)
+  # for vi, vdim in view_sizes.items():
+  #   vi_args = ArgsCopy(args)
+  #   vi_args.ndim = vdim
+  #   vi_cfg_list, vi_init = make_default_tfm(
+  #       vi_args, rtn_args=True, start_logit=start_logit)
 
-    view_tfm_config_lists[vi] = vi_cfg_list
-    view_tfm_init_lists[vi] = vi_init
+  #   view_tfm_config_lists[vi] = vi_cfg_list
+  #   view_tfm_init_lists[vi] = vi_init
 
   likelihood_config = make_default_likelihood_config(args) if args.use_ar else None
   base_dist = "mv_gaussian"
@@ -239,6 +246,74 @@ def make_default_likelihood_model(args):
   return model
 
 
+def make_default_overlapping_data(args):
+  npts = args.npts
+  nviews = args.nviews
+  ndim = args.ndim
+  perturb_eps = args.peps
+  scale = args.scale
+
+  centered = False
+  overlap = True
+  gen_D_alpha = False
+
+  data, ptfms = multimodal_systems.generate_redundant_multiview_data(
+      npts=npts, nviews=nviews, ndim=ndim, scale=scale, centered=centered,
+      overlap=overlap, gen_D_alpha=gen_D_alpha, perturb_eps=perturb_eps)
+
+  return data, ptfms
+
+
+def tfm_seq(model, x, b, x_o):
+  x_o = torch_utils.dict_numpy_to_torch(x_o)
+  x = torch_utils.numpy_to_torch(x)
+
+  tfm_list = model._tfm_list
+  x0 = x
+  x_seq = [x]
+  ld_seq = []
+  params = []
+
+  for tfm in tfm_list:
+    x, ld = tfm(x, x_o, b, rtn_logdet=True)
+    x_seq.append(torch_utils.torch_to_numpy(x))
+    ld_seq.append(torch_utils.torch_to_numpy(ld))
+    if hasattr (tfm, "_get_params"):
+      ximputed = tfm._impute_mv_data(x, x_o, b)
+      ps = [torch_utils.torch_to_numpy(p) for p in tfm._get_params(ximputed)]
+      params.append(ps)
+    else:
+      params.append(None)
+
+  _, total_ld = model(x0, x_o, b, rtn_logdet=True)
+  total_ld = torch_utils.torch_to_numpy(total_ld)
+
+  return x_seq, ld_seq, params, total_ld
+
+
+def inv_tfm_seq(model, z, b, x_o):
+  x_o = torch_utils.dict_numpy_to_torch(x_o)
+  z = torch_utils.numpy_to_torch(z)
+
+  tfm_list = model._tfm_list
+  z0 = z
+  z_seq = [z]
+  ld_seq = []
+  params = []
+
+  for tfm in tfm_list[::-1]:
+    z = tfm.inverse(z, x_o, b)
+    z_seq.append(torch_utils.torch_to_numpy(z))
+    if hasattr (tfm, "_get_params"):
+      ximputed = tfm._impute_mv_data(z, x_o, b)
+      ps = [torch_utils.torch_to_numpy(p) for p in tfm._get_params(ximputed)]
+      params.append(ps)
+    else:
+      params.append(None)
+
+  return z_seq, params
+
+
 def simple_test_cond_tfms(args):
   print("Test: Simple conditional transforms.")
   # (tr_Z, te_Z), (tr_X, te_X), tfm_args = make_default_data(args, split=True)
@@ -246,12 +321,15 @@ def simple_test_cond_tfms(args):
   n_tr = int(0.8 * args.npts)
   n_te = args.npts - n_tr
 
+  bias_const = 2.0
+  data = {vi:(vdat + bias_const) for vi, vdat in data.items()}
+
   tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
   te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
 
   view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
   main_view = 0
-  models = make_default_cond_tfms(args, view_sizes)
+  models = make_default_tfms(args, view_sizes, is_cond=True)
   model = models[main_view]
 
   config = model.config
@@ -272,10 +350,19 @@ def simple_test_cond_tfms(args):
   #     [te_data[vi] for vi in range(args.nviews) if vi != main_view],
   #     axis=1).astype(np.float32)
 
-  # IPython.embed()
+  IPython.embed()
   model.fit(tr_data, b_o_tr)
-  z_tr = model.sample(tr_data)
-  z_te = model.sample(te_data)
+  IPython.embed()
+  x_tr = tr_data[main_view]
+  x_te = te_data[main_view]
+  z_tr, ld_tr = model.forward(x_tr, tr_data, rtn_logdet=True, rtn_torch=False)
+  z_te, ld_te = model.forward(x_te, te_data, rtn_logdet=True, rtn_torch=False)
+  ld_tr = torch_utils.torch_to_numpy(ld_tr)
+  ld_te = torch_utils.torch_to_numpy(ld_te)
+  i_tr = model.inverse(z_tr, tr_data, rtn_torch=False)
+  i_te = model.inverse(z_te, te_data, rtn_torch=False)
+  s_tr = model.sample(tr_data, use_mean=False)
+  s_te = model.sample(te_data, use_mean=False)
   IPython.embed()
 
   # x_tr = torch.from_numpy(x_tr)
@@ -677,16 +764,16 @@ if __name__ == "__main__":
         "Repeated tfm set after @start_tfm_set (same tfms as before)", "slv"),
       ("num_tfm_sets", int, "Number of tfm sequences from @repeat_tfm_set", 3),
       ("end_tfm_set", str,
-        "Final sequence of tfms (same tfms as before)", "")
+        "Final sequence of tfms (same tfms as before)", ""),
       ("cond_start_tfm_set", str,
        "Initial sequence for conditional tfms (same tfms as before)", ""),
       ("cond_repeat_tfm_set", str,
        "Repeated tfm set after @cond_start_tfm_set (same tfms as before)",
        "slv"),
-      ("num_cond_tfm_sets", str,
+      ("num_cond_tfm_sets", int,
        "Number of tfm sequences from @cond_repeat_tfm_set", 3),
-      ("end_cond_tfm_set", str,
-        "Final sequence of conditional tfms (same tfms as before)", "")
+      ("cond_end_tfm_set", str,
+        "Final sequence of conditional tfms (same tfms as before)", ""),
       ("num_ss_tfm", int, "Number of ss tfms in a row (min 3)", 3),
       ("num_cond_ss_tfm", int,
        "Number of ss tfms in a row for conditional transform (min 3)", 3),

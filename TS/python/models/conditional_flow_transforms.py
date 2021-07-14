@@ -205,12 +205,20 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
   def inverse(self, z, x_o):
     raise NotImplementedError("Abstract class method")
 
+  def _base_log_prob(self, Z):
+    try:
+      lp = self.base_dist.log_prob(torch_utils.numpy_to_torch(Z))
+      return lp
+    except Exception as e:
+      IPython.embed()
+      raise(e)
+
   def log_prob(self, x, x_o):
     z, log_det = self(x, x_o, rtn_torch=True, rtn_logdet=True)
-    return self.base_log_prob(z) + log_det
+    return self._base_log_prob(z) + log_det
 
   def loss_nll(self, z, log_jac_det):
-    z_ll = self.base_log_prob(z)
+    z_ll = self._base_log_prob(z)
     nll_orig = -torch.mean(log_jac_det + z_ll)
     return nll_orig
 
@@ -260,6 +268,11 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
       loss_val.backward()
       self._avg_grad = self._get_avg_grad_val()
       self._max_grad = self._get_max_grad_val()
+
+      if torch.isnan(self._avg_grad) or torch.isinf(self._avg_grad):
+        IPython.embed()
+        raise ModelException("nan/inf gradient detected.")
+
       nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
 
@@ -291,6 +304,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     # @b_o: dictionary of bit flags of length n_pts, denoting availablity of 
     #     view for each data-point
     # Simple fitting procedure for transforming x to y
+    torch.autograd.set_detect_anomaly(True)
     if self.config.verbose:
       all_start_time = time.time()
 
@@ -312,8 +326,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
       self.base_dist = lhood_model
 
     self.recon_criterion = None
-    self.base_log_prob = (
-        lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
+    # self._base_log_prob = (
+    #     lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
     # else:
     #   self.recon_criterion = nn.MSELoss(reduction="mean")
     #   self.base_log_prob = None
@@ -367,7 +381,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     if use_mean:
       z_samples = flow_likelihood.get_mean(self.base_dist, n_samples, x_o)
     else:
-      z_samples = self.base_dist.sample(n_samples)
+      z_samples = self.base_dist.sample((n_samples,))
 
     # if inverted:
     return self.inverse(z_samples, x_o, b_o, rtn_torch)
@@ -405,8 +419,8 @@ class ReverseTransform(ConditionalInvertibleTransform):
   def __init__(self, config):
     super(ReverseTransform, self).__init__(config)
 
-  def initialize(self, *args, **kwargs):
-    pass
+  def initialize(self, view_id, view_sizes, *args, **kwargs):
+    super(ReverseTransform, self).initialize(view_id, view_sizes)
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -419,14 +433,15 @@ class ReverseTransform(ConditionalInvertibleTransform):
     return (z, 0.) if rtn_logdet else z
 
   def inverse(self, z, x_o, b_o=None, rtn_torch=True):
-    return self(z, rtn_torch=rtn_torch, rtn_logdet=False)
+    return self(z, x_o, b_o, rtn_torch=rtn_torch, rtn_logdet=False)
 
 
 class LeakyReLUTransform(ConditionalInvertibleTransform):
   def __init__(self, config):
     super(LeakyReLUTransform, self).__init__(config)
 
-  def initialize(self, *args, **kwargs):
+  def initialize(self, view_id, view_sizes, *args, **kwargs):
+    super(LeakyReLUTransform, self).initialize(view_id, view_sizes)
     neg_slope = self.config.neg_slope
     self._relu_func = torch.nn.LeakyReLU(negative_slope=neg_slope)
     self._inv_func = torch.nn.LeakyReLU(negative_slope=(1. / neg_slope))
@@ -455,8 +470,8 @@ class SigmoidLogitTransform(ConditionalInvertibleTransform):
     raise NotImplementedError("Not yet implemented.")
     super(SigmoidLogitTransform, self).__init__(config)
 
-  def initialize(self, *args, **kwargs):
-    pass
+  def initialize(self, view_id, view_sizes, *args, **kwargs):
+    super(SigmoidLogitTransform, self).initialize(view_id, view_sizes)
 
   def _sigmoid(self, x, rtn_logdet=False):
     z = torch.sigmoid(x)

@@ -201,8 +201,8 @@ def make_default_overlapping_data(args):
   nviews = args.nviews
   ndim = args.ndim
   perturb_eps = args.peps
+  scale = args.scale
 
-  scale = 1
   centered = True
   overlap = True
   gen_D_alpha = False
