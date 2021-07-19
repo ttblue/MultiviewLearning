@@ -186,8 +186,8 @@ class CTfmConfig(BaseConfig):
 # Functions of the form q(x_u | x_o)
 class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
   def __init__(self, config):
-    super(flow_transforms.InvertibleTransform, self).__init__()
-    self.config = config
+    super(ConditionalInvertibleTransform, self).__init__(config)
+    # self.config = config
     # self._dim = None
 
   def initialize(self, view_id, view_sizes, *args, **kwargs):
@@ -206,12 +206,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     raise NotImplementedError("Abstract class method")
 
   def _base_log_prob(self, Z):
-    try:
-      lp = self.base_dist.log_prob(torch_utils.numpy_to_torch(Z))
-      return lp
-    except Exception as e:
-      IPython.embed()
-      raise(e)
+    return self.base_dist.log_prob(torch_utils.numpy_to_torch(Z))
 
   def log_prob(self, x, x_o):
     z, log_det = self(x, x_o, rtn_torch=True, rtn_logdet=True)
@@ -229,64 +224,69 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     return loss_val
 
   def _train_loop(self):
-    shuffle_inds = np.random.permutation(self._npts)
-    x = self._x_vs[self.view_id][shuffle_inds]
-    x_o = {
-        vi:x_vi[shuffle_inds]
-        for vi, x_vi in self._x_vs.items() if vi != self.view_id
-    }
-    b_o = {
-        vi:b_o_vi[shuffle_inds]
-        for vi, b_o_vi in self._b_o.items()
-        if vi != self.view_id
-    }
-    # y = None if self._y is None else self._y[shuffle_inds]
+    try:  # For debugging
+      self._shuffle_inds = np.random.permutation(self._npts)
+      x = self._x_vs[self.view_id][self._shuffle_inds]
+      x_o = {
+          vi:x_vi[self._shuffle_inds]
+          for vi, x_vi in self._x_vs.items() if vi != self.view_id
+      }
+      b_o = {
+          vi:b_o_vi[self._shuffle_inds]
+          for vi, b_o_vi in self._b_o.items()
+          if vi != self.view_id
+      }
+      # y = None if self._y is None else self._y[self._shuffle_inds]
 
-    self.itr_loss = 0.
-    for bidx in range(self._n_batches):
-      b_start = bidx * self.config.batch_size
-      b_end = b_start + self.config.batch_size
-      x_batch = x[b_start:b_end]
-      x_o_batch = {
-          vi:x_o_vi[b_start:b_end] for vi, x_o_vi in self._x_vs.items()}
-      b_o_batch = {
-          vi:b_o_vi[b_start:b_end] for vi, b_o_vi in self._b_o.items()}
-      x_tfm_batch, jac_logdet = self.forward(
-          x_batch, x_o_batch, b_o_batch, rtn_torch=True, rtn_logdet=True)
-      # if y is not None:
-      #   y_batch = y[b_start:b_end]
+      self.itr_loss = 0.
+      for self._bidx in range(self._n_batches):
+        b_start = self._bidx * self.config.batch_size
+        b_end = b_start + self.config.batch_size
+        x_batch = x[b_start:b_end]
+        x_o_batch = {
+            vi:x_o_vi[b_start:b_end] for vi, x_o_vi in x_o.items()}
+        b_o_batch = {
+            vi:b_o_vi[b_start:b_end] for vi, b_o_vi in b_o.items()}
+        x_tfm_batch, jac_logdet = self.forward(
+            x_batch, x_o_batch, b_o_batch, rtn_torch=True, rtn_logdet=True)
+        # if y is not None:
+        #   y_batch = y[b_start:b_end]
 
-      self.opt.zero_grad()
-      loss_val = self.loss_nll(x_tfm_batch, jac_logdet)  # (
-          # Reconstruction loss
-          # self.loss_err(x_tfm_batch, y_batch, jac_logdet)
-          # if y is not None else
-          # Generative model -- log likelihood loss
-          # self.loss_nll(x_tfm_batch, jac_logdet)
-      # )
+        self.opt.zero_grad()
+        loss_val = self.loss_nll(x_tfm_batch, jac_logdet)  # (
+            # Reconstruction loss
+            # self.loss_err(x_tfm_batch, y_batch, jac_logdet)
+            # if y is not None else
+            # Generative model -- log likelihood loss
+            # self.loss_nll(x_tfm_batch, jac_logdet)
+        # )
 
-      loss_val.backward()
-      self._avg_grad = self._get_avg_grad_val()
-      self._max_grad = self._get_max_grad_val()
+        loss_val.backward()
+        self._avg_grad = self._get_avg_grad_val()
+        self._max_grad = self._get_max_grad_val()
 
-      if torch.isnan(self._avg_grad) or torch.isinf(self._avg_grad):
-        IPython.embed()
-        raise ModelException("nan/inf gradient detected.")
+        if torch.isnan(self._avg_grad) or torch.isinf(self._avg_grad):
+          IPython.embed()
+          raise ModelException("nan/inf gradient detected.")
 
-      nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
-      self.opt.step()
+        nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
+        self.opt.step()
 
-      self.itr_loss += loss_val * x_batch.shape[0]
-    self.itr_loss /= self._npts
+        self.itr_loss += loss_val * x_batch.shape[0]
+      self.itr_loss /= self._npts
 
-    curr_loss = float(self.itr_loss.detach())
-    if np.abs(self._prev_loss - curr_loss) < self.config.stopping_eps:
-      self._stop_iters += 1
-      if self._stop_iters >= self.config.num_stopping_iter:
-        self._finished_training = True
-    else:
-      self._stop_iters = 0
-    self._prev_loss = curr_loss
+      curr_loss = float(self.itr_loss.detach())
+      if np.abs(self._prev_loss - curr_loss) < self.config.stopping_eps:
+        self._stop_iters += 1
+        if self._stop_iters >= self.config.num_stopping_iter:
+          self._finished_training = True
+      else:
+        self._stop_iters = 0
+      self._prev_loss = curr_loss
+    except Exception as e:
+      print(e)
+      IPython.embed()
+      raise(e)
 
   def _get_avg_grad_val(self):
     # Just for debugging
@@ -299,6 +299,14 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     # Just for debugging
     p_grads = [p.grad for p in self.parameters()]
     return max([pg.abs().max() for pg in p_grads])
+
+  def load_state_dict(self, state_dict):
+    super(ConditionalInvertibleTransform, self).load_state_dict(state_dict)
+    if not hasattr(self, "base_dist"):
+      loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+      self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
+    self.eval()
+
 
   def fit(self, x_vs, b_o, lhood_model=None):
     # @b_o: dictionary of bit flags of length n_pts, denoting availablity of 

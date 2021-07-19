@@ -6,7 +6,7 @@ import scipy
 from sklearn import manifold
 import time
 import torch
-from torch import nn
+from torch import nn, functional
 import umap
 
 from dataprocessing import ecg_data, split_single_view_dsets as ssvd,\
@@ -18,19 +18,38 @@ from utils import math_utils, torch_utils, utils
 
 from tests.test_flow import make_default_tfm
 from tests.test_ac_flow import SimpleArgs, convert_numpy_to_float32,\
-    make_default_nn_config, make_default_tfm_config, ArgsCopy,\
-    make_default_likelihood_config, make_default_data, make_default_data_X,\
-    make_default_overlapping_data, make_default_overlapping_data2,\
-    rotate_and_shift_data, make_default_independent_data,\
-    make_default_shape_data, make_missing_dset
+    make_default_tfm_config, ArgsCopy, make_default_likelihood_config,\
+    make_default_data, make_default_data_X, make_default_overlapping_data,\
+    make_default_overlapping_data2, rotate_and_shift_data,\
+    make_default_independent_data, make_default_shape_data
 
-
-
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt, patches
 from mpl_toolkits.mplot3d import Axes3D
 
 import IPython
 
+
+def make_default_nn_config(bounded=False):
+  input_size = 10  # Computed online
+  output_size = 10  # Computed online
+  layer_units = [32, 64]
+  use_vae = False
+  activation = nn.ReLU  # nn.functional.relu
+  if bounded:
+    last_activation = torch.nn.Tanh
+  else:
+    last_activation = torch_models.Identity  # functional.sigmoid
+  # layer_types = None
+  # layer_args = None
+  bias = True
+  dropout_p = 0.
+  layer_types, layer_args = torch_utils.generate_linear_types_args(
+        input_size, layer_units, output_size, bias)
+  nn_config = torch_models.MNNConfig(
+      input_size=input_size, output_size=output_size, layer_types=layer_types,
+      layer_args=layer_args, activation=activation,
+      last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
+  return nn_config
 
 def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
@@ -110,6 +129,7 @@ def make_default_tfms(
   default_hidden_sizes = [64, 128]
   default_activation = nn.Tanh
   default_nn_config = make_default_nn_config()
+  default_bounded_nn_config = make_default_nn_config(bounded=True)
 
   tot_dim = sum(view_sizes.values())
   if double_tot_dim:
@@ -140,7 +160,7 @@ def make_default_tfms(
           scale_shift_tfm_config = config_func("scale_shift")
           vi_tfm_configs.append(scale_shift_tfm_config)
           vi_tfm_inits.append(
-              (bit_mask, default_nn_config))
+              (bit_mask, default_bounded_nn_config))
           bit_mask = 1 - bit_mask
 
       elif tf == "l":
@@ -264,6 +284,52 @@ def make_default_overlapping_data(args):
   return data, ptfms
 
 
+def make_missing_dset(data, main_view, include_nv_0=False, separate_nv=False):
+  v_dims = {vi:vdat.shape[1] for vi, vdat in data.items() if vi != main_view}
+  main_dim = v_dims[main_view]
+  npts =  data[main_view].shape[0]
+
+  x = {} if separate_nv else []
+  x_o = {} if separate_nv else {vi:[] for vi in obs_views}
+  b_o = {} if separate_nv else {vi:[] for vi in obs_views}
+
+  mv_x = data[main_view]
+  obs_views = [vi for vi in data if vi != main_view]
+
+  tot_views = len(obs_views)
+  start_nv = 0 if include_nv_0 else 1
+  for nv in range(start_nv, tot_views + 1):
+    x_nv = []
+    x_o_nv = {vi:[] for vi in obs_views}
+    b_o_nv = {vi:[] for vi in obs_views}
+
+    for perm in itertools.combinations(obs_views, nv):
+      x_nv.append(mv_x)
+      for vi in obs_views:
+        x_o_nv[vi].append(data[vi])
+        b_o_nv[vi].append((np.ones(npts) * int(vi in perm)))
+      # output, zero_imputed_data, b_cat = concat_with_binary_flags(
+      #     data, main_view, b_available)
+    if separate_nv:
+      x[nv] = np.concatenate(x_nv, axis=0)
+      x_o[nv] = {
+          vi:np.concatenate(x_o_vi, axis=0) for vi, x_o_vi in x_o_nv.items()}
+      b_o[nv] = {
+          vi:np.concatenate(b_o_vi, axis=0) for vi, b_o_vi in b_o_nv.items()}
+    else:
+      x.extend(x_nv)
+      for vi in obs_views:
+        x_o[vi].extend(x_o_nv[vi])
+        b_o[vi].extend(b_o_nv[vi])
+
+  if not separate_nv:
+    x = np.concatenate(x, axis=0)
+    x_o = {vi:np.concatenate(x_o_vi, axis=0) for vi, x_o_vi in x_o.items()}
+    b_o = {vi:np.concatenate(b_o_vi, axis=0) for vi, b_o_vi in b_o.items()}
+
+  return x, x_o, b_o
+
+
 def tfm_seq(model, x, b, x_o):
   x_o = torch_utils.dict_numpy_to_torch(x_o)
   x = torch_utils.numpy_to_torch(x)
@@ -349,7 +415,6 @@ def simple_test_cond_tfms(args):
   # x_o_te = np.concatenate(
   #     [te_data[vi] for vi in range(args.nviews) if vi != main_view],
   #     axis=1).astype(np.float32)
-
   IPython.embed()
   model.fit(tr_data, b_o_tr)
   IPython.embed()
@@ -361,8 +426,8 @@ def simple_test_cond_tfms(args):
   ld_te = torch_utils.torch_to_numpy(ld_te)
   i_tr = model.inverse(z_tr, tr_data, rtn_torch=False)
   i_te = model.inverse(z_te, te_data, rtn_torch=False)
-  s_tr = model.sample(tr_data, use_mean=False)
-  s_te = model.sample(te_data, use_mean=False)
+  s_tr = model.sample(tr_data, use_mean=True)
+  s_te = model.sample(te_data, use_mean=True)
   IPython.embed()
 
   # x_tr = torch.from_numpy(x_tr)
@@ -373,6 +438,192 @@ def simple_test_cond_tfms(args):
   # z_te = model(x_te, x_o_te, rtn_torch=True)
   # zi_te = model.inverse(z_te, x_o_te, rtn_torch=True)
   print("Ready")
+  IPython.embed()
+
+
+def get_sampled_cat(gen_vals, true_vals):
+  all_vi = np.sort(np.unique(list(gen_vals.keys()) + list(true_vals.keys())))
+  all_vals = {vi:(gen_vals[vi] if vi in gen_vals else true_vals[vi]) for vi in all_vi}
+  cat_vals = np.concatenate([all_vals[vi] for vi in all_vi], axis=1)
+  return cat_vals
+
+
+def plot_digit(cat_fs, xy=(-1, 8.5), w=10, h=29):
+  if not isinstance(cat_fs, list): cat_fs = [cat_fs]
+  digit_plots = [cat_f.reshape(28, 28) for cat_f in cat_fs]
+  if len(cat_fs) > 1:
+    digit_plot = np.concatenate(digit_plots, axis=1)
+  else:
+    digit_plot = digit_plots[0]
+
+  digit_plot[digit_plot < 0] = 0
+  digit_plot[digit_plot >= 1] = 1
+
+  fig, ax = plt.subplots()
+  ax.imshow(digit_plot, cmap="gray")
+#   rect1 = [0, 9, 28, 9]
+#   rect2 = [28, 18, 28, 18]
+#   rect3 = [56, 28, 28, 28]
+  r1 = patches.Rectangle(xy, h, w, linewidth=1, edgecolor='g', facecolor='none')
+  # r1 = patches.Rectangle((-1, -1), 29, 9.5, linewidth=1, edgecolor='g', facecolor='none')
+  # r2 = patches.Rectangle((28, 0), 28, 17, linewidth=1, edgecolor='g', facecolor='none')
+  # r3 = patches.Rectangle((56, 0), 27, 27, linewidth=1, edgecolor='g', facecolor='none')
+  ax.add_patch(r1)
+  # ax.add_patch(r2)
+  # ax.add_patch(r3)
+  plt.show()
+
+
+def plot_many_digits(
+    pred_digits, true_digits, grid_size=(10, 10),
+    rect_args=((-1, 8.5), 10, 28), title=""):
+
+  pred_digits = [dig.reshape(28, 28) for dig in pred_digits]
+  if true_digits is not None:
+    true_digits = [dig.reshape(28, 28) for dig in true_digits]
+  ndigs = len(pred_digits)
+
+  nrows, ncols = grid_size
+  fig, axs = plt.subplots(nrows, ncols)
+
+  white_line = np.ones((pred_digits[0].shape[1], 1))
+  xy, h, w = rect_args
+  dig_idx = 0
+  for ri in range(nrows):
+    if dig_idx >= ndigs:
+      break
+
+    for ci in range(ncols):
+      if dig_idx >= ndigs:
+        break
+
+      print("Plotting digit %i" % (dig_idx + 1), end="\r")
+      ax = axs[ri, ci]
+      pred_dig = pred_digits[dig_idx]
+      if true_digits is not None:
+        true_dig = true_digits[dig_idx]
+        plot_dig = np.concatenate([pred_dig, white_line, true_dig], axis=1)
+      else:
+        plot_dig = pred_dig
+      ax.imshow(plot_dig, cmap="gray")
+      rect = patches.Rectangle(
+          xy, w, h, linewidth=1, edgecolor='g', facecolor='none')
+      ax.add_patch(rect)
+      ax.xaxis.set_visible(False)
+      ax.xaxis.set_ticks([])
+      ax.yaxis.set_visible(False)
+      ax.yaxis.set_ticks([])
+      dig_idx += 1
+
+  if title:
+    fig.suptitle(title, fontsize=20)
+  plt.show()
+  # plt.pause(10.)
+  # IPython.embed()
+
+
+def test_mnist(args):
+  load_start_time = time.time()
+  n_views = 3
+  all_tr_data, all_va_data, all_te_data = ssvd.load_split_mnist(n_views=n_views)
+  (tr_data, y_tr) = all_tr_data
+  (va_data, y_va) = all_va_data
+  (te_data, y_te) = all_te_data
+  print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
+
+  n_sampled_tr = args.npts
+  n_sampled_te = args.npts // 2
+  tr_data, y_tr, tr_idxs = stratified_sample(tr_data, y_tr, n_sampled=n_sampled_tr)
+  te_data, y_te, te_idxs = stratified_sample(te_data, y_te, n_sampled=n_sampled_te)
+  n_tr = tr_data[0].shape[0]
+  n_te = te_data[0].shape[0]
+  b_o_tr = {vi: np.ones(n_tr) for vi in tr_data}
+  b_o_te = {vi: np.ones(n_te) for vi in te_data}
+  # digit = 0
+  # x_tr, y_tr = get_single_digit(x_tr, y_tr, digit=digit)
+  view_sizes = {vi:xv.shape[1] for vi, xv in tr_data.items()}
+  main_view = 1
+  models = make_default_tfms(args, view_sizes, is_cond=True)
+  model = models[main_view]
+
+  config = model.config
+  config.max_iters = args.max_iters
+  config.batch_size = args.batch_size
+  # config, view_config_and_inits, cond_config_and_inits = \
+  #     make_default_pipeline_config(args, view_sizes=view_sizes, start_logit=True)
+  # view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  # cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+
+  # model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+  # model.initialize(
+  #     view_tfm_config_lists, view_tfm_init_lists,
+  #     cond_tfm_config_lists, cond_tfm_init_lists)
+  IPython.embed()
+  model.fit(tr_data, b_o_tr)
+  IPython.embed()
+  globals().update(locals())
+  x_tr = tr_data[main_view]
+  x_te = te_data[main_view]
+  z_tr, ld_tr = model.forward(x_tr, tr_data, rtn_logdet=True, rtn_torch=False)
+  z_te, ld_te = model.forward(x_te, te_data, rtn_logdet=True, rtn_torch=False)
+  ld_tr = torch_utils.torch_to_numpy(ld_tr)
+  ld_te = torch_utils.torch_to_numpy(ld_te)
+  globals().update(locals())
+  i_tr = model.inverse(z_tr, tr_data, rtn_torch=False)
+  i_te = model.inverse(z_te, te_data, rtn_torch=False)
+  s_tr = model.sample(tr_data, use_mean=True)
+  s_te = model.sample(te_data, use_mean=True)
+  # IPython.embed()
+  globals().update(locals())
+  cat_tr = np.concatenate([tr_data[vi] for vi in range(len(tr_data))], axis=1)
+  cat_va = np.concatenate([va_data[vi] for vi in range(len(va_data))], axis=1)
+  cat_te = np.concatenate([te_data[vi] for vi in range(len(te_data))], axis=1)
+  globals().update(locals())
+  te_digits = get_sampled_cat({main_view:s_te}, te_data)
+  tr_digits = get_sampled_cat({main_view:s_tr}, tr_data)
+
+
+  n_samples = 100
+  te_didx = 0
+  sample_te = {vi:xvi[([te_didx]*n_samples)] for vi, xvi in te_data.items()}
+  didx_samples = model.sample(sample_te, use_mean=False)
+  didx_digits = get_sampled_cat({main_view: didx_samples}, sample_te)
+  plot_many_digits(didx_digits, None, grid_size=(10, 10))
+
+
+def test_pipeline(args):
+  data_func = _MV_DATAFUNCS.get(args.dtype, make_default_overlapping_data)
+  data, ptfms = data_func(args)
+  data = convert_numpy_to_float32(data)
+
+  n_tr = int(0.8 * args.npts)
+  n_te = args.npts - n_tr
+
+  tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
+  te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
+
+  view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
+
+  # IPython.embed()
+  # cond_tfm_config_lists, cond_tfm_init_args = make_default_cond_tfms(
+  #       args, view_sizes, rtn_args=True)
+  config, view_config_and_inits, cond_config_and_inits = \
+      make_default_pipeline_config(args, view_sizes=view_sizes)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+
+  # config.no_view_tfm = True
+  # IPython.embed()
+
+  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+  model.initialize(
+      view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists)
+
+  model.fit(data)
+  n_test_samples = n_te
+  # sample_data = model.sample(n_test_samples, rtn_torch=False)
+
   IPython.embed()
 
 
@@ -445,42 +696,6 @@ def test_cond_missing_tfms(args):
   # plt.scatter(y[args.npts:, 0], y[args.npts:, 1], color="r")
   # plt.show()
 
-
-def test_pipeline(args):
-  data_func = _MV_DATAFUNCS.get(args.dtype, make_default_overlapping_data)
-  data, ptfms = data_func(args)
-  data = convert_numpy_to_float32(data)
-
-  n_tr = int(0.8 * args.npts)
-  n_te = args.npts - n_tr
-
-  tr_data = {vi:vdat[:n_tr] for vi, vdat in data.items()}
-  te_data = {vi:vdat[n_tr:] for vi, vdat in data.items()}
-
-  view_sizes = {vi: vdat.shape[1] for vi, vdat in data.items()}
-
-  # IPython.embed()
-  # cond_tfm_config_lists, cond_tfm_init_args = make_default_cond_tfms(
-  #       args, view_sizes, rtn_args=True)
-  config, view_config_and_inits, cond_config_and_inits = \
-      make_default_pipeline_config(args, view_sizes=view_sizes)
-  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
-  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
-
-  # config.no_view_tfm = True
-  # IPython.embed()
-
-  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
-  model.initialize(
-      view_tfm_config_lists, view_tfm_init_lists,
-      cond_tfm_config_lists, cond_tfm_init_lists)
-
-  model.fit(data)
-  n_test_samples = n_te
-  # sample_data = model.sample(n_test_samples, rtn_torch=False)
-
-  IPython.embed()
-
   # tsne = umap.UMAP(n_components=2)
   # compare_dat = {}
   # for vi, tr_view in train_data.items():
@@ -529,146 +744,6 @@ def test_pipeline(args):
   plt.show()
 
 
-
-def pred_results_inliers(
-    model, sub_dat, y, percentile=90, ignore_mult=3., use_valid_n=False):
-  # Outliers are considered incorrect predictions
-  abs_sub_dat = np.abs(sub_dat)
-  sub_perc_vals = np.percentile(abs_sub_dat, axis=0, q=percentile)
-  vinds = (abs_sub_dat < ignore_mult * sub_perc_vals).all(axis=1)
-  print("Valid frac: %.2f" % vinds.sum()/vinds.shape[0])
-
-  valid_x = sub_dat[vinds]
-  valid_y = y[vinds]
-  pred_y = model.predict(valid_x)
-
-  if use_valid_n:
-    n_pts = valid_y.shape[0]
-  else:
-    n_pts = y.shape[0]
-  acc = (pred_y == valid_y).sum() / n_pts
-
-  return acc
-
-
-def get_ptbxl_results(base_model, sample_sets, y, set_labels):
-  n = y.shape[0]
-  results = {}
-  for i, set_label in enumerate(set_labels):
-    samples_i = sample_sets[set_label]
-    results_i = {}
-    for nv, nv_samples_i in samples_i.items():
-      results_i = {}
-      for subset, sub_dat in nv_samples_i.items():
-        # pred_y = base_model.predict(sub_dat)
-        # sub_acc = (pred_y == y)/n
-        sub_acc = pred_results_inliers(base_model, sub_dat, y)
-        results_i[subset] = sub_acc
-
-    results[set_label] = results_i
-
-  return results
-
-
-def get_ptbxl_results_all_labels(base_models, sample_sets, y_tr, y_te, set_labels):
-  results = {}
-  y_lbl = {"tr": y_tr, "te": y_te}
-  ptbxl_labels = ["NORM", "MI", "STTC", "CD", "HYP"]
-  set_labels = list(sample_sets.keys())
-  for dtype, y_d in y_lbl.items():
-    results[dtype] = {}
-    samples_d = {set_name: sample_sets[set_name][dtype] for set_name in sample_sets}
-    for i, lbl in enumerate(ptbxl_labels):
-      model_l = base_model[lbl]
-      y_lbl = get_labels(y_d, [lbl])
-      results_lbl = get_ptbxl_results(model_l, samples_d, y_lbl, set_labels)
-      print(samples_d.keys())
-      print(results_lbl.keys())
-      results[dtype][lbl] = results_lbl
-  return results
-
-
-def convert_ptbxl_results_to_mats(results):
-  acc_mats = {}
-  num_labels = None
-  label_list = None
-  num_sets = None
-  set_list = None
-  num_subsets = None
-  subset_list = None
-  for dtype, results_d in results.items():
-    acc_mats[dtype] = {}
-    if num_labels is None:
-      num_labels = len(results_d)
-    if label_list is None:
-      label_list = list(results_d.keys())
-    for li, lbl in enumerate(label_list):
-      results_ld = results_d[lbl]
-      if num_sets is None:
-        num_sets = len(results_ld)
-      if set_list is None:
-        set_list = list(results_ld.keys())
-      for set_i, set_type in enumerate(set_list):
-        results_sld = results_ld[set_type]
-        if num_subsets is None:
-          num_subsets = len(results_sld)
-        if not acc_mats[dtype][set_type]:
-          acc_mats[dtype][lbl] = np.zeros(num_subsets, num_sets)
-        if subset_list is None:
-          subset_list = list(results_sld.keys())
-        for si, subset in enumerate(subset_list):
-          acc_mats[dtype][lbl][si, set_i] = results_sld[subset]
-
-  return acc_mats, label_list, set_list, subset_list
-
-
-def plot_ptbxl_heatmaps(acc_mats, lbl_names, set_list, subset_list):
-  dname = {"tr": "Training", "te": "Testing"}
-  x_ticks = np.arange(0.5, len(subset_list))
-  y_ticks = np.arange(0.5, len(set_list))
-  for dtype, accs_d in acc_mats.items():
-    for lbl, mat in accs_d.items():
-      fig = plt.figure()
-      hm = plt.imshow(mat)
-      cbar = plt.colorbar(hm)
-      plt.title("%s accuracy: %s" % (dname[dtype], set_name))
-      plt.xtick_labels(x_ticks, subset_list)
-      plt.ytick_labels(y_ticks, set_list)
-      # for mind in msplit_inds:
-      #   mind -= 0.5
-      #   plt.axvline(x=mind, ls="--")
-      #   plt.axhline(y=mind, ls="--")
-      plt.show()
-
-
-def test_ptbxl(args):
-  local_data_file = "./ptbxl_data.npy"
-  load_start_time = time.time()
-  if os.path.exists(local_data_file):
-    trX, trY, teX, teY = np.load(local_data_file, allow_pickle=True).tolist()
-    ann = eeg_data.load_ptbxl_annotations()
-  else:
-    (trX, trY), (teX, teY), ann = eeg_data.load_ptbxl()
-
-  print("Time taken to load PTB-XL: %.2fs" % (time.time() - load_start_time))
-  IPython.embed()
-
-  view_sizes = {vi:trX[vi].shape[1] for vi in trX}
-
-  config, view_config_and_inits, cond_config_and_inits = \
-      make_default_pipeline_config(args, view_sizes=view_sizes)
-  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
-  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
-  IPython.embed()
-
-  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
-  model.initialize(
-      view_tfm_config_lists, view_tfm_init_lists,
-      cond_tfm_config_lists, cond_tfm_init_lists)
-
-  model.fit(trX)
-
-
 def stratified_sample(view_data, labels, n_sampled, frac=None, get_inds=True):
   npts = labels.shape[0]
   if frac is not None:
@@ -700,31 +775,31 @@ def get_single_digit(x, y, digit=0):
   return x_digit, y_digit
 
 
-def test_mnist(args):
-  local_data_file = "./ptbxl_data.npy"
-  load_start_time = time.time()
-  n_views = 3
-  tr_data, va_data, te_data = ssvd.load_split_mnist(n_views=n_views)
-  (x_tr, y_tr) = tr_data
-  (x_va, y_va) = va_data
-  (x_te, y_te) = te_data
-  print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
-  IPython.embed()
+# def test_mnist(args):
+#   local_data_file = "./ptbxl_data.npy"
+#   load_start_time = time.time()
+#   n_views = 3
+#   tr_data, va_data, te_data = ssvd.load_split_mnist(n_views=n_views)
+#   (x_tr, y_tr) = tr_data
+#   (x_va, y_va) = va_data
+#   (x_te, y_te) = te_data
+#   print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
+#   IPython.embed()
 
-  view_sizes = {vi:x_tr[vi].shape[1] for vi in x_tr}
+#   view_sizes = {vi:x_tr[vi].shape[1] for vi in x_tr}
 
-  config, view_config_and_inits, cond_config_and_inits = \
-      make_default_pipeline_config(args, view_sizes=view_sizes, start_logit=True)
-  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
-  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+#   config, view_config_and_inits, cond_config_and_inits = \
+#       make_default_pipeline_config(args, view_sizes=view_sizes, start_logit=True)
+#   view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+#   cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
-  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
-  model.initialize(
-      view_tfm_config_lists, view_tfm_init_lists,
-      cond_tfm_config_lists, cond_tfm_init_lists)
-  IPython.embed()
+#   model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+#   model.initialize(
+#       view_tfm_config_lists, view_tfm_init_lists,
+#       cond_tfm_config_lists, cond_tfm_init_lists)
+#   IPython.embed()
 
-  model.fit(x_tr)
+#   model.fit(x_tr)
 
 
 _MV_DATAFUNCS = {
@@ -736,10 +811,10 @@ _MV_DATAFUNCS = {
 
 _TEST_FUNCS = {
     0: simple_test_cond_tfms,
-    1: test_cond_missing_tfms,
-    2: test_pipeline,
-    3: test_ptbxl,
-    4: test_mnist,
+    1: test_mnist,
+    # 1: test_cond_missing_tfms,
+    # 2: test_pipeline,
+    # 3: test_ptbxl,
 }
 
 
@@ -788,6 +863,6 @@ if __name__ == "__main__":
       ]
   args = utils.get_args(options)
   
-  func = _TEST_FUNCS.get(args.expt, simple_test_cond_tfms)
+  func = _TEST_FUNCS.get(args.expt, test_mnist)
   func(args)
  

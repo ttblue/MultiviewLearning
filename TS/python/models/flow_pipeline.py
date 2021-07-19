@@ -199,27 +199,3 @@ class MultiviewFlowTrainer(nn.Module):
     z, log_jac_det = self._transform(x, rtn_logdet=True)
     ll = self._likelihood_model.log_prob(z) + log_jac_det
     return float(ll.sum())
-
-    # raise NotImplementedError("Implement this!")
-
-
-# class ACFlowTrainer(FlowTrainer):
-#   # Class for AC (arbitrary conditioning) flow training.
-#   def __init__(self, config):
-#     super(ACFlowTrainer, self).__init__(config)
-
-#   def initialize(self):
-#     pass
-
-#   def _train_loop(self):
-#     pass
-
-#   def fit(self, x):
-#     raise NotImplementedError("Implement this!")
-
-#   def sample(self, n):
-#     raise NotImplementedError("Implement this!")
-
-#   def log_likelihood(self, x):
-#     raise NotImplementedError("Implement this!")
-
