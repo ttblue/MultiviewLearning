@@ -562,7 +562,7 @@ def test_mnist(args):
 
   gpu_num = 3
   dev = torch.device("cuda:%i" % gpu_num)
-  model.to(dev)
+  # model.to(dev)
   IPython.embed()
   model.fit(tr_data, b_o_tr, dev=dev)
   IPython.embed()

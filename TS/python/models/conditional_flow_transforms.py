@@ -190,11 +190,12 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     # self.config = config
     # self._dim = None
 
-  def initialize(self, view_id, view_sizes, *args, **kwargs):
+  def initialize(self, view_id, view_sizes, dev, *args, **kwargs):
     # raise NotImplementedError("Abstract class method")
     self.view_id = view_id
     self.view_sizes = view_sizes
     self._dim = view_sizes[view_id]
+    self._dev = dev
 
   # def _get_params(self, x_o, rtn_torch=True):
   #   raise NotImplementedError("Abstract class method")
@@ -300,11 +301,14 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     p_grads = [p.grad for p in self.parameters()]
     return max([pg.abs().max() for pg in p_grads])
 
-  def load_state_dict(self, state_dict):
+  def load_state_dict(self, state_dict, dev=None):
     super(ConditionalInvertibleTransform, self).load_state_dict(state_dict)
+    self._dev = dev
     if not hasattr(self, "base_dist"):
-      loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+      loc, scale = torch.zeros(self._dim, device=dev), torch.eye(self._dim, device=dev)
       self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
+    if dev:
+      self.cuda(dev)
     self.eval()
 
 
@@ -316,12 +320,12 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     if self.config.verbose:
       all_start_time = time.time()
 
-    self._x_vs = torch_utils.dict_numpy_to_torch(x_vs)
-    self._b_o = torch_utils.dict_numpy_to_torch(b_o)
-    if dev is not None:
-      for vi in self._x_vs:
-        self._x_vs[vi].to(dev)
-        self._b_o[vi].to(dev)
+    self._x_vs = torch_utils.dict_numpy_to_torch(x_vs, dev=dev)
+    self._b_o = torch_utils.dict_numpy_to_torch(b_o, dev=dev)
+    # if dev is not None:
+    #   for vi in self._x_vs:
+    #     self._x_vs[vi] = self._x_vs[vi].cuda(dev)
+    #     self._b_o[vi] = self._b_o[vi].cuda(dev)
 
     # self._y = None if y is None else torch_utils.numpy_to_torch(y)
     self._npts, self._dim = self._x_vs[self.view_id].shape
@@ -333,7 +337,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
             "Base dist. type %s not implemented and likelihood model"
             " not provided." % self.config.base_dist)
       else:
-        loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+        loc = torch.zeros(self._dim, device=dev)
+        scale = torch.eye(self._dim, device=dev)
         self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
     else:
       self.base_dist = lhood_model
@@ -355,7 +360,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self._stop_iters = 0
 
     if dev is not None:
-      self.to(dev)
+      self.cuda(dev)
+
     try:
       itr = -1
       for itr in range(self.config.max_iters):
@@ -435,8 +441,8 @@ class ReverseTransform(ConditionalInvertibleTransform):
   def __init__(self, config):
     super(ReverseTransform, self).__init__(config)
 
-  def initialize(self, view_id, view_sizes, *args, **kwargs):
-    super(ReverseTransform, self).initialize(view_id, view_sizes)
+  def initialize(self, view_id, view_sizes, dev, *args, **kwargs):
+    super(ReverseTransform, self).initialize(view_id, view_sizes, dev)
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
@@ -456,8 +462,8 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
   def __init__(self, config):
     super(LeakyReLUTransform, self).__init__(config)
 
-  def initialize(self, view_id, view_sizes, *args, **kwargs):
-    super(LeakyReLUTransform, self).initialize(view_id, view_sizes)
+  def initialize(self, view_id, view_sizes, dev, *args, **kwargs):
+    super(LeakyReLUTransform, self).initialize(view_id, view_sizes, dev)
     neg_slope = self.config.neg_slope
     self._relu_func = torch.nn.LeakyReLU(negative_slope=neg_slope)
     self._inv_func = torch.nn.LeakyReLU(negative_slope=(1. / neg_slope))
@@ -486,8 +492,8 @@ class SigmoidLogitTransform(ConditionalInvertibleTransform):
     raise NotImplementedError("Not yet implemented.")
     super(SigmoidLogitTransform, self).__init__(config)
 
-  def initialize(self, view_id, view_sizes, *args, **kwargs):
-    super(SigmoidLogitTransform, self).initialize(view_id, view_sizes)
+  def initialize(self, view_id, view_sizes, dev, *args, **kwargs):
+    super(SigmoidLogitTransform, self).initialize(view_id, view_sizes, dev)
 
   def _sigmoid(self, x, rtn_logdet=False):
     z = torch.sigmoid(x)
@@ -626,9 +632,9 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     super(ConditionalLinearTransformation, self).__init__(config)
 
   def initialize(
-      self, view_id, view_sizes, nn_config, *args, **kwargs):
+      self, view_id, view_sizes, dev, nn_config, *args, **kwargs):
 
-    super(ConditionalLinearTransformation, self).initialize(view_id, view_sizes)
+    super(ConditionalLinearTransformation, self).initialize(view_id, view_sizes, dev)
     self._view_sizes_obs = {
         vi: vdim for vi, vdim in self.view_sizes.items() if vi != self.view_id}
 
@@ -641,6 +647,8 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     self._param_net.initialize(
         func_type="linear", input_dims=input_dims, output_dims=output_dims,
         bias=self.config.has_bias)
+    if dev:
+      self._param_net.cuda(dev)
     # init_lin_param = (
     #     torch.eye(dim) if init_lin_param is None else
     #     torch_utils.numpy_to_torch(init_lin_param))
@@ -670,7 +678,8 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     npts = x.shape[0]
     if b_o is None:
       b_o = {
-          vi: torch.ones(npts) if vi in x_o else torch.zeros(npts)
+          vi: (torch.ones(npts, device=self._dev) if vi in x_o else
+               torch.zeros(npts, device=self._dev))
           for vi in self._view_sizes_obs
       }
     if self.view_id in x_o:
@@ -759,9 +768,9 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     self._output_dim = self._tfm_inds.shape[0]
 
   def initialize(
-      self, view_id, view_sizes, index_mask, nn_config, *args, **kwargs):
+      self, view_id, view_sizes, dev, index_mask, nn_config, *args, **kwargs):
 
-    super(ConditionalSSCTransform, self).initialize(view_id, view_sizes)
+    super(ConditionalSSCTransform, self).initialize(view_id, view_sizes, dev)
 
     self.set_fixed_inds(index_mask)
     self._view_sizes_obs = {
@@ -786,12 +795,13 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     npts = x.shape[0]
     if b_o is None:
       b_o = {
-          vi: torch.ones(npts) if vi in x_o else torch.zeros(npts)
+          vi: (torch.ones(npts, device=self._dev) if vi in x_o else
+               torch.zeros(npts, device=self._dev))
           for vi in self._view_sizes_obs
       }
 
     x_o[self.view_id] = x[:, self._fixed_inds]
-    b_o[self.view_id] = torch.ones(npts)
+    b_o[self.view_id] = torch.ones(npts, device=self._dev)
 
     ignored_bitflags = [self.view_id]
     imputed_data = MVZeroImpute(
@@ -813,7 +823,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     x_fixed = x[:, self._fixed_inds]
     x_tfm = x[:, self._tfm_inds]
 
-    z = torch.zeros_like(x)
+    z = torch.zeros_like(x, device=self._dev)
     z[:, self._fixed_inds] = x_fixed
     z[:, self._tfm_inds] = scale * x_tfm  + shift
 
@@ -838,7 +848,7 @@ class ConditionalSSCTransform(ConditionalInvertibleTransform):
     z_fixed = z[:, self._fixed_inds]
     z_tfm = z[:, self._tfm_inds]
 
-    x = torch.zeros_like(z)
+    x = torch.zeros_like(z, device=self._dev)
     x[:, self._fixed_inds] = z_fixed
     x[:, self._tfm_inds] = scale * (z_tfm - shift)
 
@@ -862,19 +872,20 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
       self._dim = dims[0]
 
   def initialize(
-      self, view_id, view_sizes, tfm_list, init_args=None, *args, **kwargs):
+      self, view_id, view_sizes, tfm_list, init_args=None, dev=None, *args, **kwargs):
     super(CompositionConditionalTransform, self).initialize(view_id, view_sizes)
 
+    self._dev = dev
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
     if init_args:
       for tfm, arg in zip(self._tfm_list, init_args):
         if isinstance(arg, tuple) or isinstance(arg, list):
-          tfm.initialize(view_id, view_sizes, *arg)
+          tfm.initialize(view_id, view_sizes, dev, *arg)
         elif arg is not None:
-          tfm.initialize(view_id, view_sizes, arg)
+          tfm.initialize(view_id, view_sizes, dev, arg)
         else:
-          tfm.initialize(view_id, view_sizes)
+          tfm.initialize(view_id, view_sizes, dev)
     self._set_dim()
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
@@ -928,7 +939,7 @@ _TFM_TYPES = {
     "linear": ConditionalLinearTransformation,
 }
 def make_transform(
-    configs, view_id, view_sizes, init_args=None, comp_config=None):
+    configs, view_id, view_sizes, init_args=None, comp_config=None, dev=None):
   if not isinstance(configs, list):
     configs = [configs]
 
@@ -943,7 +954,7 @@ def make_transform(
   comp_config = (
       CTfmConfig("composition") if comp_config is None else comp_config)
   comp_tfm = CompositionConditionalTransform(comp_config)
-  comp_tfm.initialize(view_id, view_sizes, tfm_list, init_args)
+  comp_tfm.initialize(view_id, view_sizes, tfm_list, init_args, dev)
   return comp_tfm
 
   # if config.tfm_type not in _TFM_TYPES:

@@ -19,10 +19,12 @@ _BATCH_FIRST = False
 
 ################################################################################
 ## Type converters
-def numpy_to_torch(var, copy=False):
+def numpy_to_torch(var, copy=False, dev=None):
   if not isinstance(var, torch.Tensor):
     if copy: var = var.copy()
     var = torch.from_numpy(var).type(_DTYPE).requires_grad_(False)
+    if dev:
+      var = var.cuda(var)
   return var
 
 
@@ -33,8 +35,8 @@ def torch_to_numpy(var, copy=False):
   return var
 
 
-def dict_numpy_to_torch(data, copy=False):
-  return {i: numpy_to_torch(x, copy) for i, x in data.items()}
+def dict_numpy_to_torch(data, copy=False, dev=None):
+  return {i: numpy_to_torch(x, copy, dev) for i, x in data.items()}
 
 
 def dict_torch_to_numpy(data, copy=False):
