@@ -308,7 +308,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self.eval()
 
 
-  def fit(self, x_vs, b_o, lhood_model=None):
+  def fit(self, x_vs, b_o, lhood_model=None, dev=None):
     # @b_o: dictionary of bit flags of length n_pts, denoting availablity of 
     #     view for each data-point
     # Simple fitting procedure for transforming x to y
@@ -318,6 +318,11 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
 
     self._x_vs = torch_utils.dict_numpy_to_torch(x_vs)
     self._b_o = torch_utils.dict_numpy_to_torch(b_o)
+    if dev is not None:
+      for vi in self._x_vs:
+        self._x_vs[vi].to(dev)
+        self._b_o[vi].to(dev)
+
     # self._y = None if y is None else torch_utils.numpy_to_torch(y)
     self._npts, self._dim = self._x_vs[self.view_id].shape
 
@@ -348,6 +353,9 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self._avg_grad_history = []
     self._prev_loss = np.inf
     self._stop_iters = 0
+
+    if dev is not None:
+      self.to(dev)
     try:
       itr = -1
       for itr in range(self.config.max_iters):

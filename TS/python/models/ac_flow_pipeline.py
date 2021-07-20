@@ -328,7 +328,7 @@ class MultiviewACFlowTrainer(nn.Module):
       x_vs = torch_utils.dict_torch_to_numpy(x_vs)
     return x_vs
 
-  def fit(self, x_vs, b_o=None):
+  def fit(self, x_vs, b_o=None, dev=None):
     if self.config.verbose:
       all_start_time = time.time()
       print("Starting training loop.")
@@ -337,6 +337,8 @@ class MultiviewACFlowTrainer(nn.Module):
     # For convenience
     self._npts = x_vs[utils.get_any_key(x_vs)].shape[0]
     self._view_data = torch_utils.dict_numpy_to_torch(x_vs)
+    if dev is not None:
+      self._view_data.to(dev)
     self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
 
     self._view_subset_shuffler = self._make_view_subset_shuffler()

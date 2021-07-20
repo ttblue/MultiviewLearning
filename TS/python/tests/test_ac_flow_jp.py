@@ -559,8 +559,12 @@ def test_mnist(args):
   # model.initialize(
   #     view_tfm_config_lists, view_tfm_init_lists,
   #     cond_tfm_config_lists, cond_tfm_init_lists)
+
+  gpu_num = 3
+  dev = torch.device("cuda:%i" % gpu_num)
+  model.to(dev)
   IPython.embed()
-  model.fit(tr_data, b_o_tr)
+  model.fit(tr_data, b_o_tr, dev=dev)
   IPython.embed()
   globals().update(locals())
   x_tr = tr_data[main_view]
