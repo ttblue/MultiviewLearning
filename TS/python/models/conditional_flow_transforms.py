@@ -311,7 +311,6 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
       self.cuda(dev)
     self.eval()
 
-
   def fit(self, x_vs, b_o, lhood_model=None, dev=None):
     # @b_o: dictionary of bit flags of length n_pts, denoting availablity of 
     #     view for each data-point
@@ -407,6 +406,24 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
 
     # if inverted:
     return self.inverse(z_samples, x_o, b_o, rtn_torch)
+
+  def to(self, dev):
+    super(ConditionalInvertibleTransform, self).to(dev)
+    for m in self._modules:
+      if hasattr(m, "_dev"):
+        m.to(dev)
+        m._dev = dev
+
+    if hasattr(self.base_dist, "to"):
+      self.base_dist.to(dev)
+    else:
+      self.base_dist.loc = self.base_dist.loc.to(dev)
+      self.base_dist.covariance_matrix = (
+          self.base_dist.covariance_matrix.to(dev))
+      self.base_dist._unbroadcasted_scale_tril = (
+          self.base_dist._unbroadcasted_scale_tril.to(dev))
+
+    self._dev = dev
     # return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
   # def log_prob(self, x_u, x_o):
   #   z, log_det = self(x, rtn_torch=True, rtn_logdet=True)

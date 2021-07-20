@@ -569,6 +569,7 @@ def test_mnist(args):
   IPython.embed()
   model.fit(tr_data, b_o_tr, dev=dev)
   IPython.embed()
+  model.to(dev)
   globals().update(locals())
   x_tr = tr_data[main_view]
   x_te = te_data[main_view]

@@ -54,7 +54,7 @@ def generate_linear_types_args(
   return ltypes, largs
 
 
-def LU_split(W, dev=dev):
+def LU_split(W, dev=None):
   # Note: this is NOT an LU decomp. This just splits a tensor variable
   # into lower triangular L with unit diagonal and upper triangular U.
   # The corresponding triangular elements of L and U are the same as W
