@@ -167,7 +167,10 @@ def make_default_tfms(
         linear_tfm_config = config_func("linear")
         linear_tfm_config.has_bias = True
         vi_tfm_configs.append(linear_tfm_config)
-        vi_tfm_inits.append(default_nn_config)# init_mat))
+        if is_cond:
+          vi_tfm_inits.append(default_nn_config)# init_mat))
+        else:
+          vi_tfm_inits.append(vdim)# init_mat))
 
       elif tf == "r":
         raise ValueError("RNN Coupling not yet available.")
@@ -219,13 +222,11 @@ def make_default_pipeline_config(
   # print(args.__dict__.keys())
   all_view_args = ArgsCopy(args)
   # all_view_args.ndim = tot_dim
-  cond_config_lists, cond_inits_lists = make_default_tfm(
-      all_view_args, view_sizes, double_tot_dim=True, rtn_args=True,
-      is_cond=True)
+  cond_config_lists, cond_inits_lists = make_default_tfms(
+      all_view_args, view_sizes, rtn_args=True, is_cond=True)
 
-  view_tfm_config_lists, view_tfm_init_lists = make_default_tfm(
-      all_view_args, view_sizes, double_tot_dim=True, rtn_args=True,
-      is_cond=False)
+  view_tfm_config_lists, view_tfm_init_lists = make_default_tfms(
+      all_view_args, view_sizes, rtn_args=True, is_cond=False)
   # for vi, vdim in view_sizes.items():
   #   vi_args = ArgsCopy(args)
   #   vi_args.ndim = vdim
@@ -476,7 +477,7 @@ def plot_digit(cat_fs, xy=(-1, 8.5), w=10, h=29):
 
 def plot_many_digits(
     pred_digits, true_digits, grid_size=(10, 10),
-    rect_args=((-1, 8.5), 10, 28), title=""):
+    rect_args=((-1, 8.5), 10, 28.5), title=""):
 
   pred_digits = [dig.reshape(28, 28) for dig in pred_digits]
   if true_digits is not None:
@@ -582,12 +583,14 @@ def test_mnist(args):
   te_digits = get_sampled_cat({main_view:s_te}, te_data)
   tr_digits = get_sampled_cat({main_view:s_tr}, tr_data)
 
-
+  plt_type = "tr"
   n_samples = 100
-  te_didx = 0
-  sample_te = {vi:xvi[([te_didx]*n_samples)] for vi, xvi in te_data.items()}
-  didx_samples = model.sample(sample_te, use_mean=False)
-  didx_digits = get_sampled_cat({main_view: didx_samples}, sample_te)
+  didx = 34
+  base_data = tr_data if plt_type == "tr" else te_data
+  globals().update(locals())
+  sample_xo = {vi:xvi[([didx]*n_samples)] for vi, xvi in base_data.items()}
+  didx_samples = model.sample(sample_xo, use_mean=False)
+  didx_digits = get_sampled_cat({main_view: didx_samples}, sample_xo)
   plot_many_digits(didx_digits, None, grid_size=(10, 10))
 
 
@@ -617,8 +620,10 @@ def test_pipeline(args):
 
   model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
   model.initialize(
-      view_tfm_config_lists, view_tfm_init_lists,
+      view_sizes, view_tfm_config_lists, view_tfm_init_lists,
       cond_tfm_config_lists, cond_tfm_init_lists)
+
+  IPython.embed()
 
   model.fit(data)
   n_test_samples = n_te
@@ -812,8 +817,8 @@ _MV_DATAFUNCS = {
 _TEST_FUNCS = {
     0: simple_test_cond_tfms,
     1: test_mnist,
+    2: test_pipeline,
     # 1: test_cond_missing_tfms,
-    # 2: test_pipeline,
     # 3: test_ptbxl,
 }
 
@@ -832,7 +837,7 @@ if __name__ == "__main__":
       ("shape", str, "Shape of toy data.", "cube"),
       ("max_iters", int, "Number of iters for opt.", 10000),
       ("batch_size", int, "Batch size for opt.", 100),
-      ("init_tfm_set", str,
+      ("start_tfm_set", str,
        "Initial sequence of s/l/v/k/r/g (3x scale coupling, linear, reverse,"
        "leaky_relu, rnn coupling, logit)", ""),
       ("repeat_tfm_set", str,

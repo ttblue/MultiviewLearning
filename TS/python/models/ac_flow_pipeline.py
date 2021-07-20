@@ -45,24 +45,24 @@ class MultiviewACFlowTrainer(nn.Module):
     super(MultiviewACFlowTrainer, self).__init__()
 
   def initialize(
-      self, view_tfm_config_lists, view_tfm_init_args,
+      self, view_sizes, view_tfm_config_lists, view_tfm_init_args,
       cond_tfm_config_lists, cond_tfm_init_args):
     # Initialize transforms, mm model, optimizer, etc.
 
     # IPython.embed()
+    self._view_dims = view_sizes
     self._view_tfm_config_lists = view_tfm_config_lists
     self._cond_tfm_config_lists = cond_tfm_config_lists
     # View encoders:
     self._nviews = len(view_tfm_config_lists)
     self._view_tfms = nn.ModuleDict()
     self._dim = 0
-    self._view_dims = {}
     for vi, cfg_list in view_tfm_config_lists.items():
       init_args = view_tfm_init_args[vi]
       tfm = flow_transforms.make_transform(cfg_list, init_args)
       self._view_tfms["v_%i"%vi] = tfm
-      self._view_dims[vi] = tfm._dim
-      self._dim += tfm._dim  # Assume there are no "None" dims
+      # self._view_dims[vi] = tfm._dim
+      self._dim += view_sizes[vi]  # Assume there are no "None" dims
 
     # Conditional transforms
     # self._shared_tfm = conditional_flow_transforms.make_transform(
@@ -70,7 +70,8 @@ class MultiviewACFlowTrainer(nn.Module):
     self._cond_tfms = nn.ModuleDict()
     for vi, cfg_list in cond_tfm_config_lists.items():
       init_args = cond_tfm_init_args[vi]
-      tfm = conditional_flow_transforms.make_transform(cfg_list, init_args)
+      tfm = conditional_flow_transforms.make_transform(
+        cfg_list, vi, view_sizes, init_args)
       self._cond_tfms["v_%i"%vi] = tfm
 
     # if self.config.likelihood_config is None:
@@ -215,16 +216,16 @@ class MultiviewACFlowTrainer(nn.Module):
 
     return output
 
-  def loss(self, l_nll, ld_vs, aggregate="sum", *args, **kwargs):
+  def loss(self, l_nll, ld_vs, aggregate=True, *args, **kwargs):
     nll_loss = {}
     total_loss = 0.
     for vi in l_nll:
       l_nll_vi = l_nll[vi]
       ld_vi = ld_vs[vi]
-      nll_loss[vi] = -torch.sum(ld_vi) + torch.sum(l_nll_vi)
+      nll_loss[vi] = -torch.mean(ld_vi) + torch.mean(l_nll_vi)
       total_loss += nll_loss[vi]
 
-    if aggregate == "sum":
+    if aggregate:
       return total_loss
       
     return nll_loss
@@ -254,12 +255,12 @@ class MultiviewACFlowTrainer(nn.Module):
       batch_start = batch_idx * self.config.batch_size
       batch_end = min(batch_start + self.config.batch_size, self._npts)
 
-      batch_npts = batch_end - batch_start
+      self._batch_npts = batch_end - batch_start
       xvs_batch = {vi:xv[batch_start:batch_end] for vi, xv in x_vs.items()}
       available_views = next(self._view_subset_shuffler)
       b_o_batch = {
-          vi:(torch.ones(batch_npts) if vi in available_views else
-              torch.zeros(batch_npts))
+          vi:(torch.ones(self._batch_npts) if vi in available_views else
+              torch.zeros(self._batch_npts))
           for vi in xvs_batch
       }
       # if self.config.verbose:
@@ -327,7 +328,7 @@ class MultiviewACFlowTrainer(nn.Module):
       x_vs = torch_utils.dict_torch_to_numpy(x_vs)
     return x_vs
 
-  def fit(self, x_vs):
+  def fit(self, x_vs, b_o=None):
     if self.config.verbose:
       all_start_time = time.time()
       print("Starting training loop.")
@@ -357,11 +358,11 @@ class MultiviewACFlowTrainer(nn.Module):
         self._loss_history.append(loss_val)
         if self.config.verbose:
           itr_diff_time = time.time() - itr_start_time
-          print("\n  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
+          print("  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
                 (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
                 end='\r')
       if self.config.verbose:
-        print("\n  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
+        print("  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
               (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
               end='\r')
     except KeyboardInterrupt:
