@@ -54,7 +54,7 @@ def generate_linear_types_args(
   return ltypes, largs
 
 
-def LU_split(W):
+def LU_split(W, dev=dev):
   # Note: this is NOT an LU decomp. This just splits a tensor variable
   # into lower triangular L with unit diagonal and upper triangular U.
   # The corresponding triangular elements of L and U are the same as W
@@ -62,7 +62,7 @@ def LU_split(W):
   # This is for storing the matrix itself as the LU decomposition.
   dim = W.shape[-1]
   module = torch if isinstance(W, torch.Tensor) else np
-  L = module.eye(dim) + module.tril(W, -1)
+  L = module.eye(dim, device=dev) + module.tril(W, -1)
   U = module.triu(W, 0)
 
   return L, U

@@ -836,7 +836,7 @@ if __name__ == "__main__":
   options = [
       ("etype", str, "Expt. type (gen/rec)", "gen"),
       ("dtype", str, "Data type (random/single_dim_copy/o1/o2/ind/sh)", "ind"),
-      ("gpu_num", int, "GPU ID if using GPU. -1 for CPU.", -1)
+      ("gpu_num", int, "GPU ID if using GPU. -1 for CPU.", -1),
       ("nviews", int, "Number of views", 3),
       ("npts", int, "Number of points", 1000),
       ("ndim", int, "Dimensions", 10),

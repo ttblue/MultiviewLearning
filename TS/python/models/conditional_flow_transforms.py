@@ -446,7 +446,7 @@ class ReverseTransform(ConditionalInvertibleTransform):
 
   def forward(self, x, x_o, b_o=None, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    reverse_idx = torch.arange(x.size(-1) -1, -1, -1).long()
+    reverse_idx = torch.arange(x.size(-1) -1, -1, -1, device=self._dev).long()
     z = x.index_select(-1, reverse_idx)
 
     z = z if rtn_torch else torch_utils.torch_to_numpy(z)
@@ -475,7 +475,8 @@ class LeakyReLUTransform(ConditionalInvertibleTransform):
 
     z = z if rtn_torch else torch_utils.torch_to_numpy(z)
     if rtn_logdet:
-      neg_elements = torch.as_tensor((x < 0), dtype=torch_utils._DTYPE)
+      neg_elements = torch.as_tensor(
+          (x < 0), dtype=torch_utils._DTYPE, device=self._dev)
       jac_logdet = neg_elements.sum(1) * self._log_slope
       return z, jac_logdet
     return z
@@ -671,7 +672,7 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
     else:
       t = 0
 
-    L, U = torch_utils.LU_split(lin_params)
+    L, U = torch_utils.LU_split(lin_params, dev=self._dev)
     return L, U, t
 
   def _impute_mv_data(self, x, x_o, b_o):
