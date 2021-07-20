@@ -634,7 +634,8 @@ class ConditionalLinearTransformation(ConditionalInvertibleTransform):
   def initialize(
       self, view_id, view_sizes, dev, nn_config, *args, **kwargs):
 
-    super(ConditionalLinearTransformation, self).initialize(view_id, view_sizes, dev)
+    super(ConditionalLinearTransformation, self).initialize(
+        view_id, view_sizes, dev)
     self._view_sizes_obs = {
         vi: vdim for vi, vdim in self.view_sizes.items() if vi != self.view_id}
 
@@ -873,9 +874,9 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
 
   def initialize(
       self, view_id, view_sizes, tfm_list, init_args=None, dev=None, *args, **kwargs):
-    super(CompositionConditionalTransform, self).initialize(view_id, view_sizes)
+    super(CompositionConditionalTransform, self).initialize(
+        view_id, view_sizes, dev)
 
-    self._dev = dev
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
     if init_args:

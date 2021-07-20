@@ -94,7 +94,8 @@ _AVAILABLE_TRANSFORMS = {
     "g": "logit",
 }
 def make_default_tfms(
-    args, view_sizes, double_tot_dim=False, rtn_args=False, is_cond=True):
+    args, view_sizes, double_tot_dim=False, rtn_args=False, is_cond=True,
+    dev=None):
   # dim = args.ndim
   # reset_bit_mask = True
   # num_ss_tfm = args.num_cond_ss_tfm
@@ -202,7 +203,7 @@ def make_default_tfms(
   if is_cond:
     models = {
         vi: conditional_flow_transforms.make_transform(
-            tfm_configs[vi], vi, view_sizes, tfm_inits[vi], comp_config)
+            tfm_configs[vi], vi, view_sizes, tfm_inits[vi], comp_config, dev)
         for vi in tfm_configs
     }
   else:
@@ -532,6 +533,10 @@ def test_mnist(args):
   (te_data, y_te) = all_te_data
   print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
 
+  dev = None
+  if torch.cuda.is_available() and args.gpu_num >= 0:
+    dev = torch.device("cuda:%i" % args.gpu_num)
+
   n_sampled_tr = args.npts
   n_sampled_te = args.npts // 2
   tr_data, y_tr, tr_idxs = stratified_sample(tr_data, y_tr, n_sampled=n_sampled_tr)
@@ -544,7 +549,7 @@ def test_mnist(args):
   # x_tr, y_tr = get_single_digit(x_tr, y_tr, digit=digit)
   view_sizes = {vi:xv.shape[1] for vi, xv in tr_data.items()}
   main_view = 1
-  models = make_default_tfms(args, view_sizes, is_cond=True)
+  models = make_default_tfms(args, view_sizes, is_cond=True, dev=dev)
   model = models[main_view]
 
   config = model.config
@@ -560,8 +565,6 @@ def test_mnist(args):
   #     view_tfm_config_lists, view_tfm_init_lists,
   #     cond_tfm_config_lists, cond_tfm_init_lists)
 
-  gpu_num = 3
-  dev = torch.device("cuda:%i" % gpu_num)
   # model.to(dev)
   IPython.embed()
   model.fit(tr_data, b_o_tr, dev=dev)
@@ -833,6 +836,7 @@ if __name__ == "__main__":
   options = [
       ("etype", str, "Expt. type (gen/rec)", "gen"),
       ("dtype", str, "Data type (random/single_dim_copy/o1/o2/ind/sh)", "ind"),
+      ("gpu_num", int, "GPU ID if using GPU. -1 for CPU.", -1)
       ("nviews", int, "Number of views", 3),
       ("npts", int, "Number of points", 1000),
       ("ndim", int, "Dimensions", 10),

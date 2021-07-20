@@ -24,7 +24,7 @@ def numpy_to_torch(var, copy=False, dev=None):
     if copy: var = var.copy()
     var = torch.from_numpy(var).type(_DTYPE).requires_grad_(False)
     if dev:
-      var = var.cuda(var)
+      var = var.cuda(dev)
   return var
 
 
