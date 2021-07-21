@@ -196,6 +196,7 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self.view_sizes = view_sizes
     self._dim = view_sizes[view_id]
     self._dev = dev
+    self.base_dist = None
 
   # def _get_params(self, x_o, rtn_torch=True):
   #   raise NotImplementedError("Abstract class method")
@@ -319,14 +320,10 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     if self.config.verbose:
       all_start_time = time.time()
 
+    if dev != self._dev:
+      self.to(dev)
     self._x_vs = torch_utils.dict_numpy_to_torch(x_vs, dev=dev)
     self._b_o = torch_utils.dict_numpy_to_torch(b_o, dev=dev)
-    # if dev is not None:
-    #   for vi in self._x_vs:
-    #     self._x_vs[vi] = self._x_vs[vi].cuda(dev)
-    #     self._b_o[vi] = self._b_o[vi].cuda(dev)
-
-    # self._y = None if y is None else torch_utils.numpy_to_torch(y)
     self._npts, self._dim = self._x_vs[self.view_id].shape
 
     # if y is None:
@@ -358,8 +355,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     self._prev_loss = np.inf
     self._stop_iters = 0
 
-    if dev is not None:
-      self.cuda(dev)
+    # if dev is not None:
+    #   self.cuda(dev)
 
     try:
       itr = -1
@@ -409,21 +406,22 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
 
   def to(self, dev):
     super(ConditionalInvertibleTransform, self).to(dev)
-    for m in self._modules:
+    self._dev = dev
+    for m in self._tfm_list:
       if hasattr(m, "_dev"):
-        m.to(dev)
+        super(ConditionalInvertibleTransform, m).to(dev)
         m._dev = dev
 
-    if hasattr(self.base_dist, "to"):
-      self.base_dist.to(dev)
-    else:
-      self.base_dist.loc = self.base_dist.loc.to(dev)
-      self.base_dist.covariance_matrix = (
-          self.base_dist.covariance_matrix.to(dev))
-      self.base_dist._unbroadcasted_scale_tril = (
-          self.base_dist._unbroadcasted_scale_tril.to(dev))
+    if self.base_dist:
+      if hasattr(self.base_dist, "to"):
+        self.base_dist.to(dev)
+      else:
+        self.base_dist.loc = self.base_dist.loc.to(dev)
+        self.base_dist.covariance_matrix = (
+            self.base_dist.covariance_matrix.to(dev))
+        self.base_dist._unbroadcasted_scale_tril = (
+            self.base_dist._unbroadcasted_scale_tril.to(dev))
 
-    self._dev = dev
     # return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
   # def log_prob(self, x_u, x_o):
   #   z, log_det = self(x, rtn_torch=True, rtn_logdet=True)

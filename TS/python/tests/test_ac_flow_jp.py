@@ -524,6 +524,27 @@ def plot_many_digits(
   # IPython.embed()
 
 
+def batch_sample(model, x_o, b_o, use_mean, batch_size=100):
+  npts = x_o[utils.get_any_key(x_o)].shape[0]
+  samples = []
+
+  n_batches = np.ceil(npts/batch_size).astype(int)
+  for bidx in range(n_batches):
+    print("Sampling batch %i out of %i." % (bidx + 1, n_batches), end='\r')
+    start_ind = bidx * batch_size
+    end_ind = start_ind + batch_size
+    x_o_batch = {vi:xvi[start_ind:end_ind] for vi, xvi in x_o.items()}
+    b_o_batch = (
+        {vi:bvi[start_ind:end_ind] for vi, bvi in b_o.items()}
+        if b_o is not None else None
+    )
+    samples.append(
+        model.sample(x_o_batch, b_o_batch, use_mean=use_mean, rtn_torch=False))
+
+  samples = np.concatenate(samples, axis=0)
+  return samples
+
+
 def test_mnist(args):
   load_start_time = time.time()
   n_views = 3
@@ -569,6 +590,7 @@ def test_mnist(args):
   IPython.embed()
   model.fit(tr_data, b_o_tr, dev=dev)
   IPython.embed()
+  cpu_dev = torch.device("cpu")
   model.to(dev)
   globals().update(locals())
   x_tr = tr_data[main_view]

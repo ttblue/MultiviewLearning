@@ -75,14 +75,18 @@ class InvertibleTransform(nn.Module):
     self.config = config
     self._dim = None
 
-  def initialize(self, *args, **kwargs):
-    raise NotImplementedError("Abstract class method")
+  def initialize(self, dev=None, *args, **kwargs):
+    self._dev = dev
+    self.base_dist = None
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     raise NotImplementedError("Abstract class method")
 
   def inverse(self, y):
     raise NotImplementedError("Abstract class method")
+
+  def _base_log_prob(self, Z):
+    return self.base_dist.log_prob(torch_utils.numpy_to_torch(Z))
 
   def log_prob(self, x):
     z, log_det = self(x, rtn_torch=True, rtn_logdet=True)
@@ -153,12 +157,15 @@ class InvertibleTransform(nn.Module):
     p_grads = [p.grad for p in self.parameters()]
     return max([pg.abs().max() for pg in p_grads])
 
-  def fit(self, x, y=None, lhood_model=None):
+  def fit(self, x, y=None, lhood_model=None, dev=None):
     # Simple fitting procedure for transforming x to y
     if self.config.verbose:
       all_start_time = time.time()
-    self._x = torch_utils.numpy_to_torch(x)
-    self._y = None if y is None else torch_utils.numpy_to_torch(y)
+
+    if dev != self._dev:
+      self.to(dev)
+    self._x = torch_utils.numpy_to_torch(x, dev=dev)
+    self._y = None if y is None else torch_utils.numpy_to_torch(y, dev=dev)
     self._npts, self._dim = self._x.shape
 
     if y is None:
@@ -168,14 +175,13 @@ class InvertibleTransform(nn.Module):
               "Base dist. type %s not implemented and likelihood model"
               " not provided." % self.config.base_dist)
         else:
-          loc, scale = torch.zeros(self._dim), torch.eye(self._dim)
+          loc = torch.zeros(self._dim, device=dev)
+          scale = torch.eye(self._dim, device=dev)
           self.base_dist = torch.distributions.MultivariateNormal(loc, scale)
       else:
         self.base_dist = lhood_model
 
       self.recon_criterion = None
-      self.base_log_prob = (
-          lambda Z: self.base_dist.log_prob(torch_utils.numpy_to_torch(Z)))
     else:
       self.recon_criterion = nn.MSELoss(reduction="mean")
       self.base_log_prob = None
@@ -230,17 +236,35 @@ class InvertibleTransform(nn.Module):
       return self.inverse(z_samples, rtn_torch)
     return z_samples if rtn_torch else torch_utils.torch_to_numpy(z_samples)
 
+  def to(self, dev):
+    super(InvertibleTransform, self).to(dev)
+    self._dev = dev
+    for m in self._modules:
+      if hasattr(m, "_dev"):
+        m.to(dev)
+        m._dev = dev
+
+    if self.base_dist:
+      if hasattr(self.base_dist, "to"):
+        self.base_dist.to(dev)
+      else:
+        self.base_dist.loc = self.base_dist.loc.to(dev)
+        self.base_dist.covariance_matrix = (
+            self.base_dist.covariance_matrix.to(dev))
+        self.base_dist._unbroadcasted_scale_tril = (
+            self.base_dist._unbroadcasted_scale_tril.to(dev))
+
 
 class ReverseTransform(InvertibleTransform):
   def __init__(self, config):
     super(ReverseTransform, self).__init__(config)
 
-  def initialize(self, *args, **kwargs):
-    pass
+  def initialize(self, dev, *args, **kwargs):
+    super(ReverseTransform, self).initialize(dev, args, kwargs)
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    reverse_idx = torch.arange(x.size(-1) -1, -1, -1).long()
+    reverse_idx = torch.arange(x.size(-1) -1, -1, -1, device=self._dev).long()
     y = x.index_select(-1, reverse_idx)
 
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
@@ -256,7 +280,8 @@ class LeakyReLUTransform(InvertibleTransform):
   def __init__(self, config):
     super(LeakyReLUTransform, self).__init__(config)
 
-  def initialize(self, *args, **kwargs):
+  def initialize(self, dev, *args, **kwargs):
+    super(LeakyReLUTransform, self).initialize(dev, *args, **kwargs)
     neg_slope = self.config.neg_slope
     self._relu_func = torch.nn.LeakyReLU(negative_slope=neg_slope)
     self._inv_func = torch.nn.LeakyReLU(negative_slope=(1. / neg_slope))
@@ -268,7 +293,8 @@ class LeakyReLUTransform(InvertibleTransform):
 
     y = y if rtn_torch else torch_utils.torch_to_numpy(y)
     if rtn_logdet:
-      neg_elements = torch.as_tensor((x < 0), dtype=torch_utils._DTYPE)
+      neg_elements = torch.as_tensor(
+          (x < 0), dtype=torch_utils._DTYPE, device=self._dev)
       jac_logdet = neg_elements.sum(1) * self._log_slope
       return y, jac_logdet
     return y
@@ -284,8 +310,8 @@ class SigmoidLogitTransform(InvertibleTransform):
   def __init__(self, config):
     super(SigmoidLogitTransform, self).__init__(config)
 
-  def initialize(self, *args, **kwargs):
-    pass
+  def initialize(self, dev, *args, **kwargs):
+    super(SigmoidLogitTransform, self).initialize(dev, args, kwargs)
 
   def _sigmoid(self, x, rtn_logdet=False):
     y = torch.sigmoid(x)
@@ -331,10 +357,74 @@ class SigmoidLogitTransform(InvertibleTransform):
     return x
 
 
+class FixedLinearTransformation(InvertibleTransform):
+  # Model linear transform as L U matrix decomposition where L is lower
+  # triangular with unit diagonal and U is upper triangular with arbitrary
+  # non-zero diagonal elements.
+  def __init__(self, config):
+    super(FixedLinearTransformation, self).__init__(config)
+
+  def initialize(
+      self, dev, dim, init_lin_param=None, init_bias_param=None,
+      *args, **kwargs):
+    # init_lin_param: Tensor of shape dim x dim of initial values, or None.
+    super(FixedLinearTransformation, self).initialize(dev, args, kwargs)
+    
+    self._dim = dim
+    init_lin_param = (
+        torch.eye(dim, device=dev) if init_lin_param is None else
+        torch_utils.numpy_to_torch(init_lin_param))
+    self._lin_param = torch.nn.Parameter(init_lin_param)
+
+    if self.config.has_bias:
+      init_bias_param = (
+          torch.zeros(dim, device=dev) if init_bias_param is None else
+          torch_utils.numpy_to_torch(init_bias_param))
+      self._b = torch.nn.Parameter(init_bias_param)
+    else:
+      self._b = torch.zeros(dim, device=dev)
+
+  def forward(self, x, rtn_torch=True, rtn_logdet=False):
+    x = torch_utils.numpy_to_torch(x)
+
+    L, U = torch_utils.LU_split(self._lin_param, dev=self._dev)
+
+    x_ = x.transpose(0, 1) if len(x.shape) > 1 else x.view(-1, 1)
+    y = L.matmul(U.matmul(x_)) + self._b.view(-1, 1)
+    # Undoing dimension changes to be consistent with input
+    y = y.transpose(0, 1) if len(x.shape) > 1 else y.squeeze()
+    y = y if rtn_torch else torch_utils.torch_to_numpy(y)
+
+    if rtn_logdet:
+      # Determinant of triangular jacobian is product of the diagonals.
+      # Since both L and U are triangular and L has unit diagonal,
+      # this is just the product of diagonal elements of U.
+      jac_logdet = (torch.ones(x.shape[0], device=dev) *
+                    torch.sum(torch.log(torch.abs(torch.diag(U)))))
+      return y, jac_logdet
+    return y
+
+  def inverse(self, y, rtn_torch=True):
+    y = torch_utils.numpy_to_torch(y)
+
+    L, U = torch_utils.LU_split(self._lin_param, dev=dev)
+    
+    y_b = y - self._b
+    y_b_t = y_b.transpose(0, 1) if len(y_b.shape) > 1 else y_b
+    # Torch solver for triangular system of equations
+    # IPython.embed()
+    sol_L = torch.triangular_solve(y_b_t, L, upper=False, unitriangular=True)[0]
+    x_t = torch.triangular_solve(sol_L, U, upper=True)[0]
+    # trtrs always returns 2-D output, even if input is 1-D. So we do this:
+    x = x_t.transpose(0, 1) if len(y.shape) > 1 else x_t.squeeze()
+    x = x if rtn_torch else torch_utils.torch_to_numpy(x)
+
+    return x
+
+
 class ScaleShiftCouplingTransform(InvertibleTransform):
   def __init__(self, config, index_mask=None):
     super(ScaleShiftCouplingTransform, self).__init__(config)
-
     if index_mask is not None:
       self.set_fixed_inds(index_mask)
 
@@ -353,9 +443,10 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
     self._fixed_dim = self._fixed_inds.shape[0]
     self._output_dim = self._tfm_inds.shape[0]
 
-  def initialize(self, index_mask=None, *args, **kwargs):
+  def initialize(self, dev=None, index_mask=None, *args, **kwargs):
     if self.config.shared_wts:
       raise NotImplementedError("Not yet implemented shared weights.")
+    super(ScaleShiftCouplingTransform, self).initialize(dev, args, kwargs)
 
     if index_mask is not None:
       self.set_fixed_inds(index_mask)
@@ -373,7 +464,7 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
     x = torch_utils.numpy_to_torch(x)
-    y = torch.zeros_like(x)
+    y = torch.zeros_like(x, device=self._dev)
     x_fixed = x[:, self._fixed_inds]
 
     log_scale = self._scale_tfm(x_fixed)
@@ -392,7 +483,7 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
 
   def inverse(self, y, rtn_torch=True):
     y = torch_utils.numpy_to_torch(y)
-    x = torch.zeros_like(y)
+    x = torch.zeros_like(y, device=self._dev)
     y_fixed = y[:, self._fixed_inds]
     scale = torch.exp(-self._scale_tfm(y_fixed))
     shift = -self._shift_tfm(y_fixed)
@@ -401,70 +492,6 @@ class ScaleShiftCouplingTransform(InvertibleTransform):
     x[:, self._tfm_inds] = scale * y[:, self._tfm_inds] + shift
 
     return x if rtn_torch else torch_utils.torch_to_numpy(x)
-
-
-class FixedLinearTransformation(InvertibleTransform):
-  # Model linear transform as L U matrix decomposition where L is lower
-  # triangular with unit diagonal and U is upper triangular with arbitrary
-  # non-zero diagonal elements.
-  def __init__(self, config):
-    super(FixedLinearTransformation, self).__init__(config)
-
-  def initialize(
-      self, dim, init_lin_param=None, init_bias_param=None, *args, **kwargs):
-    # init_lin_param: Tensor of shape dim x dim of initial values, or None.
-    self._dim = dim
-
-    init_lin_param = (
-        torch.eye(dim) if init_lin_param is None else
-        torch_utils.numpy_to_torch(init_lin_param))
-    self._lin_param = torch.nn.Parameter(init_lin_param)
-
-    if self.config.has_bias:
-      init_bias_param = (
-          torch.zeros(dim) if init_bias_param is None else
-          torch_utils.numpy_to_torch(init_bias_param))
-      self._b = torch.nn.Parameter(init_bias_param)
-    else:
-      self._b = torch.zeros(dim)
-
-  def forward(self, x, rtn_torch=True, rtn_logdet=False):
-    x = torch_utils.numpy_to_torch(x)
-
-    L, U = torch_utils.LU_split(self._lin_param)
-
-    x_ = x.transpose(0, 1) if len(x.shape) > 1 else x.view(-1, 1)
-    y = L.matmul(U.matmul(x_)) + self._b.view(-1, 1)
-    # Undoing dimension changes to be consistent with input
-    y = y.transpose(0, 1) if len(x.shape) > 1 else y.squeeze()
-    y = y if rtn_torch else torch_utils.torch_to_numpy(y)
-
-    if rtn_logdet:
-      # Determinant of triangular jacobian is product of the diagonals.
-      # Since both L and U are triangular and L has unit diagonal,
-      # this is just the product of diagonal elements of U.
-      jac_logdet = (torch.ones(x.shape[0]) *
-                    torch.sum(torch.log(torch.abs(torch.diag(U)))))
-      return y, jac_logdet
-    return y
-
-  def inverse(self, y, rtn_torch=True):
-    y = torch_utils.numpy_to_torch(y)
-
-    L, U = torch_utils.LU_split(self._lin_param)
-    
-    y_b = y - self._b
-    y_b_t = y_b.transpose(0, 1) if len(y_b.shape) > 1 else y_b
-    # Torch solver for triangular system of equations
-    # IPython.embed()
-    sol_L = torch.triangular_solve(y_b_t, L, upper=False, unitriangular=True)[0]
-    x_t = torch.triangular_solve(sol_L, U, upper=True)[0]
-    # trtrs always returns 2-D output, even if input is 1-D. So we do this:
-    x = x_t.transpose(0, 1) if len(y.shape) > 1 else x_t.squeeze()
-    x = x if rtn_torch else torch_utils.torch_to_numpy(x)
-
-    return x
-
 
 # class AdaptiveLinearTransformation(InvertibleTransform):
 #   # Model linear transform as L U matrix decomposition where L is lower
@@ -527,8 +554,8 @@ class FixedLinearTransformation(InvertibleTransform):
 class CompositionTransform(InvertibleTransform):
   def __init__(self, config, tfm_list=[], init_args=None):
     super(CompositionTransform, self).__init__(config)
-    if tfm_list or init_args:
-      self.initialize(tfm_list, init_args)
+    # if tfm_list or init_args:
+    #   self.initialize(tfm_list, init_args)
 
   def _set_transform_ordered_list(self, tfm_list):
     self._tfm_list = nn.ModuleList(tfm_list)
@@ -541,15 +568,16 @@ class CompositionTransform(InvertibleTransform):
         raise ModelException("Not all transforms have the same dimension.")
       self._dim = dims[0]
 
-  def initialize(self, tfm_list, init_args=None, *args, **kwargs):
+  def initialize(self, dev, tfm_list, init_args=None, *args, **kwargs):
+    super(CompositionTransform, self).initialize(dev, args, kwargs)
     if tfm_list:
       self._set_transform_ordered_list(tfm_list)
     if init_args:
       for tfm, arg in zip(self._tfm_list, init_args):
         if isinstance(arg, tuple):
-          tfm.initialize(*arg)
+          tfm.initialize(dev, *arg)
         else:
-          tfm.initialize(arg)
+          tfm.initialize(dev, arg)
     self._set_dim()
 
   def forward(self, x, rtn_torch=True, rtn_logdet=False):
@@ -593,12 +621,14 @@ _TFM_TYPES = {
     "fixed_linear": FixedLinearTransformation,
     "linear": FixedLinearTransformation,
 }
-def make_transform(config, init_args=None, comp_config=None):
+def make_transform(config, init_args=None, comp_config=None, dev=None):
   if isinstance(config, list):
     tfm_list = [make_transform(cfg) for cfg in config]
     comp_config = (
         TfmConfig("composition") if comp_config is None else comp_config)
-    return CompositionTransform(comp_config, tfm_list, init_args)
+    comp_tfm = CompositionTransform(comp_config)
+    comp_tfm.initialize(dev, tfm_list, init_args)
+    return comp_tfm
 
   if config.tfm_type not in _TFM_TYPES:
     raise TypeError(
@@ -607,7 +637,7 @@ def make_transform(config, init_args=None, comp_config=None):
 
   tfm = _TFM_TYPES[config.tfm_type](config)
   if init_args is not None:
-    tfm.initialize(init_args)
+    tfm.initialize(dev, init_args)
   return tfm
 
 

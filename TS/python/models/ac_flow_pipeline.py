@@ -46,13 +46,16 @@ class MultiviewACFlowTrainer(nn.Module):
 
   def initialize(
       self, view_sizes, view_tfm_config_lists, view_tfm_init_args,
-      cond_tfm_config_lists, cond_tfm_init_args):
+      cond_tfm_config_lists, cond_tfm_init_args, dev=None):
     # Initialize transforms, mm model, optimizer, etc.
 
     # IPython.embed()
     self._view_dims = view_sizes
     self._view_tfm_config_lists = view_tfm_config_lists
     self._cond_tfm_config_lists = cond_tfm_config_lists
+
+    self._dev = dev
+
     # View encoders:
     self._nviews = len(view_tfm_config_lists)
     self._view_tfms = nn.ModuleDict()
