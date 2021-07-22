@@ -477,20 +477,31 @@ def plot_digit(cat_fs, xy=(-1, 8.5), w=10, h=29):
 
 
 def plot_many_digits(
-    pred_digits, true_digits, grid_size=(10, 10),
+    pred_digits, true_digits, first=None, grid_size=(10, 10),
     rect_args=((-1, 8.5), 10, 28.5), title=""):
 
-  pred_digits = [dig.reshape(28, 28) for dig in pred_digits]
+  pred_digits = np.copy(pred_digits)
+  # print(pred_digits.dtype)
+  # pred_digits = [dig.reshape(28, 28) for dig in pred_digits]
+  pred_digits = pred_digits.reshape(-1, 28, 28)
   if true_digits is not None:
-    true_digits = [dig.reshape(28, 28) for dig in true_digits]
+    # true_digits = [dig.reshape(28, 28) for dig in true_digits]
+    true_digits = true_digits.reshape(-1, 28, 28)
   ndigs = len(pred_digits)
 
   nrows, ncols = grid_size
-  fig, axs = plt.subplots(nrows, ncols)
+  if true_digits is None:
+    fig, axs = plt.subplots(
+        nrows, ncols, gridspec_kw = {'wspace':0.05, 'hspace':0.05})
+  else:
+    fig, axs = plt.subplots(nrows, ncols)
 
+  # IPython.embed()
+  # plt.subplots_adjust(wspace=0, hspace=0)
   white_line = np.ones((pred_digits[0].shape[1], 1))
   xy, h, w = rect_args
   dig_idx = 0
+  plotted_first = (first is None)
   for ri in range(nrows):
     if dig_idx >= ndigs:
       break
@@ -499,24 +510,45 @@ def plot_many_digits(
       if dig_idx >= ndigs:
         break
 
-      print("Plotting digit %i" % (dig_idx + 1), end="\r")
       ax = axs[ri, ci]
-      pred_dig = pred_digits[dig_idx]
-      if true_digits is not None:
-        true_dig = true_digits[dig_idx]
-        plot_dig = np.concatenate([pred_dig, white_line, true_dig], axis=1)
-      else:
-        plot_dig = pred_dig
-      ax.imshow(plot_dig, cmap="gray")
-      rect = patches.Rectangle(
-          xy, w, h, linewidth=1, edgecolor='g', facecolor='none')
-      ax.add_patch(rect)
-      ax.xaxis.set_visible(False)
-      ax.xaxis.set_ticks([])
-      ax.yaxis.set_visible(False)
-      ax.yaxis.set_ticks([])
-      dig_idx += 1
+      if plotted_first:
+        print("Plotting digit %i" % (dig_idx + 1), end="\r")
+        # ax.set_aspect('equal')
+        pred_dig = pred_digits[dig_idx]
+        # IPython.embed()
+        pred_dig[pred_dig < 0] = 0
+        pred_dig[pred_dig > 1] = 1
 
+        if true_digits is not None:
+          true_dig = true_digits[dig_idx]
+          plot_dig = np.concatenate([pred_dig, white_line, true_dig], axis=1)
+        else:
+          plot_dig = pred_dig
+        dig_idx += 1
+
+        ax.imshow(plot_dig, cmap="gray")
+        rect = patches.Rectangle(
+            xy, w, h, linewidth=1, edgecolor='g', facecolor='none')
+        ax.add_patch(rect)
+        ax.xaxis.set_visible(False)
+        ax.xaxis.set_ticks([])
+        ax.yaxis.set_visible(False)
+        ax.yaxis.set_ticks([])
+      else:
+        plotted_first = True
+        first = first.reshape(28, 28)
+        ax.imshow(first, cmap="gray")
+        rect = patches.Rectangle(
+            (0, 0), 27, 27, linewidth=2, edgecolor='y', facecolor='none')
+        ax.add_patch(rect)
+        ax.xaxis.set_visible(False)
+        ax.xaxis.set_ticks([])
+        ax.yaxis.set_visible(False)
+        ax.yaxis.set_ticks([])
+
+  # IPython.embed()
+  plt.tight_layout()
+  # if true_digits is None:
   if title:
     fig.suptitle(title, fontsize=20)
   plt.show()
@@ -612,11 +644,12 @@ def test_mnist(args):
   globals().update(locals())
   te_digits = get_sampled_cat({main_view:s_te}, te_data)
   tr_digits = get_sampled_cat({main_view:s_tr}, tr_data)
+  # va_digits = get_sampled_cat({main_view:s_va}, va_data)
 
-  plt_type = "tr"
+  plt_type = "te"
   n_samples = 100
-  didx = 34
-  base_data = tr_data if plt_type == "tr" else te_data
+  didx = 120
+  base_data = tr_data if plt_type == "tr" else all_te_data[0]
   globals().update(locals())
   sample_xo = {vi:xvi[([didx]*n_samples)] for vi, xvi in base_data.items()}
   didx_samples = model.sample(sample_xo, use_mean=False)
