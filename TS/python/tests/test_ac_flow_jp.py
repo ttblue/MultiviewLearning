@@ -737,7 +737,6 @@ def test_cond_missing_tfms(args):
   z_tr = model(x_tr, x_o_tr, rtn_torch=True)
   zi_tr = model.inverse(z_tr, x_o_tr, rtn_torch=True)
 
-
   z_te = {nv: model(x_te[nv], x_o_te[nv], rtn_torch=True) for nv in x_te}
   zi_te = {nv: model.inverse(z_te[nv], x_o_te[nv], rtn_torch=True) for nv in x_te}
   # zi_te = model.inverse(z_te, x_o_te, rtn_torch=True)
