@@ -7,8 +7,9 @@ from torch import nn, optim
 import time
 
 from models.model_base import ModelException, BaseConfig
-from models import conditional_flow_transforms, conditional_flow_transforms_mp,\
-                   flow_likelihood, flow_transforms
+from models import autoencoder, conditional_flow_transforms,\
+                   conditional_flow_transforms_mp, flow_likelihood,\
+                   flow_transforms
 from models.conditional_flow_transforms import MVZeroImpute
 from utils import math_utils, torch_utils, utils
 
@@ -45,7 +46,8 @@ class MultiviewACFlowTrainer(nn.Module):
     super(MultiviewACFlowTrainer, self).__init__()
 
   def initialize(
-      self, view_sizes, view_tfm_config_lists, view_tfm_init_args,
+      self, view_sizes, view_ae_config_list,
+      view_tfm_config_lists, view_tfm_init_args,
       cond_tfm_config_lists, cond_tfm_init_args, dev=None):
     # Initialize transforms, mm model, optimizer, etc.
 
@@ -58,9 +60,11 @@ class MultiviewACFlowTrainer(nn.Module):
 
     # View encoders:
     self._nviews = len(view_tfm_config_lists)
+    self._view_aes = nn.ModuleDict()
     self._view_tfms = nn.ModuleDict()
     self._dim = 0
     for vi, cfg_list in view_tfm_config_lists.items():
+      vi_ae = 
       init_args = view_tfm_init_args[vi]
       tfm = flow_transforms.make_transform(cfg_list, init_args)
       self._view_tfms["v_%i"%vi] = tfm

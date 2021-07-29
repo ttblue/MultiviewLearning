@@ -123,3 +123,10 @@ def random_unitary_matrix(dim=3):
   # Equivalent to np.dot(np.diag(D), H) but faster, apparently
   H = (D * H.T).T
   return H
+
+
+def get_svd_frac_dim(data, p_s0=0.1):
+  # Dimension of data with singular values > p_s0 * (first sv)
+  _, S, _ = np.linalg.svd(data, full_matrices=False)
+  dim = (S > p_s0 * S[0]).sum()
+  return dim

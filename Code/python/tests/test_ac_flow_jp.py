@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import os
 import scipy
-from sklearn import manifold
+from sklearn import manifold, decomposition
 import time
 import torch
 from torch import nn, functional
@@ -11,7 +11,7 @@ import umap
 
 from dataprocessing import ecg_data, split_single_view_dsets as ssvd,\
     multiview_datasets as mvd
-from models import ac_flow_pipeline, conditional_flow_transforms,\
+from models import ac_flow_pipeline, autoencoder, conditional_flow_transforms,\
     flow_likelihood, flow_pipeline, flow_transforms, torch_models
 from synthetic import flow_toy_data, multimodal_systems
 from utils import math_utils, torch_utils, utils
@@ -29,16 +29,19 @@ from mpl_toolkits.mplot3d import Axes3D
 import IPython
 
 
-def make_default_nn_config(bounded=False):
+def make_default_nn_config(
+    bounded=False, layer_units=None, last_activation=None):
   input_size = 10  # Computed online
   output_size = 10  # Computed online
-  layer_units = [32, 64]
+  layer_units = [32]#[32, 64] if layer_units is None else layer_units
   use_vae = False
   activation = nn.ReLU  # nn.functional.relu
   if bounded:
     last_activation = torch.nn.Tanh
-  else:
-    last_activation = torch_models.Identity  # functional.sigmoid
+  elif last_activation is None:
+    last_activation = torch.nn.ReLU
+  # functional.sigmoid
+
   # layer_types = None
   # layer_args = None
   bias = True
@@ -50,6 +53,7 @@ def make_default_nn_config(bounded=False):
       layer_args=layer_args, activation=activation,
       last_activation=last_activation, dropout_p=dropout_p, use_vae=use_vae)
   return nn_config
+
 
 def make_default_cond_tfm_config(tfm_type="shift_scale_coupling"):
   neg_slope = 0.1
@@ -127,7 +131,7 @@ def make_default_tfms(
   # Generate config list:
   tfm_configs = {}
   tfm_inits = {}
-  default_hidden_sizes = [64, 128]
+  default_hidden_sizes = [64]#, 128]
   default_activation = nn.Tanh
   default_nn_config = make_default_nn_config()
   default_bounded_nn_config = make_default_nn_config(bounded=True)
@@ -167,6 +171,7 @@ def make_default_tfms(
       elif tf == "l":
         linear_tfm_config = config_func("linear")
         linear_tfm_config.has_bias = True
+        linear_tfm_config.func_nn_config.last_activation = torch.nn.Tanh
         vi_tfm_configs.append(linear_tfm_config)
         if is_cond:
           vi_tfm_inits.append(default_nn_config)# init_mat))
@@ -214,6 +219,28 @@ def make_default_tfms(
     }
 
   return models
+
+
+def make_default_ae_config(args):
+  # nn_config = make_default_nn_config()
+  input_size = None  # set online
+  code_size = args.ae_code_size
+  dropout_p = 0.2
+  lm = 0.
+  max_iters = 10000
+  batch_size = 100
+  lr = 1e-3
+
+  encoder_config = make_default_nn_config(layer_units=[128, 64])
+  decoder_config = make_default_nn_config(layer_units=[64, 128], bounded=True)
+
+  verbose = True
+  ae_config = autoencoder.AEConfig(
+      input_size=input_size, code_size=code_size,
+      encoder_config=encoder_config, decoder_config=decoder_config,
+      lm=lm, dropout_p=dropout_p, max_iters=max_iters, batch_size=batch_size,
+      lr=lr, verbose=verbose)
+  return ae_config
 
 
 def make_default_pipeline_config(
@@ -577,6 +604,11 @@ def batch_sample(model, x_o, b_o, use_mean, batch_size=100):
   return samples
 
 
+def trunc_svd_dim_red(X, p_s0=0.05):
+  dim = math_utils.get_svd_frac_dim(X, p_s0=p_s0)
+  svd_model = decomposition.TruncatedSVD(n_components=dim)
+
+
 def test_mnist(args):
   load_start_time = time.time()
   n_views = 3
@@ -592,10 +624,11 @@ def test_mnist(args):
 
   n_sampled_tr = args.npts
   n_sampled_te = args.npts // 2
-  tr_data, y_tr, tr_idxs = stratified_sample(tr_data, y_tr, n_sampled=n_sampled_tr)
-  te_data, y_te, te_idxs = stratified_sample(te_data, y_te, n_sampled=n_sampled_te)
+  tr_data, y_tr, tr_idxs = stratified_sample(tr_new, y_tr, n_sampled=n_sampled_tr)
+  te_data, y_te, te_idxs = stratified_sample(te_new, y_te, n_sampled=n_sampled_te)
   n_tr = tr_data[0].shape[0]
   n_te = te_data[0].shape[0]
+  globals().update(locals())
   b_o_tr = {vi: np.ones(n_tr) for vi in tr_data}
   b_o_te = {vi: np.ones(n_te) for vi in te_data}
   # digit = 0
@@ -646,15 +679,59 @@ def test_mnist(args):
   tr_digits = get_sampled_cat({main_view:s_tr}, tr_data)
   # va_digits = get_sampled_cat({main_view:s_va}, va_data)
 
+  didx = 10
   plt_type = "te"
   n_samples = 100
-  didx = 120
-  base_data = tr_data if plt_type == "tr" else all_te_data[0]
+  base_data = tr_data if plt_type == "tr" else te_new
   globals().update(locals())
   sample_xo = {vi:xvi[([didx]*n_samples)] for vi, xvi in base_data.items()}
   didx_samples = model.sample(sample_xo, use_mean=False)
-  didx_digits = get_sampled_cat({main_view: didx_samples}, sample_xo)
-  plot_many_digits(didx_digits, None, grid_size=(10, 10))
+  didx_recon = torch_utils.torch_to_numpy(
+      view_ae_models[main_view]._decode(didx_samples))
+  if plt_type == "tr":
+    sample_xo_all = {vi:vdat[tr_idxs][([didx]*n_samples)] for vi, vdat in all_tr_data[0].items()}
+    lbl = all_tr_data[1][tr_idxs][didx]
+    first = cat_tr[didx]
+  elif plt_type == "te":
+    sample_xo_all = {vi:vdat[([didx]*n_samples)] for vi, vdat in all_te_data[0].items()}
+    lbl = all_te_data[1][didx]
+    first = cat_te[didx]
+  didx_digits = get_sampled_cat({main_view: didx_recon}, sample_xo_all)
+  plot_many_digits(didx_digits, None, first=first, grid_size=(10, 10), title="Test digit: %i" % lbl)
+
+
+def test_mnist_ae(args):
+  load_start_time = time.time()
+  n_views = 3
+  all_tr_data, all_va_data, all_te_data = ssvd.load_split_mnist(n_views=n_views)
+  (tr_data, y_tr) = all_tr_data
+  (va_data, y_va) = all_va_data
+  (te_data, y_te) = all_te_data
+  print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
+
+  view_sizes = {vi:xv.shape[1] for vi, xv in tr_data.items()}
+  view_ae_config = make_default_ae_config(args)
+
+  max_iters = 1000
+  view_ae_models = {}
+  for vi, vdim in view_sizes.items():
+    view_ae_config = make_default_ae_config(args)
+    view_ae_config.input_size = vdim
+    view_ae_config.max_iters = max_iters
+
+    vi_ae = autoencoder.AutoEncoder(view_ae_config)
+    view_ae_models[vi] = vi_ae
+
+  IPython.embed()
+  for vi, vi_ae in view_ae_models.items():
+    vi_xs = tr_data[vi]
+    print("Training AE for view %i" % vi)
+    print("Size of data: %s" % (vi_xs.shape,))
+
+    vi_ae.initialize()
+    vi_ae.fit(vi_xs)
+
+  IPython.embed()
 
 
 def test_pipeline(args):
@@ -879,7 +956,8 @@ _MV_DATAFUNCS = {
 _TEST_FUNCS = {
     0: simple_test_cond_tfms,
     1: test_mnist,
-    2: test_pipeline,
+    2: test_mnist_ae,
+    3: test_pipeline,
     # 1: test_cond_missing_tfms,
     # 3: test_ptbxl,
 }
@@ -920,6 +998,11 @@ if __name__ == "__main__":
       ("num_ss_tfm", int, "Number of ss tfms in a row (min 3)", 3),
       ("num_cond_ss_tfm", int,
        "Number of ss tfms in a row for conditional transform (min 3)", 3),
+      ("ae_code_size", int,
+       "Code size for view pre-flow tfm AutoEncoders (-1 for no AE)", 20),
+      ("ae_model_file", str,
+        "If not None, should have a model for each view, with \%i in the "
+        "filename for the view index", None),
       ("num_lin_tfm", int, "DEPRECATED", 3),
       ("num_cond_lin_tfm", int, "DEPRECATED", 3),
       ("use_leaky_relu", bool, "DEPRECATED", False),

@@ -359,8 +359,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     #   self.cuda(dev)
 
     try:
-      itr = -1
-      for itr in range(self.config.max_iters):
+      self._itr = -1
+      for self._itr in range(self.config.max_iters):
         if self.config.verbose:
           itr_start_time = time.time()
 
@@ -378,12 +378,12 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
           loss_val = float(self.itr_loss.detach())
           print("Iteration %i out of %i (in %.2fs). Loss: %.5f. "
                 "Avg/Max grad: %.5f / %.5f. Stop iter: %i" %
-                (itr + 1, self.config.max_iters, itr_diff_time, loss_val,
+                (self._itr + 1, self.config.max_iters, itr_diff_time, loss_val,
                   self._avg_grad, self._max_grad, self._stop_iters),
                 end='\r')
-      if self.config.verbose and itr >= 0:
+      if self.config.verbose and self._itr >= 0:
         print("Iteration %i out of %i (in %.2fs). Loss: %.5f. Avg grad: %.5f."
-              "Stop iter: %i" % (itr + 1, self.config.max_iters,
+              "Stop iter: %i" % (self._itr + 1, self.config.max_iters,
                   itr_diff_time, loss_val, self._avg_grad, self._stop_iters))
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")
