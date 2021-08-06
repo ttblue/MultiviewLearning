@@ -2,6 +2,7 @@
 import itertools
 import numpy as np
 import os
+import pickle
 import scipy
 from sklearn import manifold, decomposition
 import time
@@ -615,28 +616,62 @@ def batch_sample(model, x_o, b_o, use_mean, batch_size=100):
   return samples
 
 
-def trunc_svd_dim_red(X, p_s0=0.05):
-  dim = math_utils.get_svd_frac_dim(X, p_s0=p_s0)
-  svd_model = decomposition.TruncatedSVD(n_components=dim)
+def trunc_svd_dim_red(Xvs, p_s0=0.05):
+  view_dims = {
+      vi: math_utils.get_svd_frac_dim(vdat, p_s0=p_s0)
+      for vi, vdat in Xvs.items()
+  }
+  svd_models = {
+      vi:decomposition.TruncatedSVD(n_components=view_dims[vi]).fit(vdat)
+      for vi, vdat in Xvs.items()
+  }
+  Xvs_tfm = {
+      vi: smdl.transform(Xvs[vi]) for vi, smdl in svd_models.items()
+  }
+  return Xvs_tfm, svd_models
 
 
 def test_mnist(args):
   load_start_time = time.time()
-  n_views = 3
-  all_tr_data, all_va_data, all_te_data = ssvd.load_split_mnist(n_views=n_views)
+  n_views = 4
+  split_shape = "grid"
+  all_tr_data, all_va_data, all_te_data, split_inds = ssvd.load_split_mnist(
+      n_views=n_views, shape=split_shape)
   (tr_data, y_tr) = all_tr_data
   (va_data, y_va) = all_va_data
   (te_data, y_te) = all_te_data
   print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
 
+  p_s0 = 0.05
+  svd_model_file = "./saved_models/mnist/tsvd_v%i/mdl.pkl" % n_views
+  if load_trunc_mnist and os.path.exists(svd_model_file):
+    with open(svd_model_file, "rb") as fh:
+      svd_models = {vi:pickle.load(fh) for vi in range(n_views)}
+      tr_data = {
+          vi: smdl.transform(tr_data[vi]) for vi, smdl in svd_models.items()
+      }
+  else:
+    tr_data, svd_models = trunc_svd_dim_red(tr_data, p_s0=p_s0)
+    with open(svd_model_file, "wb") as fh:
+      for vi in range(n_views):
+        pickle.dump(svd_models[vi], fh)
+
+  te_data = {
+      vi: smdl.transform(te_data[vi]) for vi, smdl in svd_models.items()
+  }
+  va_data = {
+      vi: smdl.transform(te_data[vi]) for vi, smdl in svd_models.items()
+  }
+
+  IPython.embed()
   dev = None
   if torch.cuda.is_available() and args.gpu_num >= 0:
     dev = torch.device("cuda:%i" % args.gpu_num)
 
   n_sampled_tr = args.npts
   n_sampled_te = args.npts // 2
-  tr_data, y_tr, tr_idxs = stratified_sample(tr_new, y_tr, n_sampled=n_sampled_tr)
-  te_data, y_te, te_idxs = stratified_sample(te_new, y_te, n_sampled=n_sampled_te)
+  tr_data, y_tr, tr_idxs = stratified_sample(tr_data, y_tr, n_sampled=n_sampled_tr)
+  te_data, y_te, te_idxs = stratified_sample(te_data, y_te, n_sampled=n_sampled_te)
   n_tr = tr_data[0].shape[0]
   n_te = te_data[0].shape[0]
   globals().update(locals())
