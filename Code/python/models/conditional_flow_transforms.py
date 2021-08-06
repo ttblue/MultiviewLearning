@@ -320,8 +320,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     if self.config.verbose:
       all_start_time = time.time()
 
-    if dev != self._dev:
-      self.to(dev)
+    # if dev != self._dev:
+    self.to(dev)
     self._x_vs = torch_utils.dict_numpy_to_torch(x_vs, dev=dev)
     self._b_o = torch_utils.dict_numpy_to_torch(b_o, dev=dev)
     self._npts, self._dim = self._x_vs[self.view_id].shape

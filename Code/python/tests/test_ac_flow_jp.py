@@ -642,9 +642,10 @@ def test_mnist(args):
   (te_data, y_te) = all_te_data
   print("Time taken to load MNIST: %.2fs" % (time.time() - load_start_time))
 
+  load_trunc_mnist_models = True
   p_s0 = 0.05
   svd_model_file = "./saved_models/mnist/tsvd_v%i/mdl.pkl" % n_views
-  if load_trunc_mnist and os.path.exists(svd_model_file):
+  if load_trunc_mnist_models and os.path.exists(svd_model_file):
     with open(svd_model_file, "rb") as fh:
       svd_models = {vi:pickle.load(fh) for vi in range(n_views)}
       tr_data = {
@@ -660,7 +661,7 @@ def test_mnist(args):
       vi: smdl.transform(te_data[vi]) for vi, smdl in svd_models.items()
   }
   va_data = {
-      vi: smdl.transform(te_data[vi]) for vi, smdl in svd_models.items()
+      vi: smdl.transform(va_data[vi]) for vi, smdl in svd_models.items()
   }
 
   IPython.embed()
