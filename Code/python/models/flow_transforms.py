@@ -369,7 +369,7 @@ class FixedLinearTransformation(InvertibleTransform):
       *args, **kwargs):
     # init_lin_param: Tensor of shape dim x dim of initial values, or None.
     super(FixedLinearTransformation, self).initialize(dev, args, kwargs)
-    
+
     self._dim = dim
     init_lin_param = (
         torch.eye(dim, device=dev) if init_lin_param is None else
@@ -399,7 +399,7 @@ class FixedLinearTransformation(InvertibleTransform):
       # Determinant of triangular jacobian is product of the diagonals.
       # Since both L and U are triangular and L has unit diagonal,
       # this is just the product of diagonal elements of U.
-      jac_logdet = (torch.ones(x.shape[0], device=dev) *
+      jac_logdet = (torch.ones(x.shape[0], device=self._dev) *
                     torch.sum(torch.log(torch.abs(torch.diag(U)))))
       return y, jac_logdet
     return y
@@ -407,7 +407,7 @@ class FixedLinearTransformation(InvertibleTransform):
   def inverse(self, y, rtn_torch=True):
     y = torch_utils.numpy_to_torch(y)
 
-    L, U = torch_utils.LU_split(self._lin_param, dev=dev)
+    L, U = torch_utils.LU_split(self._lin_param, dev=self._dev)
     
     y_b = y - self._b
     y_b_t = y_b.transpose(0, 1) if len(y_b.shape) > 1 else y_b

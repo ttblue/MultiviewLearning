@@ -171,12 +171,12 @@ def make_default_tfms(
       elif tf == "l":
         linear_tfm_config = config_func("linear")
         linear_tfm_config.has_bias = True
-        linear_tfm_config.func_nn_config.last_activation = torch.nn.Tanh
-        vi_tfm_configs.append(linear_tfm_config)
         if is_cond:
           vi_tfm_inits.append(default_nn_config)# init_mat))
+          linear_tfm_config.func_nn_config.last_activation = torch.nn.Tanh
         else:
           vi_tfm_inits.append(vdim)# init_mat))
+        vi_tfm_configs.append(linear_tfm_config)
 
       elif tf == "r":
         raise ValueError("RNN Coupling not yet available.")
@@ -255,6 +255,16 @@ def make_default_pipeline_config(
 
   view_tfm_config_lists, view_tfm_init_lists = make_default_tfms(
       all_view_args, view_sizes, rtn_args=True, is_cond=False)
+
+  use_pre_view_ae = args.use_ae
+  view_ae_configs = None
+  if use_pre_view_ae:
+    view_ae_configs = {vi:make_default_ae_config(args) for vi in view_sizes}
+    view_ae_model_files = None
+    if args.ae_model_file is not None:
+      view_ae_model_files = {
+          vi: (args.ae_model_file % vi) for vi in view_sizes
+      }
   # for vi, vdim in view_sizes.items():
   #   vi_args = ArgsCopy(args)
   #   vi_args.ndim = vdim
@@ -282,7 +292,7 @@ def make_default_pipeline_config(
       batch_size=batch_size, lr=lr, max_iters=max_iters, verbose=verbose)
 
   return config, (view_tfm_config_lists, view_tfm_init_lists),\
-      (cond_config_lists, cond_inits_lists)
+      (cond_config_lists, cond_inits_lists), view_ae_configs
 
 
 def make_default_likelihood_model(args):
@@ -314,7 +324,8 @@ def make_default_overlapping_data(args):
 
 
 def make_missing_dset(data, main_view, include_nv_0=False, separate_nv=False):
-  v_dims = {vi:vdat.shape[1] for vi, vdat in data.items() if vi != main_view}
+  v_dims = {vi:vdat.shape[1] for vi, vdat in data.items()}
+  obs_views = [vi for vi in data if vi not in main_view]
   main_dim = v_dims[main_view]
   npts =  data[main_view].shape[0]
 
@@ -750,18 +761,21 @@ def test_pipeline(args):
   # IPython.embed()
   # cond_tfm_config_lists, cond_tfm_init_args = make_default_cond_tfms(
   #       args, view_sizes, rtn_args=True)
-  config, view_config_and_inits, cond_config_and_inits = \
+  config, view_config_and_inits, cond_config_and_inits, view_ae_configs = \
       make_default_pipeline_config(args, view_sizes=view_sizes)
   view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
   cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
   # config.no_view_tfm = True
   # IPython.embed()
+  dev = None
+  if torch.cuda.is_available() and args.gpu_num >= 0:
+    dev = torch.device("cuda:%i" % args.gpu_num)
 
   model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
   model.initialize(
       view_sizes, view_tfm_config_lists, view_tfm_init_lists,
-      cond_tfm_config_lists, cond_tfm_init_lists)
+      cond_tfm_config_lists, cond_tfm_init_lists, view_ae_configs)
 
   IPython.embed()
 
@@ -998,6 +1012,7 @@ if __name__ == "__main__":
       ("num_ss_tfm", int, "Number of ss tfms in a row (min 3)", 3),
       ("num_cond_ss_tfm", int,
        "Number of ss tfms in a row for conditional transform (min 3)", 3),
+      ("use_ae", bool, "Flag for using autoencoders before view tfm.", False),
       ("ae_code_size", int,
        "Code size for view pre-flow tfm AutoEncoders (-1 for no AE)", 20),
       ("ae_model_file", str,

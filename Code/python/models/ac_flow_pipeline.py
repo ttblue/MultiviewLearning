@@ -21,13 +21,15 @@ _NP_DTYPE = np.float32
 
 class MACFTConfig(BaseConfig):
   def __init__(
-      self, expand_b=True, no_view_tfm=False, likelihood_config=None,
-      base_dist="gaussian", batch_size=50, lr=1e-3, max_iters=1000,
+      self, expand_b=True, use_pre_view_ae=False, no_view_tfm=False,
+      likelihood_config=None, base_dist="gaussian",
+      batch_size=50, lr=1e-3, max_iters=1000,
       verbose=True, *args, **kwargs):
     super(MACFTConfig, self).__init__(*args, **kwargs)
 
     self.expand_b = expand_b
     self.no_view_tfm = no_view_tfm
+    self.use_pre_view_ae = use_pre_view_ae
 
     self.likelihood_config = likelihood_config
     self.base_dist = base_dist
@@ -46,36 +48,46 @@ class MultiviewACFlowTrainer(nn.Module):
     super(MultiviewACFlowTrainer, self).__init__()
 
   def initialize(
-      self, view_sizes, view_ae_config_list,
-      view_tfm_config_lists, view_tfm_init_args,
-      cond_tfm_config_lists, cond_tfm_init_args, dev=None):
+      self, view_sizes, view_tfm_configs, view_tfm_init_args,
+      cond_tfm_configs, cond_tfm_init_args, view_ae_configs,
+      view_ae_model_files=None, dev=None):
     # Initialize transforms, mm model, optimizer, etc.
 
     # IPython.embed()
     self._view_dims = view_sizes
-    self._view_tfm_config_lists = view_tfm_config_lists
-    self._cond_tfm_config_lists = cond_tfm_config_lists
+    self._nviews = len(view_sizes)
+    self._view_tfm_configs = view_tfm_configs
+    self._cond_tfm_configs = cond_tfm_configs
 
     self._dev = dev
 
     # View encoders:
-    self._nviews = len(view_tfm_config_lists)
-    self._view_aes = nn.ModuleDict()
+    self._use_pre_view_ae = (
+        False if view_ae_configs is None else
+        self.config.use_pre_view_ae)
+    self._view_aes = nn.ModuleDict() if self._use_pre_view_ae else None
     self._view_tfms = nn.ModuleDict()
     self._dim = 0
-    for vi, cfg_list in view_tfm_config_lists.items():
-      vi_ae = 
+    for vi, cfg_list in view_tfm_configs.items():
       init_args = view_tfm_init_args[vi]
       tfm = flow_transforms.make_transform(cfg_list, init_args)
       self._view_tfms["v_%i"%vi] = tfm
       # self._view_dims[vi] = tfm._dim
+      if self._use_pre_view_ae:
+        vi_ae_config = view_ae_configs[vi]
+        self._view_aes["v_%i"%vi] = autoencoder.AutoEncoder(vi_ae_config)
+        view_sizes[vi] = vi_ae_config.code_size
+
       self._dim += view_sizes[vi]  # Assume there are no "None" dims
+
+    if view_ae_model_files:
+      self.load_ae_from_files(view_ae_model_files)
 
     # Conditional transforms
     # self._shared_tfm = conditional_flow_transforms.make_transform(
     #     self.config.shared_tfm_config_list, shared_tfm_init_args)
     self._cond_tfms = nn.ModuleDict()
-    for vi, cfg_list in cond_tfm_config_lists.items():
+    for vi, cfg_list in cond_tfm_configs.items():
       init_args = cond_tfm_init_args[vi]
       tfm = conditional_flow_transforms.make_transform(
         cfg_list, vi, view_sizes, init_args)
@@ -99,12 +111,14 @@ class MultiviewACFlowTrainer(nn.Module):
             " not provided." % self.config.base_dist)
       else:
         self._cond_lhoods = nn.ModuleDict()
-        for vi, vdim in self._view_dims.items():
+        # for vi, vdim in self._view_dims.items():
+        for vi, vdim in view_sizes.items():
           self._cond_lhoods["v_%i"%vi] = flow_likelihood.make_base_distribution(
               self.config.base_dist, vdim)
     else:
       self._cond_lhoods = nn.ModuleDict()
-      for vi, vdim in self._view_dims.items():
+      # for vi, vdim in self._view_dims.items():
+      for vi, vdim in view_sizes.items():
         self._cond_lhoods["v_%i"%vi] = flow_likelihood.make_base_distribution(
             self.config.likelihood_config, vdim)
       # self._likelihood_model = flow_likelihood.make_likelihood_model(
@@ -119,14 +133,30 @@ class MultiviewACFlowTrainer(nn.Module):
   #   zvs_split = {
   #       vi:zvi for vi, zvi in enumerate(torch.split(zvs_cat, split_sizes, 1))}
   #   return zvs_split
+  def load_ae_from_files(self, view_ae_model_files):
+    for vi, vfile in view_ae_model_files.items():
+      self._view_aes["v_%i"%vi].load_state_dict(torch.load(vfile))
+      self._view_aes["v_%i"%vi].requires_grad = False
+      self._view_aes["v_%i"%vi].eval()
 
   def _encode_views(self, x_vs, b_o, rtn_logdet=True):
+    if self._use_pre_view_ae:
+      x_vs = {
+          vi: self._view_aes["v_%i"%vi](x_vi)
+          for vi, x_vi in x_vs.items()
+      }
+
     if self.config.no_view_tfm:
       z_vs = torch_utils.dict_numpy_to_torch(x_vs)
       n_pts = x_vs[utils.get_any_key(x_vs)].shape[0]
       if rtn_logdet:
         log_jac_det = {vi: torch.zeros((n_pts, 1)) for vi in z_vs}
     else:
+      z_vs = {
+        vi:self._view_tfms["v_%i"%vi](
+              x_vi, rtn_torch=True, rtn_logdet=rtn_logdet)
+          for vi, x_vi in x_vs.items()
+      }
       z_vs = {
           vi:self._view_tfms["v_%i"%vi](
               x_vi, rtn_torch=True, rtn_logdet=rtn_logdet)
@@ -160,7 +190,6 @@ class MultiviewACFlowTrainer(nn.Module):
     return (z_vs, log_jac_det) if rtn_logdet else z_vs
 
   def _transform_views_cond(self, z_vs, b_o, rtn_logdet=True):
-
     # IPython.embed()
     # expand_b = self.config.expand_b
     l_vs = {}
@@ -234,7 +263,7 @@ class MultiviewACFlowTrainer(nn.Module):
 
     if aggregate:
       return total_loss
-      
+
     return nll_loss
 
   def _make_view_subset_shuffler(self):
@@ -277,6 +306,7 @@ class MultiviewACFlowTrainer(nn.Module):
           xvs_batch, b_o_batch, rtn_logdet=True)
       l_batch_nll = self._nll(l_batch)
 
+      IPython.embed()
       # available_views = next(self._view_subset_shuffler)
       # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
       self.opt.zero_grad()
@@ -293,6 +323,21 @@ class MultiviewACFlowTrainer(nn.Module):
         self._view_subset_counts[available_views] = 0
       self._view_subset_counts[available_views] += 1
 
+  def _invert_view(self, vi, l_vi, x_o, b_o):
+    l_inv = self._cond_tfms["v_%i"%vi].inverse(l_vi, x_o, b_o)
+    if self.config.no_view_tfm:
+      x_inv = l_inv
+    else:
+      x_inv = self._view_tfms["v_%i"%vi].inverse(l_inv)
+
+    if self._use_pre_view_ae:
+      x_inv = {
+          vi: self._view_aes["v_%i"%vi]._decode(x_vi)
+          for vi, x_vi in x_inv.items()
+      }
+
+    return x_inv
+
   def invert(self, l_vs, x_o, b_o, rtn_torch=True, batch_size=None):
     # Batch size to sample in smaller chunks for reduced memory usage
     if batch_size is None:
@@ -301,33 +346,30 @@ class MultiviewACFlowTrainer(nn.Module):
       for vi, lvi in l_vs.items():
         # z_cat = MVZeroImpute(
         #     z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
-
-        l_inv = self._cond_tfms["v_%i"%vi].inverse(lvi, x_o, b_o)
-        if self.config.no_view_tfm:
-          x_vs[vi] = l_inv
-        else:
-          x_vs[vi] = self._view_tfms["v_%i"%vi].inverse(l_inv)
+        x_vs[vi] = self._invert_view(vi, lvi, x_o, b_o)
 
     else:
       n_pts = l_vs[utils.get_any_key(l_vs)].shape[0]
       x_vs = {vi: [] for vi in l_vs}
       for start_idx in np.arange(n_pts, step=batch_size):
+        end_idx = start_idx + batch_size
         l_vs_batch = {
-            vi: lvi[start_idx:start_idx+batch_size]
+            vi: lvi[start_idx:end_idx]
             for vi, lvi in l_vs.items()
         }
         x_o_batch = {
-            vi: xo_vi[start_idx:start_idx+batch_size]
+            vi: xo_vi[start_idx:end_idx]
             for vi, xo_vi in x_o.items()   
         }
         b_o_batch = {
-            vi: bo_vi[start_idx:start_idx+batch_size]
+            vi: bo_vi[start_idx:end_idx]
             for vi, bo_vi in b_o.items()   
         }
-        x_s_batch = self.invert(
-            l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
-        for vi, xsb_vi in x_s_batch:
-          x_vs[vi].append(xsb_vi)
+        # x_s_batch = self.invert(
+        #     l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
+        for vi, lvi in l_vs_batch.items():
+          x_vs[vi].append(self._invert_view(vi, lvi, x_o_batch, b_o_batch))
+          # x_vs[vi].append(xsb_vi)
 
       x_vs = {vi:torch.cat(xvi, dim=0) for vi, xvi in x_vs.items()}
 
@@ -383,15 +425,81 @@ class MultiviewACFlowTrainer(nn.Module):
     print("Training finished in %0.2f s." % (time.time() - all_start_time))
     return self
 
-  def sample(self, x_o, b_o, rtn_torch=True, batch_size=None):
-    n_samples = x_o[utils.get_any_key(x_o)].shape[0]
-    sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
-    samples = {}
-    l_samples = {
-        vi:self._cond_lhoods["v_%i"%vi].sample((n_samples,))
-        for vi in sampling_views}
-    return self.invert(
-        l_samples, x_o, b_o, rtn_torch=rtn_torch, batch_size=batch_size)
+  def _pad_incomplete_data(self, x_vs, b_vs):
+    n_pts = x_vs[utils.get_any_key(x_vs)].shape[0]
+    x_vs_padded = {
+        vi: (x_vs[vi] if vi in x_vs else
+             torch.zeros((n_pts, self._view_dims[vi])))
+        for vi in range(self._nviews)
+    }
+    b_vs = (b_vs or {})
+    b_vs_padded = {
+        vi: (b_vs[vi] if vi in b_vs else torch.zeros(n_pts))
+        for vi in range(self._nviews)
+    }
+    return x_vs_padded, b_vs_padded
+
+  def _sample_view(self, view_id, x_o, b_o, batch_size=None):
+    sample_inds = (b_o[view_id] == 0).nonzero()
+    n_samples = sample_inds.shape[0]
+    if n_samples == 0:
+      return x_o[view_id]
+
+    x_o_subset = {vi: x_o_vi[sample_inds] for vi, x_o_vi in x_o.items()}
+    b_o_subset = {vi: b_o_vi[sample_inds] for vi, b_o_vi in b_o.items()}
+    l_samples = self._cond_lhoods["v_%i"%view_id].sample((n_samples,))
+
+    if batch_size is None or n_samples <= batch_size:
+      x_view_samples = self._invert_view(
+          vi, l_samples, x_o_subset, b_o_subset)
+    else:
+      x_view_samples = []
+      for start_idx in np.arange(n_samples, step=batch_size):
+        end_idx = start_idx + batch_size
+        l_batch = l_samples[start_idx: ]
+        x_o_batch = {
+            vi: xo_vi[start_idx:end_idx]
+            for vi, xo_vi in x_o_subset.items()   
+        }
+        b_o_batch = {
+            vi: bo_vi[start_idx:end_idx]
+            for vi, bo_vi in b_o_subset.items()   
+        }
+        x_view_samples.append(
+            self._invert_view(view_id, l_batch, x_o_batch, b_o_batch))
+
+      x_view_samples = torch.cat(x_view_samples, dim=0)
+        # # x_s_batch = self.invert(
+        # #     l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
+        # for vi, lvi in l_vs_batch.items():
+        #   x_vs[vi].append(self._invert_view(vi, lvi, x_o_batch, b_o_batch))
+    x_view = x_o[view_id]
+    x_view[sample_inds] = x_view_samples
+    return x_view
+
+  def sample(self, x_o, b_o, batch_size=None, rtn_torch=True):
+    n_pts = x_o[utils.get_any_key(x_o)].shape[0]
+    # sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
+    x_o = torch_utils.dict_numpy_to_torch(x_o)
+    b_o = (
+        torch_utils.dict_numpy_to_torch(b_o) if b_o else
+        {
+            vi: (torch.ones(n_pts) if vi in x_o else torch.zeros(n_pts))
+            for vi in range(self._nviews)
+        }
+    )
+    x_o, b_o = self._pad_incomplete_data(x_o, b_o)
+    samples = {
+        vi: self._sample_view(vi, x_o, b_o, batch_size)
+        for vi in x_o
+    }
+    return (samples if rtn_torch else torch_utils.dict_torch_to_numpy(samples))
+    # samples = {}
+    # l_samples = {
+    #     vi:self._cond_lhoods["v_%i"%vi].sample((n_samples,))
+    #     for vi in sampling_views}
+    # return self.invert(
+    #     l_samples, x_o, b_o, rtn_torch=rtn_torch, batch_size=batch_size)
     # raise NotImplementedError("Implement this!")
 
   # def log_likelihood(self, x):

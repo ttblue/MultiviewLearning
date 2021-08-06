@@ -392,17 +392,36 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
     return self
 
   def sample(
-      self, x_o, b_o=None, use_mean=True, rtn_torch=False):
+      self, x_o, b_o=None, use_mean=True, batch_size=None, rtn_torch=False):
     # if not isinstance(n_samples, int) or n_samples <= 0:
     #   raise ValueError("n_samples must be a positive integer.")
     n_samples = x_o[utils.get_any_key(x_o)].shape[0]
-    if use_mean:
-      z_samples = flow_likelihood.get_mean(self.base_dist, n_samples, x_o)
+    if batch_size is None or batch_size >= n_samples:
+      if use_mean:
+        z_samples = flow_likelihood.get_mean(self.base_dist, n_samples, x_o)
+      else:
+        z_samples = self.base_dist.sample((n_samples,))
+      # if inverted:
+      return self.inverse(z_samples, x_o, b_o, rtn_torch)
     else:
-      z_samples = self.base_dist.sample((n_samples,))
-
-    # if inverted:
-    return self.inverse(z_samples, x_o, b_o, rtn_torch)
+      z_samples = []
+      for start_idx in np.arange(n_samples, step=batch_size):
+        end_idx = start_idx + batch_size
+        x_o_batch = {
+            vi:x_o_vi[start_idx:end_idx] for vi, x_o_vi in x_o.items()
+        }
+        b_o_batch = (
+            None if b_o is None else
+            {vi: b_o_vi[start_idx:end_idx] for vi, b_o_vi in b_o.items()}
+        )
+      z_samples.append(
+          self.sample(
+              x_o_batch, b_o_batch, use_mean, batch_size=None,
+              rtn_torch=rtn_torch))
+      z_samples = (
+          torch.cat(z_samples, dim=0) if rtn_torch else
+          np.concatenate(z_samples, axis=0))
+      return z_samples
 
   def to(self, dev):
     super(ConditionalInvertibleTransform, self).to(dev)
