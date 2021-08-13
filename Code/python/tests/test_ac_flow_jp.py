@@ -326,7 +326,7 @@ def make_default_overlapping_data(args):
 
 def make_missing_dset(data, main_view, include_nv_0=False, separate_nv=False):
   v_dims = {vi:vdat.shape[1] for vi, vdat in data.items()}
-  obs_views = [vi for vi in data if vi not in main_view]
+  obs_views = [vi for vi in data if vi != main_view]
   main_dim = v_dims[main_view]
   npts =  data[main_view].shape[0]
 
@@ -357,6 +357,8 @@ def make_missing_dset(data, main_view, include_nv_0=False, separate_nv=False):
           vi:np.concatenate(x_o_vi, axis=0) for vi, x_o_vi in x_o_nv.items()}
       b_o[nv] = {
           vi:np.concatenate(b_o_vi, axis=0) for vi, b_o_vi in b_o_nv.items()}
+      x_o[nv][main_view] = x[nv]
+      b_o[nv][main_view] = np.ones(x[nv].shape[0])
     else:
       x.extend(x_nv)
       for vi in obs_views:
@@ -367,8 +369,10 @@ def make_missing_dset(data, main_view, include_nv_0=False, separate_nv=False):
     x = np.concatenate(x, axis=0)
     x_o = {vi:np.concatenate(x_o_vi, axis=0) for vi, x_o_vi in x_o.items()}
     b_o = {vi:np.concatenate(b_o_vi, axis=0) for vi, b_o_vi in b_o.items()}
+    x_o[main_view] = x
+    b_o[main_view] = np.ones(x.shape[0])
 
-  return x, x_o, b_o
+  return x_o, b_o
 
 
 def tfm_seq(model, x, b, x_o):
@@ -565,9 +569,10 @@ def plot_many_digits(
           plot_dig = pred_dig
         dig_idx += 1
 
+        # fig, ax = plt.subplots(1, 1)
         ax.imshow(plot_dig, cmap="gray")
         rect = patches.Rectangle(
-            xy, w, h, linewidth=1, edgecolor='g', facecolor='none')
+            xy, w, h, linewidth=2, edgecolor='g', facecolor='none')
         ax.add_patch(rect)
         ax.xaxis.set_visible(False)
         ax.xaxis.set_ticks([])
