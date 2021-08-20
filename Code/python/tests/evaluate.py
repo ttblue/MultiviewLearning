@@ -610,13 +610,20 @@ def plot_double_mcnemar(mat1, mat2, perm, ax=None, show_xyticks=True):
 
   # plt.show()
 
-def plot_mcnemar_nv(mats1, mats2, nv=1, mnames=None, title=""):
+def plot_mcnemar_nv(mats1, mats2, nv=1, mnames=None, title="", save_file=None):
   nv_perms = [perm for perm in mats1.keys() if len(perm) == nv]
 
   nrows = 2
   ncols = len(nv_perms) // nrows
 
+  subplot_to_inches = 5
+  padding = 0.5
+
+  fig_w = (ncols + padding) * subplot_to_inches
+  fig_h = (nrows + padding) * subplot_to_inches
+
   fig, axs = plt.subplots(nrows, ncols)
+  fig.set_size_inches(fig_w, fig_h)
   axs = axs.ravel()
 
   tot_pts = None
@@ -633,14 +640,38 @@ def plot_mcnemar_nv(mats1, mats2, nv=1, mnames=None, title=""):
     ax.plot([], color="b", label=mnames[0])
     ax.plot([], color="r", label=mnames[1])
     ax.legend(
-        loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2, fontsize=20)
+        loc="upper center", bbox_to_anchor=(0.5, -0.05), ncol=2, fontsize=15)
 
-  axs[-ncols].text(0.5, -0.65, "# points: %i" % tot_pts, va="bottom", fontsize=20)
+  ann_text = "# Views:  %i\n# Points: %i" % (nv, tot_pts)
+  axs[-ncols].text(0.5, -0.65, ann_text, va="bottom", fontsize=20)
 
-  title += ": %i view%s available" % (nv, "" if nv == 1 else "s")
+  # title += ": %i view%s available" % (nv, "" if nv == 1 else "s")
+  title = "McNemar Test: " + title
   plt.suptitle(title, fontsize=30)
-  # plt.show()
-  plt.savefig("temp_test.png")
+  if save_file:
+    plt.savefig(save_file)
+  else:
+    plt.show()
+
+
+def save_all_mcnemar(mcnemar_mats):
+  mztr, mzte, mgtr, mgte = mcnemar_mats
+  mnames = ["Full Digit", "Zero Imputed"]
+  save_dir = "./results/mnist/"
+
+  title = "Training"
+  fname = "mcnemar_tr_%i_views.png"
+  for nv in range(1, 4):
+    save_file = save_dir + fname % nv
+    plot_mcnemar_nv(
+        mgtr, mztr, nv=nv, title=title, mnames=mnames, save_file=save_file)
+
+  title = "Testing"
+  fname = "mcnemar_te_%i_views.png"
+  for nv in range(1, 4):
+    save_file = save_dir + fname % nv
+    plot_mcnemar_nv(
+        mgte, mzte, nv=nv, title=title, mnames=mnames, save_file=save_file)
 
 
 def misc_acflow_pred():
