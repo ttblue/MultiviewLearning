@@ -6,10 +6,10 @@ import torch
 from torch import nn, optim
 import time
 
-from models.model_base import ModelException, BaseConfig
 from models import autoencoder, conditional_flow_transforms,\
                    conditional_flow_transforms_mp, flow_likelihood,\
                    flow_transforms
+from models.model_base import ModelException, BaseConfig
 from models.conditional_flow_transforms import MVZeroImpute
 from utils import math_utils, torch_utils, utils
 

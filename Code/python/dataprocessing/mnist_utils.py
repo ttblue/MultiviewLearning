@@ -5,14 +5,17 @@ import onnx_tf
 import torch
 from torch import nn
 
+from utils import torch_utils
+
 
 torch.set_default_dtype(torch.float64)
 
 
-def evaluate_mnist_onnx_model(onnx_model, data, fname=None):
-  if onnx_model is None:
+def evaluate_mnist_onnx_model(tf_rep, data, fname=None):
+  if tf_rep is None:
+    print("THIS IS HAPPENING")
     onnx_model = onnx.load(fname)
-  tf_rep = onnx_tf.backend.prepare(onnx_model)
+    tf_rep = onnx_tf.backend.prepare(onnx_model)
 
   n_pts = data.shape[0]
   logits = []
@@ -22,7 +25,7 @@ def evaluate_mnist_onnx_model(onnx_model, data, fname=None):
     j_logit = tf_rep.run(jdat).Plus214_Output_0
     logits.append(j_logit)
 
-  return logits
+  return np.array(logits).squeeze()
 
 
 class MNIST8(nn.Module):
@@ -101,4 +104,35 @@ class MNIST8(nn.Module):
 
 
 if __name__=="__main__":
-  
+  from onnx_tf.backend import prepare
+  import os
+  import time
+
+  from dataprocessing.split_single_view_dsets import load_original_mnist
+
+  mnist_model_file = os.path.join(
+      os.getenv("HOME"), "Research/MultiviewLearning/Code/pretrained_models",
+      "mnist/mnist-8.onnx")
+  mnist_model = MNIST8(mnist_model_file)
+  onnx_model = onnx.load(mnist_model_file)
+  tf_rep = onnx_tf.backend.prepare(onnx_model)
+
+  tr_inds_file = os.path.join(
+      os.getenv("HOME"), "Research/MultiviewLearning/Code/python/tests",
+      "data/mnist/mv/mnist_mv_tr_inds.npy")
+  train_set, valid_set, test_set = load_original_mnist()
+  tr_inds = np.load(tr_inds_file)
+  tr_x, tr_y = train_set[0][tr_inds], train_set[1][tr_inds]
+  torch_tr_x = torch.from_numpy(tr_x.astype("float64").reshape(-1, 1, 28, 28))
+
+  npts = 2000
+  xn, yn = train_set[0][:npts], train_set[1][:npts]
+  torch_xn = torch.from_numpy(xn.astype("float64").reshape(-1, 1, 28, 28))
+  t1 = time.time()
+  onnx_plogits = evaluate_mnist_onnx_model(tf_rep, xn, mnist_model_file)
+  t2 = time.time()
+  torch_plogits = mnist_model(torch_xn)
+  t3 = time.time()
+
+  print("ONNX time: %.2fs" % (t2 - t1))
+  print("Torch time: %.2fs" % (t3 - t2))
