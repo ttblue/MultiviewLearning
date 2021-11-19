@@ -29,12 +29,66 @@ from tests.test_ac_flow import SimpleArgs, convert_numpy_to_float32,\
     # make_default_independent_data, make_default_shape_data
 from tests.test_ac_flow_jp import make_default_nn_config, make_default_tfms,\
     make_default_cond_tfm_config, ArgsCopy, make_default_likelihood_config,\
-    
 
 from matplotlib import pyplot as plt, patches
 from mpl_toolkits.mplot3d import Axes3D
 
 import IPython
+
+
+def make_default_pipeline_config(
+    args, view_sizes={}, no_view_tfm=False, start_logit=False):
+
+  tot_dim = sum(view_sizes.values())
+  # print(args.__dict__.keys())
+  all_view_args = ArgsCopy(args)
+  # all_view_args.ndim = tot_dim
+  cond_config_lists, cond_inits_lists = make_default_tfms(
+      all_view_args, view_sizes, rtn_args=True, is_cond=True)
+
+  view_tfm_config_lists, view_tfm_init_lists = make_default_tfms(
+      all_view_args, view_sizes, rtn_args=True, is_cond=False)
+
+  use_pre_view_ae = args.use_ae
+  view_ae_configs = None
+  if use_pre_view_ae:
+    view_ae_configs = {vi:make_default_ae_config(args) for vi in view_sizes}
+    view_ae_model_files = None
+    if args.ae_model_file is not None:
+      view_ae_model_files = {
+          vi: (args.ae_model_file % vi) for vi in view_sizes
+      }
+  # for vi, vdim in view_sizes.items():
+  #   vi_args = ArgsCopy(args)
+  #   vi_args.ndim = vdim
+  #   vi_cfg_list, vi_init = make_default_tfm(
+  #       vi_args, rtn_args=True, start_logit=start_logit)
+
+  #   view_tfm_config_lists[vi] = vi_cfg_list
+  #   view_tfm_init_lists[vi] = vi_init
+
+  likelihood_config = make_default_likelihood_config(args) if args.use_ar else None
+  base_dist = "mv_gaussian"
+
+  expand_b = True 
+
+  dsl_coeff = 1.0
+
+  batch_size = 50
+  lr = 1e-3
+  max_iters = args.max_iters
+
+  verbose = True
+
+  # IPython.embed()
+  config = ac_flow_pipeline_dsl.MACFDTConfig(
+      expand_b=expand_b, no_view_tfm=no_view_tfm,
+      likelihood_config=likelihood_config, base_dist=base_dist,
+      dsl_coeff=dsl_coeff, batch_size=batch_size, lr=lr, max_iters=max_iters,
+      verbose=verbose)
+
+  return config, (view_tfm_config_lists, view_tfm_init_lists),\
+      (cond_config_lists, cond_inits_lists), view_ae_configs
 
 
 def test_pipeline_dsl(args):

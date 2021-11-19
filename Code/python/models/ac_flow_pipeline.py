@@ -306,7 +306,7 @@ class MultiviewACFlowTrainer(nn.Module):
           xvs_batch, b_o_batch, rtn_logdet=True)
       l_batch_nll = self._nll(l_batch)
 
-      IPython.embed()
+      # IPython.embed()
       # available_views = next(self._view_subset_shuffler)
       # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
       self.opt.zero_grad()
@@ -440,7 +440,8 @@ class MultiviewACFlowTrainer(nn.Module):
     return x_vs_padded, b_vs_padded
 
   def _sample_view(self, view_id, x_o, b_o, batch_size=None):
-    sample_inds = (b_o[view_id] == 0).nonzero()
+    sample_inds = (b_o[view_id] == 0).nonzero().squeeze()
+    # print("SAMPLE INDS: %s" % (sample_inds,))
     n_samples = sample_inds.shape[0]
     if n_samples == 0:
       return x_o[view_id]
@@ -449,14 +450,16 @@ class MultiviewACFlowTrainer(nn.Module):
     b_o_subset = {vi: b_o_vi[sample_inds] for vi, b_o_vi in b_o.items()}
     l_samples = self._cond_lhoods["v_%i"%view_id].sample((n_samples,))
 
+    # print(l_samples.shape)
     if batch_size is None or n_samples <= batch_size:
+      # IPython.embed()
       x_view_samples = self._invert_view(
-          vi, l_samples, x_o_subset, b_o_subset)
+          view_id, l_samples, x_o_subset, b_o_subset)
     else:
       x_view_samples = []
       for start_idx in np.arange(n_samples, step=batch_size):
         end_idx = start_idx + batch_size
-        l_batch = l_samples[start_idx: ]
+        l_batch = l_samples[start_idx:end_idx]
         x_o_batch = {
             vi: xo_vi[start_idx:end_idx]
             for vi, xo_vi in x_o_subset.items()   
@@ -477,21 +480,24 @@ class MultiviewACFlowTrainer(nn.Module):
     x_view[sample_inds] = x_view_samples
     return x_view
 
-  def sample(self, x_o, b_o, batch_size=None, rtn_torch=True):
+  def sample(
+      self, x_o, b_o=None, sampled_views=None, batch_size=None, rtn_torch=True):
     n_pts = x_o[utils.get_any_key(x_o)].shape[0]
     # sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     x_o = torch_utils.dict_numpy_to_torch(x_o)
     b_o = (
         torch_utils.dict_numpy_to_torch(b_o) if b_o else
         {
-            vi: (torch.ones(n_pts) if vi in x_o else torch.zeros(n_pts))
+            vi: (torch.zeros(n_pts)
+                 if vi in sampled_views else torch.ones(n_pts))
             for vi in range(self._nviews)
         }
     )
     x_o, b_o = self._pad_incomplete_data(x_o, b_o)
+    sampled_views = sampled_views or list(range(self._nviews))
     samples = {
         vi: self._sample_view(vi, x_o, b_o, batch_size)
-        for vi in x_o
+        for vi in sampled_views
     }
     return (samples if rtn_torch else torch_utils.dict_torch_to_numpy(samples))
     # samples = {}

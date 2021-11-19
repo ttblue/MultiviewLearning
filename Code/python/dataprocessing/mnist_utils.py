@@ -5,7 +5,8 @@ import onnx_tf
 import torch
 from torch import nn
 
-from utils import torch_utils
+from dataprocessing import split_single_view_dsets as ssvd
+from utils import torch_utils, utils
 
 
 torch.set_default_dtype(torch.float64)
@@ -28,10 +29,15 @@ def evaluate_mnist_onnx_model(tf_rep, data, fname=None):
   return np.array(logits).squeeze()
 
 
+# def convert_truncSVD_inverse_torch(self, svd_models):
+#   svd_components = {vi:smdl.components_ for vi, smdl in svd_models.items()}
+
+_mnist_w = _mnist_h = 28
 class MNIST8(nn.Module):
   # Class to recreate ONNX model "mnist8" from ONNX zoo.
-  def __init__(self, fname):
+  def __init__(self, fname, n_views):
     super(MNIST8, self).__init__()
+    self._n_views = n_views
     self.initialize_layers()
     self.load_parameter_values(fname)
 
@@ -47,6 +53,8 @@ class MNIST8(nn.Module):
     self._maxpool2 = nn.MaxPool2d(kernel_size=3, stride=3)
 
     self._lin = nn.Linear(in_features=256, out_features=10, bias=True)
+    self._components_vs = None
+    self._pre_op = None
 
   def load_parameter_values(self, fname):
     # Hardcoded for this particular model.
@@ -86,10 +94,43 @@ class MNIST8(nn.Module):
     self._lin.bias.requires_grad = False
     self._lin.bias.copy_(lin_b)
 
-  def forward(self, x):
-    if len(x.shape) < 4:
-      x = torch.unsqueeze(x, 1)
+    self._mnist_img_inds = ssvd.get_mnist_split_inds(
+        n_views=self._n_views, shape="grid")
+
+  def save_svd_models(self, svd_models):
+    self._components_vs = {
+        vi:torch_utils.numpy_to_torch(smdl.components_)
+        for vi, smdl in svd_models.items()
+    }
+
+  def convert_to_imgs(self, sample_vs, base_vs):
+    n_pts = base_vs[utils.get_any_key(base_vs)].shape[0]
+    img_vs = {
+        vi: (sample_vs[vi] if vi in sample_vs else bvi)
+        for vi in vi, bvi in base_vs.items()
+    }
+    if self._components_vs is not None:
+      img_vs = {
+          vi: img_vi[vi].dot(comp_vi)
+          for vi, comp_vi in self._components_vs.items()
+      }
+    imgs = torch.zeros((n_pts, _mnist_h * _mnist_w))
+    for vi, img_vi in imgs_vs.items():
+      vi_inds = self._mnist_img_inds[vi]
+      imgs[: vi_inds] = img_vi
+
+    imgs = imgs.view((-1, 1, _mnist_h, _mnist_w))
+    return imgs
+
+  def forward(self, x_vs, base_vs):
+    x = self.convert_to_imgs(x_vs, base_vs)
+
+    # if len(x.shape) < 4:
+    #   x = torch.unsqueeze(x, 1)
     npts = x.shape[0]
+
+    if self._pre_op:
+      x = self._pre_op(x)
 
     x_conv1 = torch.relu(self._conv1(x))
     x_mp1 = self._maxpool1(x_conv1)

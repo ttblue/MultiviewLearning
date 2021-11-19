@@ -493,6 +493,17 @@ def get_sampled_cat(gen_vals, true_vals):
   return cat_vals
 
 
+_mnist_w = _mnist_h = 28
+_mnist_w_2 = _mnist_h_2 = 14
+_mnist_v4_inds = ssvd.get_mnist_split_inds(n_views=4, shape="grid")
+def get_sampled_cat_grid(sample_vs, base_dat):
+  sampled_cat = base_dat.copy()
+  for vi, svdat in sample_vs.items():
+    vi_inds = _mnist_v4_inds[vi]
+    sampled_cat[:, vi_inds] = svdat
+  return np.clip(sampled_cat, 0., 1.)
+
+
 def plot_digit(cat_fs, xy=(-1, 8.5), w=10, h=29):
   if not isinstance(cat_fs, list): cat_fs = [cat_fs]
   digit_plots = [cat_f.reshape(28, 28) for cat_f in cat_fs]
@@ -669,10 +680,10 @@ def test_mnist(args):
       vi: smdl.transform(va_data[vi]) for vi, smdl in svd_models.items()
   }
 
-  IPython.embed()
-  dev = None
-  if torch.cuda.is_available() and args.gpu_num >= 0:
-    dev = torch.device("cuda:%i" % args.gpu_num)
+  # IPython.embed()
+  # dev = None
+  # if torch.cuda.is_available() and args.gpu_num >= 0:
+  #   dev = torch.device("cuda:%i" % args.gpu_num)
 
   n_sampled_tr = args.npts
   n_sampled_te = args.npts // 2
@@ -686,13 +697,31 @@ def test_mnist(args):
   # digit = 0
   # x_tr, y_tr = get_single_digit(x_tr, y_tr, digit=digit)
   view_sizes = {vi:xv.shape[1] for vi, xv in tr_data.items()}
-  main_view = 1
-  models = make_default_tfms(args, view_sizes, is_cond=True, dev=dev)
-  model = models[main_view]
 
-  config = model.config
-  config.max_iters = args.max_iters
-  config.batch_size = args.batch_size
+  config, view_config_and_inits, cond_config_and_inits, view_ae_configs = \
+      make_default_pipeline_config(args, view_sizes=view_sizes)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+
+  config.no_view_tfm = True
+  # IPython.embed()
+  dev = None
+  if torch.cuda.is_available() and args.gpu_num >= 0:
+    dev = torch.device("cuda:%i" % args.gpu_num)
+
+  model = ac_flow_pipeline.MultiviewACFlowTrainer(config)
+  model.initialize(
+      view_sizes, view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists, view_ae_configs)
+
+  # IPython.embed()
+  # main_view = 1
+  # models = make_default_tfms(args, view_sizes, is_cond=True, dev=dev)
+  # model = models[main_view]
+
+  # config = model.config
+  # config.max_iters = args.max_iters
+  # config.batch_size = args.batch_size
   # config, view_config_and_inits, cond_config_and_inits = \
   #     make_default_pipeline_config(args, view_sizes=view_sizes, start_logit=True)
   # view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
@@ -704,31 +733,72 @@ def test_mnist(args):
   #     cond_tfm_config_lists, cond_tfm_init_lists)
 
   # model.to(dev)
-  IPython.embed()
+  # IPython.embed()
   model.fit(tr_data, b_o_tr, dev=dev)
   IPython.embed()
+
   cpu_dev = torch.device("cpu")
   model.to(dev)
+
+  view_subsets = []
+  view_range = list(range(n_views))
+  for nv in view_range:
+    view_subsets.extend(list(itertools.combinations(view_range, nv + 1)))
+
   globals().update(locals())
-  x_tr = tr_data[main_view]
-  x_te = te_data[main_view]
-  z_tr, ld_tr = model.forward(x_tr, tr_data, rtn_logdet=True, rtn_torch=False)
-  z_te, ld_te = model.forward(x_te, te_data, rtn_logdet=True, rtn_torch=False)
-  ld_tr = torch_utils.torch_to_numpy(ld_tr)
-  ld_te = torch_utils.torch_to_numpy(ld_te)
+  # n_te = 500
+  te_data = {vi:xvi[:n_te] for vi, xvi in te_data.items()}
   globals().update(locals())
-  i_tr = model.inverse(z_tr, tr_data, rtn_torch=False)
-  i_te = model.inverse(z_te, te_data, rtn_torch=False)
-  s_tr = model.sample(tr_data, use_mean=True)
-  s_te = model.sample(te_data, use_mean=True)
+
+  # cat_tr = np.concatenate([tr_data[vi] for vi in range(len(tr_data))], axis=1)
+  # # cat_va = np.concatenate([va_data[vi] for vi in range(len(va_data))], axis=1)
+  # cat_te = np.concatenate(
+  #     [te_data[vi] for vi in range(len(te_data))], axis=1)
+  tr_base = {vi:all_tr_data[0][vi][tr_idxs] for vi in range(n_views)}
+  te_base = {vi:all_te_data[0][vi][te_idxs] for vi in range(n_views)}
+  n_tr = tr_base[0].shape[0]
+  n_te = te_base[0].shape[0]
+  true_tr_digits = get_sampled_cat_grid(tr_base, np.zeros((n_tr, 784)))
+  true_te_digits = get_sampled_cat_grid(te_base, np.zeros((n_te, 784)))
+
+  tr_digits = {}
+  te_digits = {}
+  for vsub in view_subsets:
+    # x_o_tr = {vi:tr_data[vi] for vi in vsub}
+    # x_o_te = {vi:te_data[vi] for vi in vsub}
+
+    trd = sample(model,
+        tr_data, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
+    ted = sample(model,
+        te_data, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
+
+    trd2 = {
+      vi:svd_models[vi].inverse_transform(vtrd) for vi, vtrd in trd.items()}
+    ted2 = {
+      vi:svd_models[vi].inverse_transform(vted) for vi, vted in ted.items()}
+
+    tr_digits[vsub] = get_sampled_cat_grid(trd2, true_tr_digits)
+    te_digits[vsub] = get_sampled_cat_grid(ted2, true_te_digits)
+
+  #   tr_digits[vsub]
+  #   te_digits[vsub]
+  # x_tr = tr_data[main_view]
+  # x_te = te_data[main_view]
+  # z_tr, ld_tr = model.forward(x_tr, tr_data, rtn_logdet=True, rtn_torch=False)
+  # z_te, ld_te = model.forward(x_te, te_data, rtn_logdet=True, rtn_torch=False)
+  # ld_tr = torch_utils.torch_to_numpy(ld_tr)
+  # ld_te = torch_utils.torch_to_numpy(ld_te)
+  # globals().update(locals())
+  # i_tr = model.inverse(z_tr, tr_data, rtn_torch=False)
+  # i_te = model.inverse(z_te, te_data, rtn_torch=False)
+  # s_tr = model.sample(tr_data, use_mean=True)
+  # s_te = model.sample(te_data, use_mean=True)
   # IPython.embed()
-  globals().update(locals())
-  cat_tr = np.concatenate([tr_data[vi] for vi in range(len(tr_data))], axis=1)
-  cat_va = np.concatenate([va_data[vi] for vi in range(len(va_data))], axis=1)
-  cat_te = np.concatenate([te_data[vi] for vi in range(len(te_data))], axis=1)
-  globals().update(locals())
-  te_digits = get_sampled_cat({main_view:s_te}, te_data)
-  tr_digits = get_sampled_cat({main_view:s_tr}, tr_data)
+  # globals().update(locals())
+  # cat_tr = np.concatenate([tr_data[vi] for vi in range(len(tr_data))], axis=1)
+  # cat_va = np.concatenate([va_data[vi] for vi in range(len(va_data))], axis=1)
+  # cat_te = np.concatenate([te_data[vi] for vi in range(len(te_data))], axis=1)
+  # globals().update(locals())
   # va_digits = get_sampled_cat({main_view:s_va}, va_data)
 
   didx = 10
@@ -736,7 +806,7 @@ def test_mnist(args):
   n_samples = 100
   base_data = tr_data if plt_type == "tr" else te_new
   globals().update(locals())
-  sample_xo = {vi:xvi[([didx]*n_samples)] for vi, xvi in base_data.items()}
+  sample_xo = {vi:xvi[([didx] * n_samples)] for vi, xvi in base_data.items()}
   didx_samples = model.sample(sample_xo, use_mean=False)
   didx_recon = torch_utils.torch_to_numpy(
       view_ae_models[main_view]._decode(didx_samples))
