@@ -483,18 +483,20 @@ class MultiviewACFlowTrainer(nn.Module):
   def sample(
       self, x_o, b_o=None, sampled_views=None, batch_size=None, rtn_torch=True):
     n_pts = x_o[utils.get_any_key(x_o)].shape[0]
+    sampled_views = (
+        sampled_views or [vi for vi in range(self._nviews) if vi not in x_o])
     # sampling_views = [vi for vi in range(self._nviews) if vi not in x_o]
     x_o = torch_utils.dict_numpy_to_torch(x_o)
     b_o = (
         torch_utils.dict_numpy_to_torch(b_o) if b_o else
         {
             vi: (torch.zeros(n_pts)
-                 if vi in sampled_views else torch.ones(n_pts))
+                 if (vi in sampled_views or vi not in x_o) else
+                 torch.ones(n_pts))
             for vi in range(self._nviews)
         }
     )
     x_o, b_o = self._pad_incomplete_data(x_o, b_o)
-    sampled_views = sampled_views or list(range(self._nviews))
     samples = {
         vi: self._sample_view(vi, x_o, b_o, batch_size)
         for vi in sampled_views

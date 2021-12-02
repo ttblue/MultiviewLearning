@@ -11,7 +11,7 @@ from torch import nn, functional
 import umap
 
 from dataprocessing import ecg_data, split_single_view_dsets as ssvd,\
-    mnist_utils, multiview_datasets as mvd
+    mnist_utils, multiview_datasets as mvd, physionet
 from models import ac_flow_pipeline, ac_flow_dsl_pipeline,\
     autoencoder, conditional_flow_transforms,\
     flow_likelihood, flow_pipeline, flow_transforms, torch_models
@@ -29,10 +29,14 @@ from tests.test_ac_flow import SimpleArgs, convert_numpy_to_float32,\
     # make_default_independent_data, make_default_shape_data
 from tests.test_ac_flow_jp import make_default_nn_config, make_default_tfms,\
     make_default_cond_tfm_config, ArgsCopy, make_default_likelihood_config,\
-    stratified_sample, get_sampled_cat_grid
+    stratified_sample, get_sampled_cat, get_sampled_cat_grid
 
 from matplotlib import pyplot as plt, patches
 from mpl_toolkits.mplot3d import Axes3D
+
+
+from sklearn import ensemble, kernel_ridge, linear_model, neural_network, svm
+
 
 import IPython
 
@@ -382,13 +386,130 @@ def convert_to_numpy(val):
     return np.array(val)
 
 
-def interactive(args):
-  pass
+def train_classifier(base_x, base_y):
+  # classifier = ensemble.RandomForestClassifier()
+  classifier = neural_network.MLPClassifier()
+  cat_x = get_sampled_cat({}, base_x)
+  return classifier.fit(cat_x, base_y)
+
+
+def evaluate_mv_performance(classifier, perm_xs, true_x, true_y):
+  nviews = len(true_x)
+  cat_x = get_sampled_cat({}, true_x)
+  npts = cat_x.shape[0]
+
+  base_preds = classifier.predict(cat_x)
+  base_acc = (base_preds == true_y).sum() / npts
+
+  all_view_subset = tuple(range(nviews))
+  perm_accs = {all_view_subset: base_acc}
+  perm_preds = {all_view_subset: base_preds}
+  nv_accs = {vi: (0, 0) for vi in range(1, nviews)}
+
+  for perm, px in perm_xs.items():
+    cat_px = get_sampled_cat(px, true_x)
+    perm_pred = classifier.predict(cat_px)
+    pacc = (perm_pred == true_y).sum() / npts
+
+    nv = len(perm)
+    if nv == nviews:
+      continue
+    perm_accs[perm] = pacc
+    perm_preds[perm] = perm_pred
+    curr_nv_acc = nv_accs[nv]
+    nv_accs[nv] = curr_nv_acc[0] + pacc, curr_nv_acc[1] + 1
+
+  nv_accs = {nv: nvi[0] / nvi[1] for nv, nvi in nv_accs.items()}
+  nv_accs[nviews] = base_acc
+
+  return perm_accs, perm_preds, nv_accs
+
+
+def test_mitbih(args):
+  load_start_time = time.time()
+  tr_frac = 0.8
+  # tr_data, te_data = physionet.get_mv_mitbih_split(tr_frac)
+  polysom_file = "./data/mitbih/polysom_fft.npy"
+  tr_data, te_data = np.load(polysom_file, allow_pickle=True).tolist()
+  (tr_x, tr_y, tr_ya, tr_ids) = tr_data
+  (te_x, te_y, te_ya, te_ids) = te_data
+  print("Time taken to load MITBIH: %.2fs" % (time.time() - load_start_time))
+
+  torch.set_default_dtype(torch.float64)
+  view_sizes = {vi:xv.shape[1] for vi, xv in tr_x.items()}
+  n_views = len(view_sizes)
+
+  config, view_config_and_inits, cond_config_and_inits, view_ae_configs = \
+      make_default_pipeline_config(args, view_sizes=view_sizes)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+
+  config.no_view_tfm = True
+  # IPython.embed()
+  dev = None
+  if torch.cuda.is_available() and args.gpu_num >= 0:
+    dev = torch.device("cuda:%i" % args.gpu_num)
+
+  model = ac_flow_dsl_pipeline.MACFlowDSLTrainer(config)
+  model.initialize(
+      view_sizes, view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists, view_ae_configs)
+
+  n_sampled_tr = args.npts
+  n_sampled_te = args.npts // 2
+  # (full_tr_x, full_tr_y, full_tr_ya) = (tr_x, tr_y, tr_ya)
+  tr_x, tr_y, tr_idxs = stratified_sample(tr_x, tr_y, n_sampled=n_sampled_tr)
+  # te_data, y_te, te_idxs = stratified_sample(te_data, y_te, n_sampled=n_sampled_te)
+  n_tr = tr_x[0].shape[0]
+  tr_x = convert_numpy_to_float64(tr_x)
+  tr_y = convert_numpy_to_float64(tr_y)
+
+  IPython.embed()
+  model.fit(tr_x, tr_y, None, None)
+  IPython.embed()
+
+  te_x = convert_numpy_to_float64(te_x)
+  te_y = convert_numpy_to_float64(te_y)
+  view_subsets = []
+  view_range = list(range(n_views))
+  for nv in range(1, n_views):
+    view_subsets.extend(list(itertools.combinations(view_range, nv)))
+
+  tr_samples = {}
+  te_samples = {}
+  for vsub in view_subsets:
+    # x_o_tr = {vi:tr_data[vi] for vi in vsub}
+    # x_o_te = {vi:te_data[vi] for vi in vsub}
+    globals().update(locals())
+    tr_x_sub = {vi: xvi for vi, xvi in tr_x.items() if vi not in vsub}
+    te_x_sub = {vi: xvi for vi, xvi in te_x.items() if vi not in vsub}
+    tr_samples[vsub] = model.sample(
+        tr_x_sub, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
+    te_samples[vsub] = model.sample(
+        te_x_sub, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
+
+    # tr_digits[vsub] = get_sampled_cat_grid(trd2, true_tr_digits)
+    # te_digits[vsub] = get_sampled_cat_grid(ted2, true_te_digits)
+
+  tr_samples = complement_subset_keys(tr_samples, n_views)
+  te_samples = complement_subset_keys(te_samples, n_views)
+
+  classifier = train_classifier(tr_x, tr_y)
+  tr_perm_accs, tr_perm_preds, tr_nv_accs = evaluate_mv_performance(
+      classifier, tr_samples, tr_x, tr_y)
+  te_perm_accs, te_perm_preds, te_nv_accs = evaluate_mv_performance(
+      classifier, te_samples, te_x, te_y)
+
+  IPython.embed()
+
+
+def interactive(): pass
 
 
 _TEST_FUNCS = {
     0: test_pipeline_dsl,
     1: test_mnist_dsl,
+    2: test_mitbih,
     -1: interactive,
 }
 

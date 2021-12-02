@@ -56,3 +56,58 @@ def plot_spaghet(
 
   if show:
     plt.show()
+
+
+def mv_bar_plots(mv_accs, n_views, title="", ymin=None, ymax=None):
+  view_range = list(range(n_views))
+
+  colors = ["g", "b", "r", "k"]
+
+  x_ticks = []
+  x_labels = []
+  y_vals = []
+  b_colors = []
+
+  x_curr = 1.
+
+  b_size = 0.9
+  x_space = 2.
+
+  for i, nv in enumerate(range(n_views, 0, -1)):
+    view_subsets = itertools.combinations(view_range, nv)
+    for sub in view_subsets:
+      x_ticks.append(x_curr)
+      x_labels.append(sub)
+      y_vals.append(mv_accs[sub])
+      b_colors.append(colors[i])
+      x_curr += 1
+
+    x_curr += x_space
+
+  pad_frac = 0.2
+
+  if ymin is None or ymax is None:
+    ymin, ymax = np.min(y_vals), np.max(y_vals)
+    ydiff = ymax - ymin
+    ymin -= ydiff * pad_frac
+    ymax += ydiff * pad_frac
+
+  y_ticks = np.linspace(ymin, ymax, 5).round(2)
+
+  ax = plt.subplot()
+  ax.bar(x_ticks, height=y_vals, width=b_size, color=b_colors)
+  ax.set_xticks(x_ticks)
+  ax.set_xticklabels(x_labels, fontdict={'fontsize': 15})
+  ax.set_ylim(ymin, ymax)
+  ax.set_xlabel("Available views", fontsize=20)
+  ax.set_yticks(y_ticks)
+  ax.set_yticklabels(y_ticks, fontdict={'fontsize': 15})
+  ax.set_ylabel("Sleep stage classification accuracy", fontsize=20)
+
+  if title:
+    plt.title(title, fontsize=30)
+  # plt.legend([], ["0: ECG", "1: BP", "2: EEG"])
+
+  plt.show()
+
+  return ymin, ymax
