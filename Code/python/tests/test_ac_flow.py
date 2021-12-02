@@ -43,6 +43,17 @@ def convert_numpy_to_float32(data):
   return data
 
 
+def convert_numpy_to_float64(data):
+  if isinstance(data, np.ndarray):
+    data = data.astype("float64")
+  if isinstance(data, dict):
+    data = {i:idat.astype("float64") for i, idat in data.items()}
+  if isinstance(data, list):
+    data = [idat.astype("float64") for idat in data]
+  return data
+
+
+
 def make_default_nn_config():
   input_size = 10  # Computed online
   output_size = 10  # Computed online

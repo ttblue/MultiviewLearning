@@ -9,8 +9,8 @@ from utils import utils
 import IPython
 
 
-_DTYPE = torch.float32
-_NP_DTYPE = np.float32
+_DTYPE = torch.float64
+_NP_DTYPE = np.float64
 _TENSOR_FUNC = torch.FloatTensor
 torch.set_default_dtype(_DTYPE)
 # For RNNs.

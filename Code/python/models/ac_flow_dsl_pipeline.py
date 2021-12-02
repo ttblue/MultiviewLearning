@@ -1,5 +1,5 @@
 # Loss function format:
-# obj = loss_func(model, mv_data, label_data, zs, ls, lds)
+# obj = loss_func(mv_data, label_data, zs, ls, lds)
 # model is an instance of MACFlowDSLTrainer.
 # zs -- representation encodings.
 
@@ -23,7 +23,7 @@ from utils import math_utils, torch_utils, utils
 import IPython
 
 
-class MACFDTConfig(BaseConfig):
+class MACFDTConfig(MACFTConfig):
   def __init__(
       self, expand_b=True, use_pre_view_ae=False, no_view_tfm=False,
       likelihood_config=None, base_dist="gaussian", dsl_coeff=1.0,
@@ -42,6 +42,7 @@ class MACFDTConfig(BaseConfig):
 class MACFlowDSLTrainer(MultiviewACFlowTrainer):
   def __init__(self, config):
     super(MACFlowDSLTrainer, self).__init__(config)
+    self._ds_loss = None
 
   def set_ds_loss(self, loss_func):
     self._ds_loss = loss_func
@@ -62,10 +63,10 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
 
   def loss(self, x_vs, ys, z_vs, l_vs, ld_vs, *args, **kwargs):
     loss_val = self._nll(l_vs, ld_vs, aggregate=True)
-    if self.config.dsl_coeff > 0:
+    if self.config.dsl_coeff > 0 and self._ds_loss is not None:
       # Assuming it isn't negative.
       ds_loss = self._ds_loss(
-           self, x_vs, ys, z_vs, l_vs, ld_vs, *args, **kwargs)
+           x_vs, ys, z_vs, l_vs, ld_vs, *args, **kwargs)
       loss_val += self.config.dsl_coeff * ds_loss
     return loss_val
 
@@ -75,6 +76,13 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
     x_vs_shuffled = {vi:xv[r_inds] for vi, xv in x_vs.items()}
     ys_shuffled = ys[r_inds]
     return x_vs_shuffled, ys_shuffled
+
+  def _get_imputed(self, samples_vs, x_vs, b_vs):
+    imputed_vs = {
+        vi: (x_vi * b_vs[vi] + (1 - b_vs[vi]) * sample_vs[vi])
+        for vi, x_vi in x_vs.items()
+    }
+    return imputed_vs
 
   def _train_loop(self):
     x_vs, ys = self._shuffle(self._view_data, self._ys)
@@ -115,3 +123,57 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
       if available_views not in self._view_subset_counts:
         self._view_subset_counts[available_views] = 0
       self._view_subset_counts[available_views] += 1
+
+  def fit(self, x_vs, ys, b_o=None, loss_func=None, dev=None):
+    # Currently not using input b_o
+    if self.config.verbose:
+      all_start_time = time.time()
+      print("Starting training loop.")
+
+    self._training = True
+    # For convenience
+    self._npts = x_vs[utils.get_any_key(x_vs)].shape[0]
+    self._view_data = torch_utils.dict_numpy_to_torch(x_vs)
+    self._ys = torch_utils.numpy_to_torch(ys)
+    if dev is not None:
+      self._view_data.to(dev)
+      self._ys.to(dev)
+
+    if loss_func:
+      self.set_ds_loss(loss_func)
+    self._n_batches = int(np.ceil(self._npts / self.config.batch_size))
+
+    self._view_subset_shuffler = self._make_view_subset_shuffler()
+    self._view_subset_counts = {}
+    # Set up optimizer
+    self.opt = optim.Adam(self.parameters(), self.config.lr)
+
+    self._loss_history = []
+    try:
+      for itr in range(self.config.max_iters):
+        if self.config.verbose:
+          itr_diff_time = 0.
+          itr_start_time = time.time()
+        self._train_loop()
+        if not self._training:
+          break
+
+        loss_val = float(self.itr_loss.detach())
+        self._loss_history.append(loss_val)
+        if self.config.verbose:
+          itr_diff_time = time.time() - itr_start_time
+          print("  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
+                (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
+                end='\r')
+      if self.config.verbose:
+        print("  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
+              (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
+              end='\r')
+    except KeyboardInterrupt:
+      print("Training interrupted. Quitting now.")
+
+    self._training = False
+    self._loss_history = np.array(self._loss_history)
+    self.eval()
+    print("Training finished in %0.2f s." % (time.time() - all_start_time))
+    return self

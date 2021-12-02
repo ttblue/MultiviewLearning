@@ -35,31 +35,56 @@ def get_sampled_cat_grid(sample_vs, base_dat):
 
 
 _rect_args = {
-    "TL": ((0, 0), _mnist_h_2, _mnist_w_2),
-       0: ((0, 0), _mnist_h_2, _mnist_w_2),
-    "TR": ((_mnist_h_2, 0), _mnist_h_2, _mnist_w_2),
-       1: ((_mnist_h_2, 0), _mnist_h_2, _mnist_w_2),
-    "BL": ((0, _mnist_w_2), _mnist_h_2, _mnist_w_2),
-       2: ((0, _mnist_w_2), _mnist_h_2, _mnist_w_2),
-    "BR": ((_mnist_h_2, _mnist_w_2), _mnist_h_2, _mnist_w_2),
-       3: ((_mnist_h_2, _mnist_w_2), _mnist_h_2, _mnist_w_2),
+    "TL": ((0, 0), _mnist_w_2, _mnist_h_2),
+       0: ((0, 0), _mnist_w_2, _mnist_h_2),
+    "TR": ((_mnist_w_2, 0), _mnist_w_2, _mnist_h_2),
+       1: ((_mnist_w_2, 0), _mnist_w_2, _mnist_h_2),
+    "BL": ((0, _mnist_h_2), _mnist_w_2, _mnist_h_2),
+       2: ((0, _mnist_h_2), _mnist_w_2, _mnist_h_2),
+    "BR": ((_mnist_w_2, _mnist_h_2), _mnist_w_2, _mnist_h_2),
+       3: ((_mnist_w_2, _mnist_h_2), _mnist_w_2, _mnist_h_2),
 }
 _view_map = {
     0: "TL", 1: "TR", 2: "BL", 3: "BR",
 }
 
-def plot_many_digits(
-    pred_digits, true_digits, first=None, grid_size=(10, 10),
-    rect_locs=[], rcolor="r", title=""):
 
-  pred_digits = np.copy(pred_digits)
+def get_rect_args(perm, dig_nums):
+  if not isinstance(dig_nums, list):
+    dig_nums = [dig_nums]
+
+  locs = [_view_map[v] for v in perm]
+  base_rect_args = [_rect_args[loc] for loc in locs]
+  all_rect_args = []
+
+  for dnum in dig_nums:
+    _w_offset = dnum * (_mnist_w + 1) + (dnum == 2)
+    d_rect_args = [
+      ((xy[0] + _w_offset - 0.5, xy[1] - 0.5), w, h)
+      for xy, w, h in base_rect_args  
+    ]
+    all_rect_args.extend(d_rect_args)
+
+  return all_rect_args
+
+
+def plot_many_digits(
+    pred_digits, true_digits, perms=[], first=None, grid_size=(10, 10),
+    rcolor="r", title="", show_ids=False):
+
+  if not isinstance(pred_digits, list):
+    pred_digits = [pred_digits]
+  pred_digits = [np.copy(pdigs) for pdigs in pred_digits]
+  nsets = len(pred_digits)
+
   # print(pred_digits.dtype)
   # pred_digits = [dig.reshape(28, 28) for dig in pred_digits]
-  pred_digits = pred_digits.reshape(-1, _mnist_h, _mnist_w)
+  pred_digits = [pdigs.reshape(-1, _mnist_h, _mnist_w) for pdigs in pred_digits]
   if true_digits is not None:
     # true_digits = [dig.reshape(28, 28) for dig in true_digits]
     true_digits = true_digits.reshape(-1, _mnist_h, _mnist_w)
-  ndigs = len(pred_digits)
+  ndigs = len(pred_digits[0])
+  dignums = list(range(nsets + 1))
 
   nrows, ncols = grid_size
   if true_digits is None:
@@ -70,8 +95,10 @@ def plot_many_digits(
 
   # IPython.embed()
   # plt.subplots_adjust(wspace=0, hspace=0)
-  all_rect_args = [_rect_args[loc] for loc in rect_locs]
-  white_line = np.ones((pred_digits[0].shape[1], 1))
+  # rect_locs = []
+  # all_rect_args = [_rect_args[loc] for loc in rect_locs]
+  facecolor = (1, 0, 0, 0.15) if rcolor == "r" else (0, 1, 0, 0.15)
+  white_line = np.ones((pred_digits[0][0].shape[1], 1))
   dig_idx = 0
   plotted_first = (first is None)
   for ri in range(nrows):
@@ -92,45 +119,68 @@ def plot_many_digits(
       if plotted_first:
         print("Plotting digit %i" % (dig_idx + 1), end="\r")
         # ax.set_aspect('equal')
-        pred_dig = pred_digits[dig_idx]
+        plot_dig = [pdigs[dig_idx] for pdigs in pred_digits]
         # IPython.embed()
-        pred_dig[pred_dig < 0] = 0
-        pred_dig[pred_dig > 1] = 1
+        plot_dig_set = [plot_dig[0]]
+        for pdig in plot_dig[1:]:
+          plot_dig_set.extend([white_line, pdig])
+
+        # pred_dig[pred_dig < 0] = 0
+        # pred_dig[pred_dig > 1] = 1
 
         if true_digits is not None:
           true_dig = true_digits[dig_idx]
-          plot_dig = np.concatenate([pred_dig, white_line, true_dig], axis=1)
-        else:
-          plot_dig = pred_dig
+          plot_dig_set.extend([white_line, white_line, true_dig])
+        plot_dig = np.concatenate(plot_dig_set, axis=1)
+        
+        plot_dig[plot_dig < 0] = 0
+        plot_dig[plot_dig > 1] = 1
+        # else:
+        #   plot_dig = pred_dig
+        rect_args = get_rect_args(perms[dig_idx], dignums) if perms else []
         dig_idx += 1
 
         # fig, ax = plt.subplots(1, 1)
         ax.imshow(plot_dig, cmap="gray")
-        for xy, h, w in all_rect_args:
+        # rect
+        for xy, h, w in rect_args:
           rect = patches.Rectangle(
-              xy, w, h, linewidth=2, edgecolor=rcolor, facecolor='none')
+              xy, w, h, linewidth=0.5, edgecolor=rcolor, facecolor=facecolor)
           ax.add_patch(rect)
+
+        # yellow box
+        if true_digits is not None:
+          xy = ((_mnist_w + 1) * nsets + 0.5, -0.5)
+          rect = patches.Rectangle(
+              xy, 28, 28, linewidth=3, edgecolor='y', facecolor='none')
+          ax.add_patch(rect)
+
         ax.xaxis.set_visible(False)
         ax.xaxis.set_ticks([])
         ax.yaxis.set_visible(False)
         ax.yaxis.set_ticks([])
+
       else:
         plotted_first = True
         first = first.reshape(28, 28)
         ax.imshow(first, cmap="gray")
         rect = patches.Rectangle(
-            (0, 0), 27, 27, linewidth=2, edgecolor='y', facecolor='none')
+            (0, 0), 27, 27, linewidth=1, edgecolor='y', facecolor='none')
         ax.add_patch(rect)
         ax.xaxis.set_visible(False)
         ax.xaxis.set_ticks([])
         ax.yaxis.set_visible(False)
         ax.yaxis.set_ticks([])
+      if show_ids:
+        fig_id = ri * ncols + ci
+        ax.set_title("%i" % fig_id)
+
 
   # IPython.embed()
   plt.tight_layout()
   # if true_digits is None:
   if title:
-    fig.suptitle(title, fontsize=20)
+    fig.suptitle(title, fontsize=30)
   plt.show()
   # plt.pause(10.)
   # IPython.embed()

@@ -23,7 +23,7 @@ _mnist_h = 28
 _mnist_w = 28
 _mnist_dim = _mnist_h * _mnist_w
 _mnist_idx_grid = np.arange(_mnist_h * _mnist_w).reshape(_mnist_h, _mnist_w)
-# only 4 views for now
+# only 4 views for no w
 def get_mnist_split_inds(n_views=4, shape="grid"):
   split_inds = None
   if shape == "grid" and n_views == 4:

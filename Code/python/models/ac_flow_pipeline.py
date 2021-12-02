@@ -16,7 +16,7 @@ from utils import math_utils, torch_utils, utils
 
 import IPython
 
-_NP_DTYPE = np.float32
+_NP_DTYPE = np.float64
 
 
 class MACFTConfig(BaseConfig):
