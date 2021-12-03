@@ -30,15 +30,19 @@ from tests.test_ac_flow import SimpleArgs, convert_numpy_to_float32,\
 from tests.test_ac_flow_jp import make_default_nn_config, make_default_tfms,\
     make_default_cond_tfm_config, ArgsCopy, make_default_likelihood_config,\
     stratified_sample, get_sampled_cat, get_sampled_cat_grid
+from utils import plot_utils
 
 from matplotlib import pyplot as plt, patches
 from mpl_toolkits.mplot3d import Axes3D
 
 
 from sklearn import ensemble, kernel_ridge, linear_model, neural_network, svm
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import GridSearchCV as gscv
 
 
 import IPython
+import importlib as imp
 
 
 def make_default_pipeline_config(
@@ -80,8 +84,9 @@ def make_default_pipeline_config(
   dsl_coeff = 1.0
 
   batch_size = 50
-  lr = 1e-3
+  lr = 1e-4
   max_iters = args.max_iters
+  grad_clip = 5.0
 
   verbose = True
 
@@ -90,7 +95,7 @@ def make_default_pipeline_config(
       expand_b=expand_b, no_view_tfm=no_view_tfm,
       likelihood_config=likelihood_config, base_dist=base_dist,
       dsl_coeff=dsl_coeff, batch_size=batch_size, lr=lr, max_iters=max_iters,
-      verbose=verbose)
+      grad_clip=grad_clip, verbose=verbose)
 
   return config, (view_tfm_config_lists, view_tfm_init_lists),\
       (cond_config_lists, cond_inits_lists), view_ae_configs
@@ -386,9 +391,10 @@ def convert_to_numpy(val):
     return np.array(val)
 
 
-def train_classifier(base_x, base_y):
-  # classifier = ensemble.RandomForestClassifier()
-  classifier = neural_network.MLPClassifier()
+def train_classifier(base_x, base_y, hidden_sizes=(128, 64), n_estimators=10):
+  classifier = ensemble.RandomForestClassifier(n_estimators=n_estimators)
+  # classifier = neural_network.MLPClassifier(
+  #     hidden_layer_sizes=hidden_sizes, max_iter=500)
   cat_x = get_sampled_cat({}, base_x)
   return classifier.fit(cat_x, base_y)
 
@@ -429,11 +435,19 @@ def test_mitbih(args):
   load_start_time = time.time()
   tr_frac = 0.8
   # tr_data, te_data = physionet.get_mv_mitbih_split(tr_frac)
-  polysom_file = "./data/mitbih/polysom_fft.npy"
+  polysom_file = "./data/mitbih/polysom_fft_full.npy"
   tr_data, te_data = np.load(polysom_file, allow_pickle=True).tolist()
   (tr_x, tr_y, tr_ya, tr_ids) = tr_data
   (te_x, te_y, te_ya, te_ids) = te_data
   print("Time taken to load MITBIH: %.2fs" % (time.time() - load_start_time))
+  sub_names = {0:"ECG", 1:"BP", 2:"EEG"}
+
+  fft_size = 20
+  remove_first_freq = True
+  if remove_first_freq:
+    f_inds = list(range(1, fft_size)) + list(range(fft_size + 1, 2 * fft_size))
+    tr_x = {vi: xvi[:, f_inds] for vi, xvi in tr_x.items()}
+    te_x = {vi: xvi[:, f_inds] for vi, xvi in te_x.items()}
 
   torch.set_default_dtype(torch.float64)
   view_sizes = {vi:xv.shape[1] for vi, xv in tr_x.items()}
@@ -494,11 +508,147 @@ def test_mitbih(args):
   tr_samples = complement_subset_keys(tr_samples, n_views)
   te_samples = complement_subset_keys(te_samples, n_views)
 
-  classifier = train_classifier(tr_x, tr_y)
+  hidden_sizes = [128, 64]
+  n_estimators = 10
+  classifier = train_classifier(tr_x, tr_y, hidden_sizes, n_estimators)
   tr_perm_accs, tr_perm_preds, tr_nv_accs = evaluate_mv_performance(
       classifier, tr_samples, tr_x, tr_y)
   te_perm_accs, te_perm_preds, te_nv_accs = evaluate_mv_performance(
       classifier, te_samples, te_x, te_y)
+  print(tr_perm_accs)
+  print(te_perm_accs)
+
+  IPython.embed()
+
+
+def default_polysom_classifier_config(args, view_sizes):
+  tot_dim = sum([v for v in view_sizes.values()])
+
+  nn_config = make_default_nn_config()
+  nn_config.set_sizes(input_size=tot_dim)
+  nn_config.last_activation = torch_models.Identity
+
+  lr = 1e-3
+  batch_size = 50
+  max_iters = 5000
+  grad_clip = 5.
+  verbose = True
+
+  config = physionet.PolysomConfig(
+      nn_config=nn_config, lr=lr, batch_size=batch_size, max_iters=max_iters,
+      grad_clip=grad_clip, verbose=verbose)
+  return config
+
+
+def test_mitbih_dsl(args):
+  load_start_time = time.time()
+  tr_frac = 0.8
+  # tr_data, te_data = physionet.get_mv_mitbih_split(tr_frac)
+  polysom_file = "./data/mitbih/polysom_fft_full.npy"
+  tr_data, te_data = np.load(polysom_file, allow_pickle=True).tolist()
+  (tr_x, tr_y, tr_ya, tr_ids) = tr_data
+  (te_x, te_y, te_ya, te_ids) = te_data
+  print("Time taken to load MITBIH: %.2fs" % (time.time() - load_start_time))
+  sub_names = {0:"ECG", 1:"BP", 2:"EEG"}
+
+  fft_size = 20
+  remove_first_freq = False
+  if remove_first_freq:
+    f_inds = list(range(1, fft_size)) + list(range(fft_size + 1, 2 * fft_size))
+    tr_x = {vi: xvi[:, f_inds] for vi, xvi in tr_x.items()}
+    te_x = {vi: xvi[:, f_inds] for vi, xvi in te_x.items()}
+
+  torch.set_default_dtype(torch.float64)
+  view_sizes = {vi:xv.shape[1] for vi, xv in tr_x.items()}
+  n_views = len(view_sizes)
+
+  config, view_config_and_inits, cond_config_and_inits, view_ae_configs = \
+      make_default_pipeline_config(args, view_sizes=view_sizes)
+  view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
+  cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
+
+  config.no_view_tfm = True
+  config.dsl_coeff = 1000.
+  # IPython.embed()
+  dev = None
+  if torch.cuda.is_available() and args.gpu_num >= 0:
+    dev = torch.device("cuda:%i" % args.gpu_num)
+
+  model = ac_flow_dsl_pipeline.MACFlowDSLTrainer(config)
+  model.initialize(
+      view_sizes, view_tfm_config_lists, view_tfm_init_lists,
+      cond_tfm_config_lists, cond_tfm_init_lists, view_ae_configs)
+
+  n_sampled_tr = args.npts
+  n_sampled_te = args.npts // 2
+  # (full_tr_x, full_tr_y, full_tr_ya) = (tr_x, tr_y, tr_ya)
+  tr_x, tr_y, tr_idxs = stratified_sample(tr_x, tr_y, n_sampled=n_sampled_tr)
+  # te_data, y_te, te_idxs = stratified_sample(te_data, y_te, n_sampled=n_sampled_te)
+  n_tr = tr_x[0].shape[0]
+  tr_x = convert_numpy_to_float64(tr_x)
+  tr_y = convert_numpy_to_float64(tr_y)
+
+  cat_tr = get_sampled_cat({}, tr_x)
+  cat_te = get_sampled_cat({}, te_x)
+
+  IPython.embed()
+  # DSL
+  freeze_loss = True
+  loss_config = default_polysom_classifier_config(args, view_sizes)
+  loss_func = physionet.PolysomClassifier(loss_config)
+  loss_func.pre_train(cat_tr, tr_y)
+
+  if freeze_loss:
+    loss_func.freeze()
+
+  IPython.embed()
+  model.fit(tr_x, tr_y, None, loss_func)
+  IPython.embed()
+
+  te_x = convert_numpy_to_float64(te_x)
+  te_y = convert_numpy_to_float64(te_y)
+  view_subsets = []
+  view_range = list(range(n_views))
+  for nv in range(1, n_views):
+    view_subsets.extend(list(itertools.combinations(view_range, nv)))
+
+  tr_samples = {}
+  te_samples = {}
+  for vsub in view_subsets:
+    # x_o_tr = {vi:tr_data[vi] for vi in vsub}
+    # x_o_te = {vi:te_data[vi] for vi in vsub}
+    globals().update(locals())
+    tr_x_sub = {vi: xvi for vi, xvi in tr_x.items() if vi not in vsub}
+    te_x_sub = {vi: xvi for vi, xvi in te_x.items() if vi not in vsub}
+    tr_samples[vsub] = model.sample(
+        tr_x_sub, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
+    te_samples[vsub] = model.sample(
+        te_x_sub, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
+
+    # tr_digits[vsub] = get_sampled_cat_grid(trd2, true_tr_digits)
+    # te_digits[vsub] = get_sampled_cat_grid(ted2, true_te_digits)
+
+  tr_samples = complement_subset_keys(tr_samples, n_views)
+  te_samples = complement_subset_keys(te_samples, n_views)
+
+  cat_tr = get_sampled_cat({}, tr_x)
+  cat_te = get_sampled_cat({}, te_x)
+
+  nn_pgrid = {"hidden_layer_sizes": [[256, 128], [100, 50], [50, 50], [128], [50]]}
+  nn_classifier = gscv(neural_network.MLPClassifier(max_iter=500), nn_pgrid, verbose=100)
+  rf_pgrid = {"max_features": [20, 25, 30], "max_depth": [5, 10]}
+  rf_classifier = gscv(ensemble.RandomForestClassifier(n_estimators=100, min_samples_leaf=2), rf_pgrid, verbose=100)
+
+  # hidden_sizes = [128, 64]
+  # n_estimators = 10
+
+  # classifier = train_classifier(tr_x, tr_y, hidden_sizes, n_estimators)
+  tr_perm_accs, tr_perm_preds, tr_nv_accs = evaluate_mv_performance(
+      classifier, tr_samples, tr_x, tr_y)
+  te_perm_accs, te_perm_preds, te_nv_accs = evaluate_mv_performance(
+      classifier, te_samples, te_x, te_y)
+  print(tr_perm_accs)
+  print(te_perm_accs)
 
   IPython.embed()
 
@@ -510,6 +660,7 @@ _TEST_FUNCS = {
     0: test_pipeline_dsl,
     1: test_mnist_dsl,
     2: test_mitbih,
+    3: test_mitbih_dsl,
     -1: interactive,
 }
 

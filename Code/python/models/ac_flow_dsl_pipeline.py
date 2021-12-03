@@ -27,7 +27,7 @@ class MACFDTConfig(MACFTConfig):
   def __init__(
       self, expand_b=True, use_pre_view_ae=False, no_view_tfm=False,
       likelihood_config=None, base_dist="gaussian", dsl_coeff=1.0,
-      batch_size=50, lr=1e-3, max_iters=1000,
+      batch_size=50, lr=1e-3, max_iters=1000, grad_clip=5.,
       verbose=True, *args, **kwargs):
 
     self.dsl_coeff = dsl_coeff
@@ -35,7 +35,7 @@ class MACFDTConfig(MACFTConfig):
         expand_b=expand_b, use_pre_view_ae=use_pre_view_ae,
         no_view_tfm=no_view_tfm, likelihood_config=likelihood_config,
         base_dist=base_dist, dsl_coeff=dsl_coeff, batch_size=batch_size,
-        lr=lr, max_iters=max_iters, verbose=verbose,
+        lr=lr, max_iters=max_iters, grad_clip=grad_clip, verbose=verbose,
         *args, **kwargs)
 
 
@@ -117,6 +117,7 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
         self._training = False
         return
       loss_val.backward()
+      nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
       self.itr_loss += loss_val
 

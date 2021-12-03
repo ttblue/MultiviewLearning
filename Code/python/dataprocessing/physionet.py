@@ -1,11 +1,18 @@
 # Utilities for working with data from physionet.
+import eeglib
+import neurokit2 as nk
 import numpy as np
 import os
+import pandas as pd
 from scipy import fft
+import time
+import torch
+from torch import nn, optim
 import wfdb
 
-
-from utils import utils
+from models import torch_models
+from models.model_base import BaseConfig
+from utils import torch_utils, utils
 
 
 import IPython
@@ -79,51 +86,212 @@ def get_sleep_and_apnea_labels(ann, ann_dt, tot_num_anns):
   return all_sleep_lbls, all_apnea_lbls
 
 
+def process_ecg(ecg_data, freq, window_size):
+  ecg_sig, info = nk.ecg_process(ecg_data, sampling_rate=freq)
+
+  events = np.arange(0, ecg_data.shape[0], window_size)
+  epochs_start = 0
+  epochs_end = window_size / freq
+  epochs = nk.epochs_create(
+      ecg_sig, events=events, sampling_rate=freq, epochs_start=epochs_start,
+      epochs_end=epochs_end)
+  ecg_ft = nk.ecg_intervalrelated(epochs, sampling_rate=freq)
+  ecg_ft_np = ecg_ft.iloc[:, 1:].to_numpy()
+  return ecg_ft_np
+
+
+def process_eeg(eeg_data, freq, window_size, psd_nperseg=20):
+  # Maybe do something else to downsample
+  if ds_factor > 1:
+    eeg_data = eeg_data.reshape(-1, ds_factor).mean(axis=1)
+    freq /= ds_factor
+    window_size /= ds_factor
+
+  eeg_data = np.atleast_2d(eeg_data)
+  hp = eeglib.helpers.Helper(
+      eeg_data, sampleRate=freq, windowSize=window_size)
+  wrap = wrapper.Wrapper(hp)
+  wrap.addFeature.bandPower()  #4
+  wrap.addFeature.DFA()  #1
+  wrap.addFeature.HFD()  #1
+  wrap.addFeature.hjorthActivity()  #1
+  wrap.addFeature.hjorthMobility()  #1
+  wrap.addFeature.hjorthComplexity()  #1
+  wrap.addFeature.LZC()  #1
+  wrap.addFeature.PFD()  #1
+  wrap.addFeature.PSD(nperseg=psd_nperseg)  #variable
+  wrap.addFeature.sampEn()  #1
+
+  eeg_ft = wrap.getAllFeatures()
+  return eeg_ft
+
+
+def process_rsp(rsp_data, freq, window_size):
+  rsp_sig, info = nk.rsp_process(rsp_data, sampling_rate=freq)
+
+  events = np.arange(0, rsp_data.shape[0], window_size)
+  epochs_start = 0
+  epochs_end = window_size / freq
+  epochs = nk.epochs_create(
+      rsp_sig, events=events, sampling_rate=freq, epochs_start=epochs_start,
+      epochs_end=epochs_end)
+
+  rsp_ft = []
+  invalid_inds = []
+  dim = None
+  for idx in range(len(events)):
+    epoch = epochs[str(idx + 1)]
+    try:
+      e_ft = nk.rsp_intervalrelated(epoch, sampling_rate=freq)
+      e_ft_np = e_ft.iloc[:, 1:].to_numpy()
+      rsp_ft.append(e_ft_np.squeeze())
+      if dim is None:
+        dim = e_ft_np.shape[1]
+    except:
+      rsp_ft.append(None)
+      invalid_inds.append(idx)
+
+  dummy_ft = np.ones(dim) * np.nan
+  for idx in invalid_inds:
+    rsp_ft[idx] = dummy_ft
+
+  rsp_ft = np.concatenate(rsp_ft, axis=0)
+  return rsp_ft
+
+
+def process_bp(bp_data, freq, window_size):
+  pass
+
+
+def get_sig_col_ids(record, sig_names):
+  col_ids = []
+  _base_sigs = {"ECG": 0, "BP": 1, "EEG": 2}
+  for sig in sig_names:
+    if sig in _base_sigs:
+      col_ids.append(_base_sigs[sig])
+    elif sig not in record.sig_name:
+      return None
+    else:
+      col_ids.append(record.sig_name.index(sig))
+  return col_ids
+
+
+_DEFAULT_SIG_NAMES = ["ECG", "EEG", "Resp (nasal)"]
 def get_mitbih_data(
-    fft_size=20, signal_ids=[0,1,2], normalize=True, shuffle=True):
+    fft_size=20, signal_names=None, ds_factor=10,
+    normalize=True, shuffle=True):
+
+  signal_names = signal_names or _DEFAULT_SIG_NAMES
   subject_map, records = get_mitbih_records()
-  waveform_data = {rname: rec[0].p_signal for rname, rec in records.items()}
-  ann_data = {rname: rec[1] for rname, rec in records.items()}
+  num_records = len(records)
+  # waveform_data = {rname: rec[0].p_signal for rname, rec in records.items()}
+  # ann_data = {rname: rec[1] for rname, rec in records.items()}
 
-  freq = records[utils.get_any_key(records)][0].fs
-  ann_dt = _ANN_DT_S * freq
-
+  base_freq = records[utils.get_any_key(records)][0].fs
+  base_ann_dt = _ANN_DT_S * base_freq
+  freq = base_freq / ds_factor
+  window_size = base_ann_dt / ds_factor
   # IPython.embed()
-  view_map = {vi: sig_id for vi, sig_id in enumerate(signal_ids)}
+  # view_map = {vi: sig_id for vi, sig_id in enumerate(signal_ids)}
   # if not mus:
   #   mus = {sig_id: 0. for vi in signal_ids}
   # if not stds:
   #   stds = {sig_id: 1. for vi in signal_ids}
-
   x_vs_rec = {}
   y_rec = {}
   y_apnea_rec = {}
-  for rname, r_wfd in waveform_data.items():
-    r_ann = ann_data[rname]
-    tot_num_anns = int(np.ceil(r_wfd.shape[0] / ann_dt))
-    slbls, albls = get_sleep_and_apnea_labels(r_ann, ann_dt, tot_num_anns)
+  valid_records = []
+  r_idx = 1
 
-    mus = {sig_id: r_wfd[:, sig_id].mean() for sig_id in signal_ids}
-    stds = {sig_id: r_wfd[:, sig_id].std() for sig_id in signal_ids}
-    r_vdat = {
-        vi: ((r_wfd[:, sig_id] - mus[sig_id]) / stds[sig_id]).reshape(
-            -1, ann_dt)
-        for vi, sig_id in view_map.items()
-    }
+  invalid_cols = {}
+  col_dims = {}
+  for rname, (rec, ann) in waveform_data.items():
+    print("\nExtracting record %s. (%i/%i)" % (rname, r_idx, num_records))
+    col_ids = get_sig_col_ids(record, signal_names)
+    if not col_ids:
+      print("  Record %s does not have all signals." % rname)
+      continue
+
+    valid_records.append(rname)
+    r_wfd = rec.p_signal
+    tot_num_anns = int(np.ceil(r_wfd.shape[0] / base_ann_dt))
+    slbls, albls = get_sleep_and_apnea_labels(ann, base_ann_dt, tot_num_anns)
+    r_vdat = {}
+
+    r_invalid_rows = []
+    for sidx, sig_name in enumerate(signal_names):
+      t_start = time.time()
+      cidx = col_ids[sidx]
+
+      sig_data = r_wfd[:, sidx]
+      if ds_factor > 1:
+        sig_data = sig_data.reshape(-1, ds_factor).mean(1)
+
+      if sig_name == "ECG":
+        sig_f = process_ecg(sig_data, freq, window_size)
+      elif sig_name == "EEG":
+        sig_f = process_eeg(sig_data, freq, window_size)
+      elif sig_name == "Resp (nasal)":
+        sig_f = process_rsp(sig_data, freq, window_size)
+      else:
+        raise ValueError("Cannot extract signal %s" % sig_name)
+
+      if sidx not in col_dims:
+        col_dims[sidx] = sig_f.shape[1]
+
+      nan_check = np.isnan(sig_f)
+      bad_cols = nan_check.any(0)
+      good_cols = np.nonzero(bad_cols == False)[0]
+      bad_rows = nan_check[:, good_cols].any(1)
+
+      r_invalid_rows.extend(np.nonzero(bad_rows)[0].tolist())
+
+      if bad_cols.any():
+        if sidx not in invalid_cols:
+          invalid_cols[sidx] = []
+        invalid_cols[sidx].extend(list(np.nonzero(bad_cols)[0]))
+
+      r_vdat[sidx] = sig_f
+      t_diff = time.time() - t_start
+      print("  Record %s -- Extracted %s in %.2fs." % (rname, sig_name, t_diff))
+
+    r_invalid_rows = np.unique(r_invalid_rows)
+    n_pts = r_vdat[0].shape[0]
+    valid_flag = np.ones(n_pts).astype("bool")
+    valid_flag[r_invalid_rows] = False
+
+    r_vdat = {sidx: rvi[valid_flag] for sidx, rvi in r_vdat.items()}
+    slbls = np.array(slbls)[valid_flag]
+    albls = np.array(albls)[valid_flag]
+
+    x_vs_rec[rname] = r_vdat
+    y_rec[rname] = slbls
+    y_apnea_rec[rname] = albls
+    print("  Record %s -- cleanup..." % rname)
+    # r_vdat = {
+    #     vi: ((r_wfd[:, sig_id] - mus[sig_id]) / stds[sig_id]).reshape(
+    #         -1, ann_dt)
+    #     for vi, sig_id in view_map.items()
+    # }
     # r_vdat = {
     #     vi: ((r_wfd[:, sig_id] - mus[sig_id]) / stds[sig_id]).reshape(
     #         -1, ann_dt)
     #     for vi, sig_id in view_map.items()
     # }
 
-    r_fft_dat = {
-        vi: np.abs(fft.fft(sdat, n=fft_size, axis=1))
-        for vi, sdat in r_vdat.items()
-    }
+    # r_fft_dat = {
+    #     vi: fft.fft(sdat, n=fft_size, axis=1)
+    #     for vi, sdat in r_vdat.items()
+    # }
+    # r_fft_dat = {
+    #     vi: np.concatenate([np.real(fdat), np.imag(fdat)], axis=1)
+    #     for vi, fdat in r_fft_dat.items()
+    # }
 
-    x_vs_rec[rname] = r_fft_dat
-    y_rec[rname] = np.array(slbls)
-    y_apnea_rec[rname] = np.array(albls)
+  invalid_cols = {
+      sidx: np.unique(icols) for sidx, icols in invalid_cols.items()}
+  col_valid_flags = {
+      sidx:np.ones(cdim).astype("bool") for sidx, cdim in col_dims.items()}
 
   x_vs_subj = {}
   y_subj = {}
@@ -169,7 +337,7 @@ def get_mitbih_data(
   return x_vs_subj, y_subj, y_apnea_subj
 
 
-_mitbih_file = os.path.join(_CODE_DIR, "data/mitbih/polysom_normalized.npy")
+_mitbih_file = os.path.join(_CODE_DIR, "data/mitbih/polysom_normalized_full_fft.npy")
 _mitbih_stats_file = os.path.join(_CODE_DIR, "data/mitbih/tr_stats.npy")
 def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
   x_vs_subj, y_subj, y_apnea_subj = np.load(
@@ -179,9 +347,9 @@ def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
   num_subjs = len(subjects)
   num_tr = int(num_subjs * tr_frac)
 
-  # shuffled_ids = np.random.permutation(num_subjs)
-  # tr_ids, te_ids = shuffled_ids[:num_tr], shuffled_ids[num_tr:]
-  [tr_mus, tr_stds, tr_ids] = np.load(_mitbih_stats_file).tolist()
+  shuffled_ids = np.random.permutation(num_subjs)
+  tr_ids, te_ids = shuffled_ids[:num_tr], shuffled_ids[num_tr:]
+  # [tr_mus, tr_stds, tr_ids] = np.load(_mitbih_stats_file).tolist()
   te_ids = [i for i in range(num_subjs) if i not in tr_ids]
 
   tr_x, te_x = {}, {}
@@ -229,3 +397,105 @@ def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
     te_ya = te_ya[shuffle_inds]
 
   return (tr_x, tr_y, tr_ya, tr_ids), (te_x, te_y, te_ya, te_ids)
+
+
+class PolysomConfig(BaseConfig):
+  def __init__(
+      self, nn_config, lr=1e-3, batch_size=50, max_iters=1000,
+      grad_clip=5., verbose=True, *args, **kwargs):
+
+    self.nn_config = nn_config
+
+    self.lr = lr
+    self.batch_size = batch_size
+    self.max_iters = max_iters
+    self.grad_clip = grad_clip
+
+    self.verbose = verbose
+
+
+# Simple FC NN to classify sleep cycle
+NUM_SLEEP_LABELS = 6
+class PolysomClassifier(nn.Module):
+  def __init__(self, config):
+    self.config = config
+    super(PolysomClassifier, self).__init__()
+    self._setup_net()
+
+  def _setup_net(self):
+    nn_config = self.config.nn_config
+    self._classifier_net = torch_models.MultiLayerNN(nn_config)
+    self._pre_logit = nn.Linear(
+        nn_config.output_size, NUM_SLEEP_LABELS, bias=True)
+
+    self.cross_ent_loss = nn.CrossEntropyLoss()
+    self.frozen = False
+
+  def _cat_mv_data(self, x_vs):
+    nviews = len(x_vs)
+    cat_xs = torch.cat([x_vs[vi] for vi in range(nviews)], dim=1)
+    return cat_xs
+
+  def get_pre_logits(self, xs):
+    net_output = self._classifier_net(xs)
+    pre_logits = self._pre_logit(net_output)
+    return pre_logits
+
+  def forward(self, x_vs, y, *args, **kwargs):
+    cat_xs = self._cat_mv_data(x_vs)
+    x_pre_logit = self.get_pre_logits(cat_xs)
+    loss_val = self.cross_ent_loss(x_pre_logit, y.long())
+    return loss_val
+
+  def freeze(self):
+    for param in self.parameters():
+      param.requires_grad = False
+    self.frozen = True
+
+  def pre_train(self, xs, y, *args, **kwargs):
+    if self.config.verbose:
+      all_start_time = time.time()
+
+    xs = torch_utils.numpy_to_torch(xs)
+    y = torch_utils.numpy_to_torch(y)
+    y = y.long()
+
+    self.opt = optim.Adam(self.parameters(), self.config.lr)
+
+    max_iters = self.config.max_iters
+    try:
+      itr = -1
+      for itr in range(max_iters):
+        if self.config.verbose:
+          itr_start_time = time.time()
+
+        self.opt.zero_grad()
+        x_pre_logit = self.get_pre_logits(xs)
+        loss_val = self.cross_ent_loss(x_pre_logit, y)
+        loss_val.backward()
+
+        nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
+        self.opt.step()
+
+        if self.config.verbose:
+          itr_diff_time = time.time() - itr_start_time
+          lval = float(loss_val.detach())
+          print("Iteration %i out of %i (in %.2fs). Loss: %.5f. " %
+                (itr + 1, max_iters, itr_diff_time, lval), end='\r')
+
+      if self.config.verbose and itr >= 0:
+        print("Iteration %i out of %i (in %.2fs). Loss: %.5f. " %
+              (itr + 1, max_iters, itr_diff_time, lval))
+    except KeyboardInterrupt:
+      print("Pre-Training interrupted. Quitting now.")
+
+    print("Pre-Training finished in %0.2f s." % (time.time() - all_start_time))
+    return self
+
+  def predict(self, xs, rtn_torch=False):
+    xs = torch_utils.numpy_to_torch(xs)
+    x_pre_logit = self.get_pre_logits(xs)
+
+    preds = torch.argmax(x_pre_logit, dim=1)
+    return preds if rtn_torch else torch_utils.torch_to_numpy(preds)
+

@@ -23,7 +23,7 @@ class MACFTConfig(BaseConfig):
   def __init__(
       self, expand_b=True, use_pre_view_ae=False, no_view_tfm=False,
       likelihood_config=None, base_dist="gaussian",
-      batch_size=50, lr=1e-3, max_iters=1000,
+      batch_size=50, lr=1e-3, max_iters=1000, grad_clip=5.,
       verbose=True, *args, **kwargs):
     super(MACFTConfig, self).__init__(*args, **kwargs)
 
@@ -37,6 +37,7 @@ class MACFTConfig(BaseConfig):
     self.batch_size = batch_size
     self.lr = lr
     self.max_iters = max_iters
+    self.grad_clip = grad_clip
 
     self.verbose = verbose
 
@@ -316,6 +317,7 @@ class MultiviewACFlowTrainer(nn.Module):
         self._training = False
         return
       loss_val.backward()
+      nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
       self.itr_loss += loss_val
 
