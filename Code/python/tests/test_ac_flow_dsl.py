@@ -636,9 +636,10 @@ def test_mitbih_dsl(args):
 
   nn_pgrid = {"hidden_layer_sizes": [[256, 128], [100, 50], [50, 50], [128], [50]]}
   nn_classifier = gscv(neural_network.MLPClassifier(max_iter=500), nn_pgrid, verbose=100)
+  nn_classifier.fit(cat_tr, tr_y)
   rf_pgrid = {"max_features": [20, 25, 30], "max_depth": [5, 10]}
   rf_classifier = gscv(ensemble.RandomForestClassifier(n_estimators=100, min_samples_leaf=2), rf_pgrid, verbose=100)
-
+  rf_classifier.fit(cat_tr, tr_y)
   # hidden_sizes = [128, 64]
   # n_estimators = 10
 

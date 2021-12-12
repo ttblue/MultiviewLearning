@@ -178,7 +178,7 @@ def get_sig_col_ids(record, sig_names):
 
 _DEFAULT_SIG_NAMES = ["ECG", "EEG", "Resp (nasal)"]
 def get_mitbih_data(
-    fft_size=20, signal_names=None, ds_factor=10,
+    fft_size=20, signal_names=None, ds_factor=25,
     normalize=True, shuffle=True):
 
   signal_names = signal_names or _DEFAULT_SIG_NAMES
@@ -205,13 +205,14 @@ def get_mitbih_data(
 
   invalid_cols = {}
   col_dims = {}
-  for rname, (rec, ann) in waveform_data.items():
+  for rname, (rec, ann) in records.items():
     print("\nExtracting record %s. (%i/%i)" % (rname, r_idx, num_records))
-    col_ids = get_sig_col_ids(record, signal_names)
+    col_ids = get_sig_col_ids(rec, signal_names)
     if not col_ids:
       print("  Record %s does not have all signals." % rname)
       continue
 
+    IPython.embed()
     valid_records.append(rname)
     r_wfd = rec.p_signal
     tot_num_anns = int(np.ceil(r_wfd.shape[0] / base_ann_dt))
@@ -288,10 +289,13 @@ def get_mitbih_data(
     #     for vi, fdat in r_fft_dat.items()
     # }
 
-  invalid_cols = {
-      sidx: np.unique(icols) for sidx, icols in invalid_cols.items()}
+  # invalid_cols = {
+  #     sidx: np.unique(icols) for sidx, icols in invalid_cols.items()}
   col_valid_flags = {
       sidx:np.ones(cdim).astype("bool") for sidx, cdim in col_dims.items()}
+  for sidx, icol_idxs in invalid_cols.items():
+    icol_idxs = np.unique(icol_idxsl)
+    col_valid_flags[sidx] [icol_idxs] = False
 
   x_vs_subj = {}
   y_subj = {}
@@ -304,7 +308,9 @@ def get_mitbih_data(
     # Remove bad labels:
     valid_inds = (r_y > -1)
     globals().update(locals())
-    r_x_valid = {vi: r_xi[valid_inds] for vi, r_xi in r_x.items()}
+    r_x_valid = {
+        vi: r_xi[valid_inds, col_valid_flags[vi]] for vi, r_xi in r_x.items()
+    }
     r_y_valid = r_y[valid_inds]
     ra_y_valid = ra_y[valid_inds]
     globals().update(locals())
