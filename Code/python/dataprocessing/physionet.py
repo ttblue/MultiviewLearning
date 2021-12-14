@@ -8,6 +8,7 @@ from scipy import fft
 import time
 import torch
 from torch import nn, optim
+import tsfresh
 import wfdb
 
 from models import torch_models
@@ -184,8 +185,9 @@ def get_mitbih_data(
   signal_names = signal_names or _DEFAULT_SIG_NAMES
   subject_map, records = get_mitbih_records()
   num_records = len(records)
-  # waveform_data = {rname: rec[0].p_signal for rname, rec in records.items()}
-  # ann_data = {rname: rec[1] for rname, rec in records.items()}
+  col_ids = {rname:get_sig_col_ids(rec[0], signal_names) for rname, rec in records.items()}
+  waveform_data = {rname: rec[0].p_signal[:, col_ids[rname]] for rname, rec in records.items()}
+  ann_data = {rname: rec[1] for rname, rec in records.items()}
 
   base_freq = records[utils.get_any_key(records)][0].fs
   base_ann_dt = _ANN_DT_S * base_freq

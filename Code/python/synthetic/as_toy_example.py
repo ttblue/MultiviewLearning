@@ -1,11 +1,16 @@
+# Steps:
+# Classifier based on data points
+# Run AS to select new points
+# Improved classification accuracy
+
 import numpy as np
 
 
-def make_graph_dset():
-  base_params = None
+def 
 
-  pass
 
 
 def sample_from_params():
   pass
+
+
