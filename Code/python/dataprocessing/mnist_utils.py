@@ -9,7 +9,7 @@ from dataprocessing import split_single_view_dsets as ssvd
 from utils import torch_utils, utils
 
 
-torch.set_default_dtype(torch.float32)
+torch.set_default_dtype(torch.float64)
 
 
 def evaluate_mnist_onnx_model(tf_rep, data, fname=None):
@@ -66,17 +66,17 @@ class MNIST8(nn.Module):
     }
 
     conv1_W = torch.as_tensor(
-        model_data["Parameter5"], dtype=torch.float32).view(8, 1, 5, 5)
+        model_data["Parameter5"], dtype=torch.float64).view(8, 1, 5, 5)
     conv1_b = torch.as_tensor(
-        model_data["Parameter6"], dtype=torch.float32)
+        model_data["Parameter6"], dtype=torch.float64)
     conv2_W = torch.as_tensor(
-        model_data["Parameter87"], dtype=torch.float32).view(16, 8, 5, 5)
+        model_data["Parameter87"], dtype=torch.float64).view(16, 8, 5, 5)
     conv2_b = torch.as_tensor(
-        model_data["Parameter88"], dtype=torch.float32)
+        model_data["Parameter88"], dtype=torch.float64)
     lin_W = torch.as_tensor(
-        model_data["Parameter193"], dtype=torch.float32).view(256, 10)
+        model_data["Parameter193"], dtype=torch.float64).view(256, 10)
     lin_b = torch.as_tensor(
-        model_data["Parameter194"], dtype=torch.float32)
+        model_data["Parameter194"], dtype=torch.float64)
 
     # with torch.no_grad():
     self._conv1.weight.requires_grad = False
@@ -98,6 +98,7 @@ class MNIST8(nn.Module):
         n_views=self._n_views, shape="grid")
 
     self.cross_ent_loss = nn.CrossEntropyLoss()
+    self.eval()
 
   def save_svd_models(self, svd_models):
     self._components_vs = {
@@ -137,8 +138,7 @@ class MNIST8(nn.Module):
     # imgs = imgs.view((-1, 1, _mnist_h, _mnist_w))
     # return imgs
 
-  def get_pre_logits(self, x_vs):
-    x = self.convert_to_imgs(x_vs)
+  def get_pre_logits(self, x):
 
     # if len(x.shape) < 4:
     #   x = torch.unsqueeze(x, 1)
@@ -159,10 +159,25 @@ class MNIST8(nn.Module):
     return x_pre_logit
 
   def forward(self, x_vs, y, *args, **kwargs):
-    x_pre_logit = self.get_pre_logits(x_vs)
+    x = self.convert_to_imgs(x_vs)
+    x_pre_logit = self.get_pre_logits(x)
     # x_logit = x_pre_logit.softmax(dim=1)
     loss_val = self.cross_ent_loss(x_pre_logit, y.long())
     return loss_val
+
+  def predict(self, x_vs):
+    x_vs = torch_utils.dict_numpy_to_torch(x_vs)
+    x = self.convert_to_imgs(x_vs)
+    x_pre_logit = self.get_pre_logits(x)
+    preds = torch.argmax(x_pre_logit, dim=1)
+    return torch_utils.torch_to_numpy(preds)
+
+  def predict_imgs(self, imgs):
+    imgs = torch_utils.numpy_to_torch(imgs)
+    imgs = imgs.view((-1, 1, _mnist_h, _mnist_w))
+    x_pre_logit = self.get_pre_logits(imgs)
+    preds = torch.argmax(x_pre_logit, dim=1)
+    return torch_utils.torch_to_numpy(preds).astype(int)  
 
 
 if __name__=="__main__":
@@ -185,11 +200,11 @@ if __name__=="__main__":
   train_set, valid_set, test_set = load_original_mnist()
   tr_inds = np.load(tr_inds_file)
   tr_x, tr_y = train_set[0][tr_inds], train_set[1][tr_inds]
-  torch_tr_x = torch.from_numpy(tr_x.astype("float32").reshape(-1, 1, 28, 28))
+  torch_tr_x = torch.from_numpy(tr_x.astype("float64").reshape(-1, 1, 28, 28))
 
   npts = 2000
   xn, yn = train_set[0][:npts], train_set[1][:npts]
-  torch_xn = torch.from_numpy(xn.astype("float32").reshape(-1, 1, 28, 28))
+  torch_xn = torch.from_numpy(xn.astype("float64").reshape(-1, 1, 28, 28))
   t1 = time.time()
   onnx_plogits = evaluate_mnist_onnx_model(tf_rep, xn, mnist_model_file)
   t2 = time.time()

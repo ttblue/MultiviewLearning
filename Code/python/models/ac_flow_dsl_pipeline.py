@@ -57,17 +57,22 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
     if aggregate:
       mean_ll = 0
       for vi, vi_nll in x_nll.items():
-        mean_ll += torch.mean(vi_nll)
+        mean_ll = mean_ll + torch.mean(vi_nll)
       return mean_ll
     return x_nll
 
-  def loss(self, x_vs, ys, z_vs, l_vs, ld_vs, *args, **kwargs):
+  def loss(self, x_vs_recon, ys, z_vs, l_vs, ld_vs, *args, **kwargs):
     loss_val = self._nll(l_vs, ld_vs, aggregate=True)
+    self._curr_nll_loss = loss_val.detach().numpy()
+    self._curr_dsl_loss = 0.
     if self.config.dsl_coeff > 0 and self._ds_loss is not None:
       # Assuming it isn't negative.
       ds_loss = self._ds_loss(
-           x_vs, ys, z_vs, l_vs, ld_vs, *args, **kwargs)
-      loss_val += self.config.dsl_coeff * ds_loss
+           x_vs_recon, ys, z_vs, l_vs, ld_vs, *args, **kwargs)
+      loss_val = loss_val + self.config.dsl_coeff * ds_loss
+      self._curr_dsl_loss = ds_loss.detach().numpy()
+      # print(self._curr_dsl_loss)
+
     return loss_val
 
   def _shuffle(self, x_vs, ys):
@@ -85,8 +90,11 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
     return imputed_vs
 
   def _train_loop(self):
+    torch.autograd.set_detect_anomaly(True)
     x_vs, ys = self._shuffle(self._view_data, self._ys)
     self.itr_loss = 0.
+    self.itr_nll_loss = 0.
+    self.itr_dsl_loss = 0.
     for batch_idx in range(self._n_batches):
       batch_start = batch_idx * self.config.batch_size
       batch_end = min(batch_start + self.config.batch_size, self._npts)
@@ -105,21 +113,38 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
       # globals().update(locals())
       l_batch, z_batch, ld_batch = self._transform(
           xvs_batch, b_o_batch, rtn_logdet=True)
+      # xvs_batch_av = {vi:xv for vi, xv in xvs_batch.items() if vi in available_views}
+      v_samp = [i for i in range(self._n_views) if i not in available_views]
 
+      # samp_batch1 = self.sample(xvs_batch, b_o_batch, v_samp)
+      samp_batch = {
+          vi: self._sample_view(vi, xvs_batch, b_o_batch)
+          for vi in v_samp
+      }
+      # print(samp_batch.keys())
+      xvs_batch_recon = {
+          vi:(samp_batch[vi] if vi in v_samp else xvi)
+          for vi, xvi in xvs_batch.items()
+      }
       # IPython.embed()
       # available_views = next(self._view_subset_shuffler)
       # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
       self.opt.zero_grad()
       loss_val = self.loss(
-          xvs_batch, ys_batch, z_batch, l_batch, ld_batch)
+          xvs_batch_recon, ys_batch, z_batch, l_batch, ld_batch)
       if torch.isnan(loss_val):
         print("nan loss value. Exiting training.")
         self._training = False
         return
-      loss_val.backward()
+      loss_val.backward(retain_graph=True)
       nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
-      self.itr_loss += loss_val
+
+      self.itr_loss = self.itr_loss + loss_val.detach().numpy()
+      self.itr_nll_loss = self.itr_nll_loss + self._curr_nll_loss
+      self.itr_dsl_loss = self.itr_dsl_loss + self._curr_dsl_loss
+      print(self.itr_loss, self.itr_nll_loss, self.itr_dsl_loss)
+      print()
 
       if available_views not in self._view_subset_counts:
         self._view_subset_counts[available_views] = 0
@@ -135,6 +160,7 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
     # For convenience
     self._npts = x_vs[utils.get_any_key(x_vs)].shape[0]
     self._view_data = torch_utils.dict_numpy_to_torch(x_vs)
+    self._n_views = len(x_vs)
     self._ys = torch_utils.numpy_to_torch(ys)
     if dev is not None:
       self._view_data.to(dev)
@@ -159,16 +185,18 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
         if not self._training:
           break
 
-        loss_val = float(self.itr_loss.detach())
-        self._loss_history.append(loss_val)
+        loss_val = self.itr_loss
+        loss_nll = self.itr_nll_loss
+        loss_dsl = self.itr_dsl_loss
+        self._loss_history.append((loss_val, loss_nll, loss_dsl))
         if self.config.verbose:
           itr_diff_time = time.time() - itr_start_time
-          print("  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
-                (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
+          print("  Iteration %i/%i (in %.2fs). Loss: %.5f. NLL: %.5f. DSL: %.5f" %
+                (itr + 1, self.config.max_iters, itr_diff_time, loss_val, loss_nll, loss_dsl),
                 end='\r')
       if self.config.verbose:
-        print("  Iteration %i out of %i (in %.2fs). Loss: %.5f" %
-              (itr + 1, self.config.max_iters, itr_diff_time, loss_val),
+        print("  Iteration %i/%i (in %.2fs). Loss: %.5f. NLL: %.5f. DSL: %.5f" %
+              (itr + 1, self.config.max_iters, itr_diff_time, loss_val, loss_nll, loss_dsl),
               end='\r')
     except KeyboardInterrupt:
       print("Training interrupted. Quitting now.")

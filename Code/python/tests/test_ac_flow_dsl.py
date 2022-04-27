@@ -210,6 +210,7 @@ def test_mnist_dsl(args):
   cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
   config.no_view_tfm = True
+  config.dsl_coeff = 5000
   # IPython.embed()
   dev = None
   if torch.cuda.is_available() and args.gpu_num >= 0:
@@ -240,7 +241,7 @@ def test_mnist_dsl(args):
   #     cond_tfm_config_lists, cond_tfm_init_lists)
 
   # model.to(dev)
-  IPython.embed()
+  # IPython.embed()
   model.fit(tr_data, y_tr, b_o_tr, mnist8, dev=dev)
   IPython.embed()
 

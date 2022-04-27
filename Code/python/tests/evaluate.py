@@ -104,7 +104,6 @@ def plot_many_digits(
   for ri in range(nrows):
     # if dig_idx >= ndigs:
     #   break
-
     for ci in range(ncols):
       ax = axs[ri, ci]
       if dig_idx >= ndigs:
@@ -541,6 +540,34 @@ def get_mcnemar_matrix(preds, ref_preds, truevals):
 
   results_matrix = np.array([[rcpc_num, rwpc_num], [rcpw_num, rwpw_num]])
   return results_matrix
+
+
+def get_mcnemar_mats_all(preds, ref_preds, truevals):
+  all_mats = {}
+  for k, pvals in preds.items():
+    rpvals = ref_preds[k]
+    all_mats[k] = get_mcnemar_matrix(pvals, rpvals, truevals)
+
+  return all_mats
+
+
+def get_all_preds(imgs, mnist_mdl):
+  preds = {}
+  for k, ki in imgs.items():
+    preds[k] = mnist_mdl.predict_imgs(ki)
+  return preds
+
+
+def sum_nv_mats(mat_set):
+  nv_mats = {}
+  for k, m in mat_set.items():
+    nv = len(k)
+    if nv not in nv_mats:
+      nv_mats[nv] = m
+    else:
+      nv_mats[nv] += m
+
+  return nv_mats
 
 
 def plot_double_mcnemar(mat1, mat2, perm, ax=None, show_xyticks=True):

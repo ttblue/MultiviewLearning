@@ -274,8 +274,8 @@ class ConditionalInvertibleTransform(flow_transforms.InvertibleTransform):
         nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
         self.opt.step()
 
-        self.itr_loss += loss_val * x_batch.shape[0]
-      self.itr_loss /= self._npts
+        self.itr_loss = self.itr_loss + loss_val * x_batch.shape[0]
+      self.itr_loss = self.itr_loss / self._npts
 
       curr_loss = float(self.itr_loss.detach())
       if np.abs(self._prev_loss - curr_loss) < self.config.stopping_eps:
@@ -938,7 +938,7 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
       try:
         if rtn_logdet:
           z, tfm_jlogdet = z
-          jac_logdet += tfm_jlogdet
+          jac_logdet = jac_logdet + tfm_jlogdet
       except Exception as e:
         IPython.embed()
         raise(e)

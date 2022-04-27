@@ -147,17 +147,17 @@ def mv_bar_plots2(
     for sub in view_subsets:
       x1_vals.append(x_curr)
       y1_vals.append(tr_accs[sub])
-      ax.text(
-          x_curr + xtext_offset, tr_accs[sub] + ytext_offset, "%.2f" % tr_accs[sub],
-          va="center", fontweight="bold", fontsize=10)
+      # ax.text(
+      #     x_curr + xtext_offset, tr_accs[sub] + ytext_offset, "%.2f" % tr_accs[sub],
+      #     va="center", fontweight="bold", fontsize=10)
       # b_colors.append("b")
       x_curr += 1
 
       x2_vals.append(x_curr)
       y2_vals.append(te_accs[sub])
-      ax.text(
-          x_curr + xtext_offset, te_accs[sub] + ytext_offset, "%.2f" % te_accs[sub],
-          va="center", fontweight="bold", fontsize=10)
+      # ax.text(
+      #     x_curr + xtext_offset, te_accs[sub] + ytext_offset, "%.2f" % te_accs[sub],
+      #     va="center", fontweight="bold", fontsize=10)
       # b_colors.append("r")
 
       sub_lbl = " + ".join([sub_names[vi] for vi in sub])
@@ -181,20 +181,20 @@ def mv_bar_plots2(
 
   y_ticks = np.linspace(ymin, ymax, 5).round(2)
 
-  ax.bar(x1_vals, height=y1_vals, width=b_size, color="b", label="Train")
-  ax.bar(x2_vals, height=y2_vals, width=b_size, color="r", label="Test")
+  ax.bar(x1_vals, height=y1_vals, width=b_size, color="b", label="RF")
+  ax.bar(x2_vals, height=y2_vals, width=b_size, color="r", label="MLP")
 
   ax.set_xticks(x_ticks)
-  ax.set_xticklabels(x_labels, fontdict={'fontsize': 15})
+  ax.set_xticklabels(x_labels, fontdict={'fontsize': 20})
   ax.set_ylim(ymin, ymax)
-  ax.set_xlabel("Available views", fontsize=20)
+  ax.set_xlabel("Available views", fontsize=30)
   ax.set_yticks(y_ticks)
-  ax.set_yticklabels(y_ticks, fontdict={'fontsize': 15})
-  ax.set_ylabel("Sleep stage classification accuracy", fontsize=20)
+  ax.set_yticklabels(y_ticks, fontdict={'fontsize': 20})
+  ax.set_ylabel("Sleep stage classification accuracy", fontsize=30)
 
-  plt.legend(fontsize=20)
+  plt.legend(fontsize=30)
   if title:
-    plt.title(title, fontsize=30)
+    plt.title(title, fontsize=40)
 
   plt.show()
 

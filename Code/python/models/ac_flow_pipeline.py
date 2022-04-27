@@ -260,7 +260,7 @@ class MultiviewACFlowTrainer(nn.Module):
       l_nll_vi = l_nll[vi]
       ld_vi = ld_vs[vi]
       nll_loss[vi] = -torch.mean(ld_vi) + torch.mean(l_nll_vi)
-      total_loss += nll_loss[vi]
+      total_loss = total_loss + nll_loss[vi]
 
     if aggregate:
       return total_loss
@@ -319,7 +319,7 @@ class MultiviewACFlowTrainer(nn.Module):
       loss_val.backward()
       nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
-      self.itr_loss += loss_val
+      self.itr_loss = self.itr_loss + loss_val
 
       if available_views not in self._view_subset_counts:
         self._view_subset_counts[available_views] = 0
@@ -337,7 +337,6 @@ class MultiviewACFlowTrainer(nn.Module):
           vi: self._view_aes["v_%i"%vi]._decode(x_vi)
           for vi, x_vi in x_inv.items()
       }
-
     return x_inv
 
   def invert(self, l_vs, x_o, b_o, rtn_torch=True, batch_size=None):
@@ -349,7 +348,6 @@ class MultiviewACFlowTrainer(nn.Module):
         # z_cat = MVZeroImpute(
         #     z_o, self._view_dims, ignored_view=vi, expand_b=self.config.expand_b)
         x_vs[vi] = self._invert_view(vi, lvi, x_o, b_o)
-
     else:
       n_pts = l_vs[utils.get_any_key(l_vs)].shape[0]
       x_vs = {vi: [] for vi in l_vs}
@@ -472,7 +470,6 @@ class MultiviewACFlowTrainer(nn.Module):
         }
         x_view_samples.append(
             self._invert_view(view_id, l_batch, x_o_batch, b_o_batch))
-
       x_view_samples = torch.cat(x_view_samples, dim=0)
         # # x_s_batch = self.invert(
         # #     l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
