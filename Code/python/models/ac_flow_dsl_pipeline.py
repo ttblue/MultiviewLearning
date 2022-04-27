@@ -9,6 +9,7 @@ import numpy as np
 import scipy
 import torch
 from torch import nn, optim
+from torch.nn.utils import _stateless
 import time
 
 from models import autoencoder, conditional_flow_transforms,\
@@ -65,15 +66,41 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
     loss_val = self._nll(l_vs, ld_vs, aggregate=True)
     self._curr_nll_loss = loss_val.detach().numpy()
     self._curr_dsl_loss = 0.
+
     if self.config.dsl_coeff > 0 and self._ds_loss is not None:
       # Assuming it isn't negative.
       ds_loss = self._ds_loss(
            x_vs_recon, ys, z_vs, l_vs, ld_vs, *args, **kwargs)
       loss_val = loss_val + self.config.dsl_coeff * ds_loss
-      self._curr_dsl_loss = ds_loss.detach().numpy()
+      self._curr_dsl_loss = self.config.dsl_coeff * ds_loss.detach().numpy()
       # print(self._curr_dsl_loss)
-
     return loss_val
+
+  def forward(self, x_vs, b_o, ys, available_views, *args, **kwargs):
+    l_vs, z_vs, ld_vs = self._transform(x_vs, b_o, rtn_logdet=True)
+    sampled_views = [i for i in range(self._n_views) if i not in available_views]
+    samples = {
+        vi: self._sample_view(vi, x_vs, b_o)
+        for vi in sampled_views
+    }
+    xvs_recon = {
+        vi:(samples[vi] if vi in sampled_views else xvi)
+        for vi, xvi in x_vs.items()
+    }
+    return xvs_recon, z_vs, l_vs, ld_vs
+
+  def _make_view_subset_shuffler(self):
+    # Function to produce shuffled list of all subsets of views in a cycle
+    view_subsets = []
+    view_range = list(range(self._nviews))
+    for nv in range(1, self._nviews):
+      view_subsets.extend(list(itertools.combinations(view_range, nv)))
+
+    n_subsets = len(view_subsets)
+    while True:
+      shuffle_inds = np.random.permutation(n_subsets)
+      for sidx in shuffle_inds:
+        yield view_subsets[sidx]
 
   def _shuffle(self, x_vs, ys):
     npts = x_vs[utils.get_any_key(x_vs)].shape[0]
@@ -88,6 +115,11 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
         for vi, x_vi in x_vs.items()
     }
     return imputed_vs
+
+  def _get_cloned_parameters(self):
+    cloned_parameters = {
+        k: v.clone() for k, v in dict(self.named_parameters()).items()}
+    return cloned_parameters
 
   def _train_loop(self):
     torch.autograd.set_detect_anomaly(True)
@@ -108,6 +140,13 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
               torch.zeros(self._batch_npts))
           for vi in xvs_batch
       }
+
+      # args = (xvs_batch, b_o_batch, ys_batch, available_views)
+      # # IPython.embed()
+      # xvs_recon_batch, z_vs_batch, l_vs_batch, ld_vs_batch = (
+      #     _stateless.functional_call(self, self._get_cloned_parameters(), args))
+      # loss_val = self.loss(
+      #     xvs_recon_batch, ys_batch, z_vs_batch, l_vs_batch, ld_vs_batch)
       # if self.config.verbose:
       #   print("  View subset selected: %s" % (available_views, ))
       # globals().update(locals())
@@ -122,33 +161,44 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
           for vi in v_samp
       }
       # print(samp_batch.keys())
+      # xvs_batch = {vi:xvi.detach() for vi, xvi in xvs_batch.items()}
       xvs_batch_recon = {
           vi:(samp_batch[vi] if vi in v_samp else xvi)
           for vi, xvi in xvs_batch.items()
       }
       # IPython.embed()
       # available_views = next(self._view_subset_shuffler)
-      # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets}
-      self.opt.zero_grad()
+      # xvs_dropped_batch = {vi:xvs_batch[vi] for vi in keep_subsets
       loss_val = self.loss(
           xvs_batch_recon, ys_batch, z_batch, l_batch, ld_batch)
       if torch.isnan(loss_val):
         print("nan loss value. Exiting training.")
         self._training = False
         return
-      loss_val.backward(retain_graph=True)
+      # print(v_samp)
+      self.opt.zero_grad()
+      try:
+        loss_val.backward() #retain_graph=True)
+      except Exception as e:
+        IPython.embed()
+        raise(e)
+
       nn.utils.clip_grad_norm_(self.parameters(), self.config.grad_clip)
       self.opt.step()
 
       self.itr_loss = self.itr_loss + loss_val.detach().numpy()
       self.itr_nll_loss = self.itr_nll_loss + self._curr_nll_loss
       self.itr_dsl_loss = self.itr_dsl_loss + self._curr_dsl_loss
-      print(self.itr_loss, self.itr_nll_loss, self.itr_dsl_loss)
-      print()
+      # print(self.itr_loss, self.itr_nll_loss, self.itr_dsl_loss)
+      # print("ABCD")
 
       if available_views not in self._view_subset_counts:
         self._view_subset_counts[available_views] = 0
       self._view_subset_counts[available_views] += 1
+
+  def _get_trainable_parameters(self):
+    trainable_parameters = [p for p in self.parameters() if p.requires_grad_]
+    return trainable_parameters
 
   def fit(self, x_vs, ys, b_o=None, loss_func=None, dev=None):
     # Currently not using input b_o
@@ -173,7 +223,7 @@ class MACFlowDSLTrainer(MultiviewACFlowTrainer):
     self._view_subset_shuffler = self._make_view_subset_shuffler()
     self._view_subset_counts = {}
     # Set up optimizer
-    self.opt = optim.Adam(self.parameters(), self.config.lr)
+    self.opt = optim.Adam(self._get_trainable_parameters(), self.config.lr)
 
     self._loss_history = []
     try:

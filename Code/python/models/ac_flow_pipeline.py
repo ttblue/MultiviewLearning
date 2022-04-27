@@ -475,7 +475,7 @@ class MultiviewACFlowTrainer(nn.Module):
         # #     l_vs_batch, x_o_batch, rtn_torch=True, batch_size=None)
         # for vi, lvi in l_vs_batch.items():
         #   x_vs[vi].append(self._invert_view(vi, lvi, x_o_batch, b_o_batch))
-    x_view = x_o[view_id]
+    x_view = x_o[view_id].clone()
     x_view[sample_inds] = x_view_samples
     return x_view
 

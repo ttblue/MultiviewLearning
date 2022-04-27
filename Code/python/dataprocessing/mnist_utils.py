@@ -110,7 +110,7 @@ class MNIST8(nn.Module):
     n_pts = x_vs[utils.get_any_key(x_vs)].shape[0]
     if self._components_vs is not None:
       x_vs = {
-          vi: x_vs[vi].matmul(comp_vi)
+          vi: x_vs[vi].clone().matmul(comp_vi)
           for vi, comp_vi in self._components_vs.items()
       }
     imgs = torch.zeros((n_pts, _mnist_h * _mnist_w))
@@ -118,7 +118,7 @@ class MNIST8(nn.Module):
       vi_inds = self._mnist_img_inds[vi]
       imgs[:, vi_inds] = x_vi
 
-    imgs = imgs.view((-1, 1, _mnist_h, _mnist_w))
+    imgs = imgs.clone().view((-1, 1, _mnist_h, _mnist_w))
     return imgs
     # n_pts = base_vs[utils.get_any_key(base_vs)].shape[0]
     # img_vs = {
@@ -139,7 +139,6 @@ class MNIST8(nn.Module):
     # return imgs
 
   def get_pre_logits(self, x):
-
     # if len(x.shape) < 4:
     #   x = torch.unsqueeze(x, 1)
     npts = x.shape[0]

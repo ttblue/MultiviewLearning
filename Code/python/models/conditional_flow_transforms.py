@@ -953,7 +953,7 @@ class CompositionConditionalTransform(ConditionalInvertibleTransform):
       b_o = torch_utils.dict_numpy_to_torch(b_o)
 
     x = z
-    for tfm in self._tfm_list[::-1]:
+    for i, tfm in enumerate(self._tfm_list[::-1]):
       try:
         x = tfm.inverse(x, x_o, b_o)
       except Exception as e:

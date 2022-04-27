@@ -32,7 +32,7 @@ from tests.test_ac_flow_jp import make_default_nn_config, make_default_tfms,\
     stratified_sample, get_sampled_cat, get_sampled_cat_grid
 from utils import plot_utils
 
-from matplotlib import pyplot as plt, patches
+# from matplotlib import pyplot as plt, patches
 from mpl_toolkits.mplot3d import Axes3D
 
 
@@ -122,7 +122,6 @@ def test_pipeline_dsl(args):
   view_tfm_config_lists, view_tfm_init_lists = view_config_and_inits
   cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
-
   # config.no_view_tfm = True
   # IPython.embed()
   dev = None
@@ -133,7 +132,6 @@ def test_pipeline_dsl(args):
   model.initialize(
       view_sizes, view_tfm_config_lists, view_tfm_init_lists,
       cond_tfm_config_lists, cond_tfm_init_lists, view_ae_configs)
-
   IPython.embed()
 
   model.fit(data)
@@ -210,7 +208,7 @@ def test_mnist_dsl(args):
   cond_tfm_config_lists, cond_tfm_init_lists = cond_config_and_inits
 
   config.no_view_tfm = True
-  config.dsl_coeff = 5000
+  config.dsl_coeff = 100 #5000
   # IPython.embed()
   dev = None
   if torch.cuda.is_available() and args.gpu_num >= 0:
