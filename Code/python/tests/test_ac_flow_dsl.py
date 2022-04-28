@@ -248,8 +248,10 @@ def test_mnist_dsl(args):
 
   view_subsets = []
   view_range = list(range(n_views))
-  for nv in view_range:
-    view_subsets.extend(list(itertools.combinations(view_range, nv + 1)))
+  for nv in range(1, n_views):
+    view_subsets.extend(list(itertools.combinations(view_range, nv)))
+  # for nv in view_range:
+  #   view_subsets.extend(list(itertools.combinations(view_range, nv + 1)))
 
   globals().update(locals())
   # n_te = 500
@@ -272,7 +274,7 @@ def test_mnist_dsl(args):
   for vsub in view_subsets:
     # x_o_tr = {vi:tr_data[vi] for vi in vsub}
     # x_o_te = {vi:te_data[vi] for vi in vsub}
-
+    print(vsub)
     trd = model.sample(
         tr_data, b_o=None, sampled_views=vsub, batch_size=None, rtn_torch=False)
     ted = model.sample(
@@ -285,7 +287,6 @@ def test_mnist_dsl(args):
 
     tr_digits[vsub] = get_sampled_cat_grid(trd2, true_tr_digits)
     te_digits[vsub] = get_sampled_cat_grid(ted2, true_te_digits)
-
 
   good_dids = {}
   bad_dids = {}

@@ -16,7 +16,7 @@ from utils import math_utils, torch_utils, utils
 from matplotlib import patches, pyplot as plt, tri
 from mpl_toolkits.mplot3d import Axes3D
 
-from test_ac_flow_jp import get_sampled_cat, plot_digit, plot_many_digits
+from tests.test_ac_flow_jp import get_sampled_cat, plot_digit, plot_many_digits
 
 import IPython
 
@@ -70,7 +70,7 @@ def get_rect_args(perm, dig_nums):
 
 def plot_many_digits(
     pred_digits, true_digits, perms=[], first=None, grid_size=(10, 10),
-    rcolor="r", title="", show_ids=False):
+    rcolors="r", title="", show_ids=False):
 
   if not isinstance(pred_digits, list):
     pred_digits = [pred_digits]
@@ -86,6 +86,9 @@ def plot_many_digits(
   ndigs = len(pred_digits[0])
   dignums = list(range(nsets + 1))
 
+  if not isinstance(rcolors, list):
+    rcolors = [rcolors] * ndigs
+
   nrows, ncols = grid_size
   if true_digits is None:
     fig, axs = plt.subplots(
@@ -97,7 +100,6 @@ def plot_many_digits(
   # plt.subplots_adjust(wspace=0, hspace=0)
   # rect_locs = []
   # all_rect_args = [_rect_args[loc] for loc in rect_locs]
-  facecolor = (1, 0, 0, 0.15) if rcolor == "r" else (0, 1, 0, 0.15)
   white_line = np.ones((pred_digits[0][0].shape[1], 1))
   dig_idx = 0
   plotted_first = (first is None)
@@ -105,7 +107,12 @@ def plot_many_digits(
     # if dig_idx >= ndigs:
     #   break
     for ci in range(ncols):
-      ax = axs[ri, ci]
+      if ncols == 1:
+        ax = axs[ri]
+      elif nrows == 1:
+        ax = axs[ci]
+      else:
+        ax = axs[ri, ci]
       if dig_idx >= ndigs:
         ax.xaxis.set_visible(False)
         ax.xaxis.set_ticks([])
@@ -114,7 +121,9 @@ def plot_many_digits(
         ax.axis("off")
         dig_idx += 1
         continue
-      
+
+      rcolor = rcolors[dig_idx]
+      facecolor = (1, 0, 0, 0.15) if rcolor == "r" else (0, 1, 0, 0.15)
       if plotted_first:
         print("Plotting digit %i" % (dig_idx + 1), end="\r")
         # ax.set_aspect('equal')
@@ -179,7 +188,7 @@ def plot_many_digits(
   plt.tight_layout()
   # if true_digits is None:
   if title:
-    fig.suptitle(title, fontsize=30)
+    fig.suptitle(title, fontsize=30, color="w", x=0.46, y=1.03)
   plt.show()
   # plt.pause(10.)
   # IPython.embed()
@@ -202,22 +211,31 @@ def get_all_sampled_digits(mv_samples, base_dat, n_views):
 
 
 def plot_many_digits_perm(
-    perm, pred_digits, true_digits, first=None, grid_size=(10, 10),
+    perms, pred_digits, true_digits, first=None, grid_size=(10, 10),
     title=""):
 
   n_views = 4
-  if len(perm) == 1:
-    rect_locs = [_view_map[perm[0]]]
-    rcolor = "g"
-  else:
-    pred_views = [vi for vi in range(n_views) if vi not in perm]
-    rect_locs = [_view_map[vi] for vi in pred_views]
-    rcolor = "r"
+  if isinstance(perms, tuple):
+    perms = [perms] * len(true_digits)
 
-  pos = [_view_map[vi] for vi in perm]
-  title = title + " -- Available Views: %s" % (pos, )
-  plot_many_digits(pred_digits, true_digits, first, grid_size, rect_locs,
-    rcolor, title)
+  plot_perms = []
+  rcolors = []
+  for perm in perms:    
+    if len(perm) == 3:
+      pred_view = [vi for vi in range(n_views) if vi not in perm]
+      plot_perms.append(tuple(pred_view))
+      # rect_locs = [_view_map[perm[0]]]
+      rcolors.append("g")
+    else:
+      # pred_views = [vi for vi in range(n_views) if vi not in perm]
+      plot_perms.append(perm)
+      # rect_locs = [_view_map[vi] for vi in pred_views]
+      rcolors.append("r")
+
+  # pos = [_view_map[vi] for vi in perm]
+  # title = title + " -- Available Views: %s" % (pos, )
+  plot_many_digits(
+      pred_digits, true_digits, plot_perms, first, grid_size, rcolors, title)
 
 
 def create_composite_nv_image(
@@ -342,7 +360,7 @@ def show_composite_image(
   ax.yaxis.set_visible(False)
   ax.yaxis.set_ticks([])
   ax.set_axis_off()
-  plt.title(title, fontsize=20)
+  plt.title(title, fontsize=20, color="w")
   # if savename:
   #   plt.savefig(savename)
   # else:
@@ -557,6 +575,41 @@ def get_all_preds(imgs, mnist_mdl):
     preds[k] = mnist_mdl.predict_imgs(ki)
   return preds
 
+
+def get_all_preds_over_dsl_coeff(imgs, mnist_mdl):
+  all_preds = {}
+  for c, imgs_c in imgs.items():
+    all_preds[c] = get_all_preds(imgs_c, mnist_mdl)
+  return all_preds
+
+
+def get_all_accs_dsl_coeffs(preds, ys):
+  sub_accs = {}
+  nv_accs = {}
+  npts = ys.shape[0]
+
+  def _get_accs(pred, y):
+    return (pred == y).sum() / y.shape[0]
+
+  for c, preds_c in preds.items():
+    for sub, preds_c_sub in preds_c.items():
+      nv_s = len(sub)
+      if sub not in sub_accs:
+        sub_accs[sub] = {}
+      if nv_s not in nv_accs:
+        nv_accs[nv_s] = {}
+
+      acc = _get_accs(preds_c_sub, ys)
+      sub_accs[sub][c] = acc
+
+      if c in nv_accs[nv_s]:
+        acc_so_far, num_subs = nv_accs[nv_s][c]
+        new_acc = (acc_so_far * num_subs + acc) / (num_subs + 1)
+        nv_accs[nv_s][c] = (new_acc, num_subs + 1)
+      else:
+        nv_accs[nv_s][c] = (acc, 1)
+
+  return sub_accs, nv_accs
 
 def sum_nv_mats(mat_set):
   nv_mats = {}
