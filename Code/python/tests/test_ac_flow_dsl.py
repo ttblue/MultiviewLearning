@@ -29,7 +29,7 @@ from tests.test_ac_flow import SimpleArgs, convert_numpy_to_float32,\
     # make_default_independent_data, make_default_shape_data
 from tests.test_ac_flow_jp import make_default_nn_config, make_default_tfms,\
     make_default_cond_tfm_config, ArgsCopy, make_default_likelihood_config,\
-    stratified_sample, get_sampled_cat, get_sampled_cat_grid
+    stratified_sample, get_sampled_cat, get_sampled_cat_grid, trunc_svd_dim_red
 from utils import plot_utils
 
 # from matplotlib import pyplot as plt, patches
@@ -288,76 +288,82 @@ def test_mnist_dsl(args):
     tr_digits[vsub] = get_sampled_cat_grid(trd2, true_tr_digits)
     te_digits[vsub] = get_sampled_cat_grid(ted2, true_te_digits)
 
-  good_dids = {}
-  bad_dids = {}
-  neutral_dids = {}
+  d_ids = [1, 2, 9, 24, 42]
+  # good_dids = {}
+  # bad_dids = {}
+  # neutral_dids = {}
 
-  good_dids[0,] = [6, 49, 90, 93]
-  neutral_dids[0,] = [11, 64, 76, 88]
-  bad_dids[0,] = [18, 43, 72, 98]
+  # good_dids[0,] = [6, 49, 90, 93]
+  # neutral_dids[0,] = [11, 64, 76, 88]
+  # bad_dids[0,] = [18, 43, 72, 98]
 
-  good_dids[1,] = [1, 64]
-  neutral_dids[1,] = [18, 29, 97]
-  bad_dids[1,] = [2, 3, 17, 34]
+  # good_dids[1,] = [1, 64]
+  # neutral_dids[1,] = [18, 29, 97]
+  # bad_dids[1,] = [2, 3, 17, 34]
 
-  good_dids[2,] = [33, 55]
-  neutral_dids[2,] = [1, 44, 68]
-  bad_dids[2,] = [29, 47, 54, 71, 80]
+  # good_dids[2,] = [33, 55]
+  # neutral_dids[2,] = [1, 44, 68]
+  # bad_dids[2,] = [29, 47, 54, 71, 80]
 
-  good_dids[3,] = [37, ]
-  neutral_dids[3,] = [4, 90, 54]# 1, 3, 9]
-  bad_dids[3,] = [69, 70]
+  # good_dids[3,] = [37, ]
+  # neutral_dids[3,] = [4, 90, 54]# 1, 3, 9]
+  # bad_dids[3,] = [69, 70]
 
-  good_dids[0,1] = [9, 47, 68]
-  neutral_dids[0,1] = [1, 5, 58, 96]
-  bad_dids[0,1] = [13, 27, 52, 43]
+  # good_dids[0,1] = [9, 47, 68]
+  # neutral_dids[0,1] = [1, 5, 58, 96]
+  # bad_dids[0,1] = [13, 27, 52, 43]
 
-  good_dids[0,2] = [84]
-  neutral_dids[0,2] = [5, 66, 78, 120]
-  bad_dids[0,2] = [4, 83, 97]
+  # good_dids[0,2] = [84]
+  # neutral_dids[0,2] = [5, 66, 78, 120]
+  # bad_dids[0,2] = [4, 83, 97]
 
-  good_dids[0,3] = [56, 58]
-  neutral_dids[0,3] = [17, 32, 83]
-  bad_dids[0,3] = [1, 4, 6]
+  # good_dids[0,3] = [56, 58]
+  # neutral_dids[0,3] = [17, 32, 83]
+  # bad_dids[0,3] = [1, 4, 6]
 
-  good_dids[1,2] = []
-  neutral_dids[1,2] = [68, 10]
-  bad_dids[1,2] = [78, 49]
+  # good_dids[1,2] = []
+  # neutral_dids[1,2] = [68, 10]
+  # bad_dids[1,2] = [78, 49]
 
-  good_dids[1,3] = [23, 30, 64, 100]
-  neutral_dids[1,3] = [17, 47]
-  bad_dids[1,3] = [84, 111]
+  # good_dids[1,3] = [23, 30, 64, 100]
+  # neutral_dids[1,3] = [17, 47]
+  # bad_dids[1,3] = [84, 111]
 
-  good_dids[2,3] = [40, 51, 100]
-  neutral_dids[2,3] = [34, 41, 56, 62]
-  bad_dids[2,3] = [4, 7, 9, 54]
+  # good_dids[2,3] = [40, 51, 100]
+  # neutral_dids[2,3] = [34, 41, 56, 62]
+  # bad_dids[2,3] = [4, 7, 9, 54]
 
-  good_dids[0,1,2] = [30, 38, 49, 59, 115]
-  neutral_dids[0,1,2] = [3, 57, 83, 95, 53, 10]
-  bad_dids[0,1,2] = [44, 72, 99, 105]
+  # good_dids[0,1,2] = [30, 38, 49, 59, 115]
+  # neutral_dids[0,1,2] = [3, 57, 83, 95, 53, 10]
+  # bad_dids[0,1,2] = [44, 72, 99, 105]
 
-  good_dids[0,1,3] = [24, 80, 105, 116]
-  neutral_dids[0,1,3] = [17, 89, 97]
-  bad_dids[0,1,3] = [7, 34, 73, 107]
+  # good_dids[0,1,3] = [24, 80, 105, 116]
+  # neutral_dids[0,1,3] = [17, 89, 97]
+  # bad_dids[0,1,3] = [7, 34, 73, 107]
 
-  good_dids[0,2,3] = [30, 53]
-  neutral_dids[0,2,3] = [38, 91, 102]
-  bad_dids[0,2,3] = [36, 51, 109]
+  # good_dids[0,2,3] = [30, 53]
+  # neutral_dids[0,2,3] = [38, 91, 102]
+  # bad_dids[0,2,3] = [36, 51, 109]
 
-  good_dids[1,2,3] = [49]
-  neutral_dids[1,2,3] = [22, 92, 103]
-  bad_dids[1,2,3] = [38, 100, 72]
+  # good_dids[1,2,3] = [49]
+  # neutral_dids[1,2,3] = [22, 92, 103]
+  # bad_dids[1,2,3] = [38, 100, 72]
 
-def make_perm_digit_lists(ids, digit_sets, true_digits, nviews=1, totviews=4):
+def make_perm_digit_lists(idlist, digit_sets, true_digits, nviews=1, totviews=4):
   perm_list = []
   digit_list = [[] for _ in digit_sets]
   true_digit_list = []
-
   flip_perm = (nviews == 3)
 
-  for perm, idlist in ids.items():
-    if len(perm) != nviews:
-      continue
+  # view_subsets = []
+  view_range = list(range(totviews))
+  # for nv in range(1, totviews):
+  view_subsets = list(itertools.combinations(view_range, nviews))
+
+  # for perm, idlist in ids.items():
+  for perm in view_subsets:
+    # if len(perm) != nviews:
+    #   continue
     # IPython.embed()
     for di, dset in enumerate(digit_sets):
       digit_list[di].append(dset[perm][idlist])
@@ -644,10 +650,24 @@ def test_mitbih_dsl(args):
   # n_estimators = 10
 
   # classifier = train_classifier(tr_x, tr_y, hidden_sizes, n_estimators)
-  tr_perm_accs, tr_perm_preds, tr_nv_accs = evaluate_mv_performance(
-      classifier, tr_samples, tr_x, tr_y)
-  te_perm_accs, te_perm_preds, te_nv_accs = evaluate_mv_performance(
-      classifier, te_samples, te_x, te_y)
+  rf_tr_eval = {}
+  rf_te_eval = {}
+  nn_tr_eval = {}
+  nn_te_eval = {}
+  for coeff, tr_samples in all_tr_samples.items():
+    te_samples = all_te_samples[coeff]
+    rf_tr_eval[coeff] = evaluate_mv_performance(
+        rf_classifier, tr_samples, tr_x, tr_y)
+    rf_te_eval[coeff] = evaluate_mv_performance(
+        rf_classifier, te_samples, te_x, te_y)
+    nn_tr_eval[coeff] = evaluate_mv_performance(
+        nn_classifier, tr_samples, tr_x, tr_y)
+    nn_te_eval[coeff] = evaluate_mv_performance(
+        nn_classifier, te_samples, te_x, te_y)
+
+  eval_coeff = 0.
+  tr_perm_accs, tr_perm_preds, tr_nv_accs = rf_tr_eval[eval_coeff]
+  te_perm_accs, te_perm_preds, te_nv_accs = rf_te_eval[eval_coeff]
   print(tr_perm_accs)
   print(te_perm_accs)
 

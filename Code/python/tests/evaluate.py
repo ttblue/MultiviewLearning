@@ -16,7 +16,7 @@ from utils import math_utils, torch_utils, utils
 from matplotlib import patches, pyplot as plt, tri
 from mpl_toolkits.mplot3d import Axes3D
 
-from tests.test_ac_flow_jp import get_sampled_cat, plot_digit, plot_many_digits
+# from tests.test_ac_flow_jp import get_sampled_cat, plot_digit, plot_many_digits
 
 import IPython
 
@@ -212,7 +212,7 @@ def get_all_sampled_digits(mv_samples, base_dat, n_views):
 
 def plot_many_digits_perm(
     perms, pred_digits, true_digits, first=None, grid_size=(10, 10),
-    title=""):
+    title="", show_ids=False):
 
   n_views = 4
   if isinstance(perms, tuple):
@@ -220,7 +220,7 @@ def plot_many_digits_perm(
 
   plot_perms = []
   rcolors = []
-  for perm in perms:    
+  for perm in perms:
     if len(perm) == 3:
       pred_view = [vi for vi in range(n_views) if vi not in perm]
       plot_perms.append(tuple(pred_view))
@@ -235,7 +235,7 @@ def plot_many_digits_perm(
   # pos = [_view_map[vi] for vi in perm]
   # title = title + " -- Available Views: %s" % (pos, )
   plot_many_digits(
-      pred_digits, true_digits, plot_perms, first, grid_size, rcolors, title)
+      pred_digits, true_digits, plot_perms, first, grid_size, rcolors, title, show_ids)
 
 
 def create_composite_nv_image(

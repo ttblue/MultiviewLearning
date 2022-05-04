@@ -38,7 +38,6 @@ def get_mitbih_records():
       sname = rec[:-1]
     elif rec[-1] != "b":
       sname = rec
-
     # subject_names.append(sname)
     # if sname not in subject_map:
     #   subject_map[sname] = []
@@ -164,6 +163,22 @@ def process_bp(bp_data, freq, window_size):
   pass
 
 
+def process_tsfresh(ts_data, freq, window_size):
+  num_windows = ts_data.shape[0] // window_size
+  id_col = (
+      np.ones((num_windows, window_size)) *
+      np.arange(num_windows).reshape(-1, 1)).reshape(-1, 1)
+  ts_col = (np.arange(ts_data.shape[0]) * (1. / freq)).reshape(-1, 1)
+  # sig_data = sig_data.reshape(-1, 1)
+  columns = ["id", "time"] + list(range(ts_data.shape[1]))
+  ts_data = np.concatenate([id_col, ts_col, ts_data], axis=1)
+  pd_sig = pd.DataFrame(ts_data, columns=columns)
+  ts_f = tsfresh.extract_features(
+      pd_sig, column_id="id", column_sort="time")
+  ts_f_imputed = tsfresh.utilities.dataframe_functions.impute(ts_f)
+  return ts_f, ts_f_imputed
+
+
 def get_sig_col_ids(record, sig_names):
   col_ids = []
   _base_sigs = {"ECG": 0, "BP": 1, "EEG": 2}
@@ -179,8 +194,7 @@ def get_sig_col_ids(record, sig_names):
 
 _DEFAULT_SIG_NAMES = ["ECG", "EEG", "Resp (nasal)"]
 def get_mitbih_data(
-    fft_size=20, signal_names=None, ds_factor=25,
-    normalize=True, shuffle=True):
+    signal_names=None, ds_factor=25, normalize=True, shuffle=True):
 
   signal_names = signal_names or _DEFAULT_SIG_NAMES
   subject_map, records = get_mitbih_records()
@@ -192,85 +206,94 @@ def get_mitbih_data(
   base_freq = records[utils.get_any_key(records)][0].fs
   base_ann_dt = _ANN_DT_S * base_freq
   freq = base_freq / ds_factor
-  window_size = base_ann_dt / ds_factor
+  window_size = int(base_ann_dt / ds_factor)
   # IPython.embed()
   # view_map = {vi: sig_id for vi, sig_id in enumerate(signal_ids)}
   # if not mus:
   #   mus = {sig_id: 0. for vi in signal_ids}
   # if not stds:
   #   stds = {sig_id: 1. for vi in signal_ids}
-  x_vs_rec = {}
+  ts_f_recs = {}
   y_rec = {}
   y_apnea_rec = {}
   valid_records = []
   r_idx = 1
 
-  invalid_cols = {}
+  # invalid_cols = {}
   col_dims = {}
   for rname, (rec, ann) in records.items():
     print("\nExtracting record %s. (%i/%i)" % (rname, r_idx, num_records))
     col_ids = get_sig_col_ids(rec, signal_names)
     if not col_ids:
       print("  Record %s does not have all signals." % rname)
+      num_records -= 1
       continue
 
-    IPython.embed()
+    # IPython.embed()
+    t1 = time.time()
+    r_idx += 1
     valid_records.append(rname)
     r_wfd = rec.p_signal
     tot_num_anns = int(np.ceil(r_wfd.shape[0] / base_ann_dt))
     slbls, albls = get_sleep_and_apnea_labels(ann, base_ann_dt, tot_num_anns)
-    r_vdat = {}
+    # r_vdat = {}
 
-    r_invalid_rows = []
+    r_sigs = []
+    # r_invalid_rows = []
     for sidx, sig_name in enumerate(signal_names):
-      t_start = time.time()
       cidx = col_ids[sidx]
 
       sig_data = r_wfd[:, sidx]
       if ds_factor > 1:
         sig_data = sig_data.reshape(-1, ds_factor).mean(1)
+      r_sigs.append(sig_data)
+    r_sigs = np.concatenate(r_sigs, axis=0)
+    num_windows = int(r_sigs.shape[0] // window_size)
+    print("  Extracting features from record %s.\n" % rname)
+    ts_f, ts_f_imputed = process_tsfresh(r_sigs, freq, window_size)
 
-      if sig_name == "ECG":
-        sig_f = process_ecg(sig_data, freq, window_size)
-      elif sig_name == "EEG":
-        sig_f = process_eeg(sig_data, freq, window_size)
-      elif sig_name == "Resp (nasal)":
-        sig_f = process_rsp(sig_data, freq, window_size)
-      else:
-        raise ValueError("Cannot extract signal %s" % sig_name)
-
-      if sidx not in col_dims:
-        col_dims[sidx] = sig_f.shape[1]
-
-      nan_check = np.isnan(sig_f)
-      bad_cols = nan_check.any(0)
-      good_cols = np.nonzero(bad_cols == False)[0]
-      bad_rows = nan_check[:, good_cols].any(1)
-
-      r_invalid_rows.extend(np.nonzero(bad_rows)[0].tolist())
-
-      if bad_cols.any():
-        if sidx not in invalid_cols:
-          invalid_cols[sidx] = []
-        invalid_cols[sidx].extend(list(np.nonzero(bad_cols)[0]))
-
-      r_vdat[sidx] = sig_f
-      t_diff = time.time() - t_start
-      print("  Record %s -- Extracted %s in %.2fs." % (rname, sig_name, t_diff))
-
-    r_invalid_rows = np.unique(r_invalid_rows)
-    n_pts = r_vdat[0].shape[0]
-    valid_flag = np.ones(n_pts).astype("bool")
-    valid_flag[r_invalid_rows] = False
-
-    r_vdat = {sidx: rvi[valid_flag] for sidx, rvi in r_vdat.items()}
-    slbls = np.array(slbls)[valid_flag]
-    albls = np.array(albls)[valid_flag]
-
-    x_vs_rec[rname] = r_vdat
+    ts_f_recs[rname] = [ts_f, ts_f_imputed]
     y_rec[rname] = slbls
     y_apnea_rec[rname] = albls
-    print("  Record %s -- cleanup..." % rname)
+    # print("  Record %s -- cleanup..." % rname)
+
+    t_diff = time.time() - t1
+    print("  Record %s -- Extracted in %.2fs." % (rname, t_diff))
+
+      # if sig_name == "ECG":
+      #   sig_f = process_ecg(sig_data, freq, window_size)
+      # elif sig_name == "EEG":
+      #   sig_f = process_eeg(sig_data, freq, window_size)
+      # elif sig_name == "Resp (nasal)":
+      #   sig_f = process_rsp(sig_data, freq, window_size)
+      # else:
+      #   raise ValueError("Cannot extract signal %s" % sig_name)
+      # if sidx not in col_dims:
+      #   col_dims[sidx] = sig_f.shape[1]
+
+      # nan_check = np.isnan(sig_f)
+      # bad_cols = nan_check.any(0)
+      # good_cols = np.nonzero(bad_cols == False)[0]
+      # bad_rows = nan_check[:, good_cols].any(1)
+
+      # r_invalid_rows.extend(np.nonzero(bad_rows)[0].tolist())
+
+      # if bad_cols.any():
+      #   if sidx not in invalid_cols:
+      #     invalid_cols[sidx] = []
+      #   invalid_cols[sidx].extend(list(np.nonzero(bad_cols)[0]))
+
+      # r_vdat[sidx] = sig_f
+
+
+    # r_invalid_rows = np.unique(r_invalid_rows)
+    # n_pts = r_vdat[0].shape[0]
+    # valid_flag = np.ones(n_pts).astype("bool")
+    # valid_flag[r_invalid_rows] = False
+
+    # r_vdat = {sidx: rvi[valid_flag] for sidx, rvi in r_vdat.items()}
+    # slbls = np.array(slbls)[valid_flag]
+    # albls = np.array(albls)[valid_flag]
     # r_vdat = {
     #     vi: ((r_wfd[:, sig_id] - mus[sig_id]) / stds[sig_id]).reshape(
     #         -1, ann_dt)
@@ -291,14 +314,62 @@ def get_mitbih_data(
     #     for vi, fdat in r_fft_dat.items()
     # }
 
-  # invalid_cols = {
-  #     sidx: np.unique(icols) for sidx, icols in invalid_cols.items()}
-  col_valid_flags = {
-      sidx:np.ones(cdim).astype("bool") for sidx, cdim in col_dims.items()}
-  for sidx, icol_idxs in invalid_cols.items():
-    icol_idxs = np.unique(icol_idxsl)
-    col_valid_flags[sidx] [icol_idxs] = False
+  return ts_f_recs, y_rec, y_apnea_rec
+  # # invalid_cols = {
+  # #     sidx: np.unique(icols) for sidx, icols in invalid_cols.items()}
+  # col_valid_flags = {
+  #     sidx:np.ones(cdim).astype("bool") for sidx, cdim in col_dims.items()}
+  # for sidx, icol_idxs in invalid_cols.items():
+  #   icol_idxs = np.unique(icol_idxsl)
+  #   col_valid_flags[sidx] [icol_idxs] = False
 
+  # x_vs_subj = {}
+  # y_subj = {}
+  # y_apnea_subj = {}
+  # for rname, r_x in x_vs_rec.items():
+  #   sname = subject_map[rname]
+  #   r_y = y_rec[rname]
+  #   ra_y = y_apnea_rec[rname]
+
+  #   # Remove bad labels:
+  #   valid_inds = (r_y > -1)
+  #   globals().update(locals())
+  #   r_x_valid = {
+  #       vi: r_xi[valid_inds, col_valid_flags[vi]] for vi, r_xi in r_x.items()
+  #   }
+  #   r_y_valid = r_y[valid_inds]
+  #   ra_y_valid = ra_y[valid_inds]
+  #   globals().update(locals())
+
+  #   if sname in x_vs_subj:
+  #     x_vs_subj[sname] = {
+  #         vi: np.concatenate([xs_vi, r_x_valid[vi]], axis=0)
+  #         for vi, xs_vi in x_vs_subj[sname].items()
+  #     }
+  #     y_subj[sname] = np.concatenate([y_subj[sname], r_y_valid])
+  #     y_apnea_subj[sname] = np.concatenate([y_apnea_subj[sname], ra_y_valid])
+  #   else:
+  #     x_vs_subj[sname] = r_x_valid
+  #     y_subj[sname] = r_y_valid
+  #     y_apnea_subj[sname] = ra_y_valid
+  #   globals().update(locals())
+
+  # # if shuffle:
+  # #   subjects = list(x_vs_subj.keys())
+  # #   for sname in subjects:
+  # #     s_x = x_vs_subj[sname]
+  # #     s_y = y_subj[sname]
+  # #     sa_y = y_apnea_subj[sname]
+  # #     npts = s_x.shape[0]
+  # #     shuffle_inds = np.random.permutation(npts)
+  # #     x_vs_subj[sname] = s_x[shuffle_inds]
+  # #     y_subj[sname] = s_y[shuffle_inds]
+  # #     y_apnea_subj[sname] = ss_y[shuffle_inds]
+
+  # return x_vs_subj, y_subj, y_apnea_subj
+
+
+def aggregate_subjs(x_vs_rec, y_rec, y_apnea_rec, subject_map):
   x_vs_subj = {}
   y_subj = {}
   y_apnea_subj = {}
@@ -307,51 +378,51 @@ def get_mitbih_data(
     r_y = y_rec[rname]
     ra_y = y_apnea_rec[rname]
 
-    # Remove bad labels:
-    valid_inds = (r_y > -1)
-    globals().update(locals())
-    r_x_valid = {
-        vi: r_xi[valid_inds, col_valid_flags[vi]] for vi, r_xi in r_x.items()
-    }
-    r_y_valid = r_y[valid_inds]
-    ra_y_valid = ra_y[valid_inds]
-    globals().update(locals())
+    # # Remove bad labels:
+    # valid_inds = (r_y > -1)
+    # globals().update(locals())
+    # r_x_valid = {
+    #     vi: r_xi[valid_inds, col_valid_flags[vi]] for vi, r_xi in r_x.items()
+    # }
+    # r_y_valid = r_y[valid_inds]
+    # ra_y_valid = ra_y[valid_inds]
+    # globals().update(locals())
 
     if sname in x_vs_subj:
       x_vs_subj[sname] = {
-          vi: np.concatenate([xs_vi, r_x_valid[vi]], axis=0)
+          vi: np.concatenate([xs_vi, r_x[vi]], axis=0)
           for vi, xs_vi in x_vs_subj[sname].items()
       }
-      y_subj[sname] = np.concatenate([y_subj[sname], r_y_valid])
-      y_apnea_subj[sname] = np.concatenate([y_apnea_subj[sname], ra_y_valid])
+      y_subj[sname] = np.concatenate([y_subj[sname], r_y])
+      y_apnea_subj[sname] = np.concatenate([y_apnea_subj[sname], ra_y])
     else:
-      x_vs_subj[sname] = r_x_valid
-      y_subj[sname] = r_y_valid
-      y_apnea_subj[sname] = ra_y_valid
-    globals().update(locals())
-
-  # if shuffle:
-  #   subjects = list(x_vs_subj.keys())
-  #   for sname in subjects:
-  #     s_x = x_vs_subj[sname]
-  #     s_y = y_subj[sname]
-  #     sa_y = y_apnea_subj[sname]
-  #     npts = s_x.shape[0]
-  #     shuffle_inds = np.random.permutation(npts)
-  #     x_vs_subj[sname] = s_x[shuffle_inds]
-  #     y_subj[sname] = s_y[shuffle_inds]
-  #     y_apnea_subj[sname] = ss_y[shuffle_inds]
-
+      x_vs_subj[sname] = r_x
+      y_subj[sname] = r_y
+      y_apnea_subj[sname] = ra_y
+    # globals().update(locals())
   return x_vs_subj, y_subj, y_apnea_subj
 
 
-_mitbih_file = os.path.join(_CODE_DIR, "data/mitbih/polysom_normalized_full_fft.npy")
-_mitbih_stats_file = os.path.join(_CODE_DIR, "data/mitbih/tr_stats.npy")
-def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
-  x_vs_subj, y_subj, y_apnea_subj = np.load(
+def normalize_center_shift(xvi):
+  mu = xvi.mean(0).reshape(1, -1)
+  sigma = xvi.std(0).reshape(1, -1)
+  sigma = np.where(sigma > 1e-3, sigma, 1.)
+  xvi = ((xvi - mu)/sigma)
+  return xvi
+
+
+_mitbih_file = os.path.join(_CODE_DIR, "data/mitbih/tsf_filtered_views.npy")
+# _mitbih_stats_file = os.path.join(_CODE_DIR, "data/mitbih/tsfresh_fnames.npy")
+def get_mv_mitbih_split(
+    tr_frac=0.8, center_shift=True, shuffle=True, ignored_rnames=[]):
+  x_vs_rec, y_rec, y_apnea_rec, view_fnames, subject_map = np.load(
       _mitbih_file, allow_pickle=True).tolist()
 
-  subjects = list(x_vs_subj.keys())
+  x_vs_subj, y_subj, y_apnea_subj = aggregate_subjs(
+      x_vs_rec, y_rec, y_apnea_rec, subject_map)
+
+  # subjects = list()
+  subjects = [subj for subj in x_vs_subj.keys() if subj not in ignored_rnames]
   num_subjs = len(subjects)
   num_tr = int(num_subjs * tr_frac)
 
@@ -370,6 +441,8 @@ def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
     if not tr_x:
       tr_x = {vi: [] for vi in x}
     for vi, xvi in x.items():
+      if center_shift:
+        xvi = normalize_center_shift(xvi)
       tr_x[vi].append(xvi)
     tr_y.append(y)
     tr_ya.append(ya)
@@ -380,6 +453,9 @@ def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
     if not te_x:
       te_x = {vi: [] for vi in x}
     for vi, xvi in x.items():
+      if center_shift:
+        xvi = normalize_center_shift(xvi)
+
       te_x[vi].append(xvi)
     te_y.append(y)
     te_ya.append(ya)
@@ -405,6 +481,69 @@ def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
     te_ya = te_ya[shuffle_inds]
 
   return (tr_x, tr_y, tr_ya, tr_ids), (te_x, te_y, te_ya, te_ids)
+
+
+
+# _mitbih_file = os.path.join(_CODE_DIR, "data/mitbih/polysom_normalized_full_fft.npy")
+# _mitbih_stats_file = os.path.join(_CODE_DIR, "data/mitbih/tr_stats.npy")
+# def get_mv_mitbih_split(tr_frac=0.8, center_shift=True, shuffle=True):
+#   x_vs_subj, y_subj, y_apnea_subj = np.load(
+#       _mitbih_file, allow_pickle=True).tolist()
+
+#   subjects = list(x_vs_subj.keys())
+#   num_subjs = len(subjects)
+#   num_tr = int(num_subjs * tr_frac)
+
+#   shuffled_ids = np.random.permutation(num_subjs)
+#   tr_ids, te_ids = shuffled_ids[:num_tr], shuffled_ids[num_tr:]
+#   # [tr_mus, tr_stds, tr_ids] = np.load(_mitbih_stats_file).tolist()
+#   te_ids = [i for i in range(num_subjs) if i not in tr_ids]
+
+#   tr_x, te_x = {}, {}
+#   tr_y, te_y = [], []
+#   tr_ya, te_ya = [], []
+
+#   for idx in tr_ids:
+#     sname = subjects[idx]
+#     x, y, ya = x_vs_subj[sname], y_subj[sname], y_apnea_subj[sname]
+#     if not tr_x:
+#       tr_x = {vi: [] for vi in x}
+#     for vi, xvi in x.items():
+#       tr_x[vi].append(xvi)
+#     tr_y.append(y)
+#     tr_ya.append(ya)
+
+#   for idx in te_ids:
+#     sname = subjects[idx]
+#     x, y, ya = x_vs_subj[sname], y_subj[sname], y_apnea_subj[sname]
+#     if not te_x:
+#       te_x = {vi: [] for vi in x}
+#     for vi, xvi in x.items():
+#       te_x[vi].append(xvi)
+#     te_y.append(y)
+#     te_ya.append(ya)
+
+#   tr_x = {vi: np.concatenate(xvi, axis=0) for vi, xvi in tr_x.items()}
+#   te_x = {vi: np.concatenate(xvi, axis=0) for vi, xvi in te_x.items()}
+#   tr_y = np.concatenate(tr_y)
+#   te_y = np.concatenate(te_y)
+#   tr_ya = np.concatenate(tr_ya)
+#   te_ya = np.concatenate(te_ya)
+
+#   # if center_shift:
+#   #   tr_mu_std = {vi: xvi.mean(0)}
+#   if shuffle:
+#     shuffle_inds = np.random.permutation(tr_y.shape[0])
+#     tr_x = {vi: xvi[shuffle_inds] for vi, xvi in tr_x.items()}
+#     tr_y = tr_y[shuffle_inds]
+#     tr_ya = tr_ya[shuffle_inds]
+
+#     shuffle_inds = np.random.permutation(te_y.shape[0])
+#     te_x = {vi: xvi[shuffle_inds] for vi, xvi in te_x.items()}
+#     te_y = te_y[shuffle_inds]
+#     te_ya = te_ya[shuffle_inds]
+
+#   return (tr_x, tr_y, tr_ya, tr_ids), (te_x, te_y, te_ya, te_ids)
 
 
 class PolysomConfig(BaseConfig):

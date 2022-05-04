@@ -632,11 +632,14 @@ def batch_sample(model, x_o, b_o, use_mean, batch_size=100):
   return samples
 
 
-def trunc_svd_dim_red(Xvs, p_s0=0.05):
+def trunc_svd_dim_red(Xvs, p_s0=0.05, n_components=None):
   view_dims = {
-      vi: math_utils.get_svd_frac_dim(vdat, p_s0=p_s0)
+      vi: (
+          math_utils.get_svd_frac_dim(vdat, p_s0=p_s0)
+          if n_components is None else n_components)
       for vi, vdat in Xvs.items()
   }
+
   svd_models = {
       vi:decomposition.TruncatedSVD(n_components=view_dims[vi]).fit(vdat)
       for vi, vdat in Xvs.items()
